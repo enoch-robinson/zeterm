@@ -1,0 +1,26 @@
+[package]
+name = "zeterm-mock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Internal
+zeterm-core.workspace = true
+
+# Async
+async-trait.workspace = true
+futures.workspace = true
+tokio.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
