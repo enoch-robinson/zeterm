@@ -5,10 +5,12 @@
 
 use std::sync::Arc;
 
+use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor};
 use gpui::{
-    App, Bounds, Element, ElementId, GlobalElementId, Hsla, IntoElement, LayoutId, Pixels, Point,
-    Size, Style, Window, fill, px,
+    App, Bounds, Element, ElementId, Font, GlobalElementId, Hsla, IntoElement, LayoutId, Pixels,
+    Point, SharedString, Size, StrikethroughStyle, Style, TextRun, UnderlineStyle, Window, fill,
+    px,
 };
 use gpui_component::ActiveTheme;
 use tracing::debug;
@@ -26,22 +28,28 @@ pub struct TerminalElement {
 }
 
 /// 字体度量信息
+/// 终端字体大小
+pub const TERMINAL_FONT_SIZE: f32 = 14.0;
+/// 终端行高倍数
+pub const TERMINAL_LINE_HEIGHT: f32 = 1.2;
+
 #[derive(Debug, Clone, Copy)]
 pub struct FontMetrics {
     /// 单元格宽度
     pub cell_width: Pixels,
     /// 单元格高度 (行高)
     pub cell_height: Pixels,
-    /// 基线位置
-    pub baseline: Pixels,
+    /// 字体大小
+    pub font_size: Pixels,
 }
 
 impl Default for FontMetrics {
     fn default() -> Self {
+        let font_size = px(TERMINAL_FONT_SIZE);
         Self {
-            cell_width: px(8.4),
-            cell_height: px(17.0),
-            baseline: px(13.0),
+            cell_width: font_size * 0.6,
+            cell_height: font_size * TERMINAL_LINE_HEIGHT,
+            font_size,
         }
     }
 }
@@ -65,6 +73,27 @@ impl TerminalElement {
             coordinator,
             focused,
             cursor_visible,
+        }
+    }
+
+    /// 计算字体度量
+    fn calculate_font_metrics(&self, window: &mut Window, _cx: &mut App) -> FontMetrics {
+        let font_size = px(TERMINAL_FONT_SIZE);
+        let text_system = window.text_system();
+
+        // 获取等宽字体的字符宽度
+        let font_id = text_system.resolve_font(&Font::default());
+        let cell_width = text_system
+            .advance(font_id, font_size, 'M')
+            .map(|advance| advance.width)
+            .unwrap_or(font_size * 0.6);
+
+        let cell_height = font_size * TERMINAL_LINE_HEIGHT;
+
+        FontMetrics {
+            cell_width,
+            cell_height,
+            font_size,
         }
     }
 
@@ -188,13 +217,13 @@ impl Element for TerminalElement {
         _inspector_id: Option<&gpui::InspectorElementId>,
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
         let theme = cx.theme();
 
-        // 计算字体度量
-        let font_metrics = FontMetrics::default();
+        // 动态计算字体度量
+        let font_metrics = self.calculate_font_metrics(window, cx);
 
         // 计算终端尺寸
         let cols = (bounds.size.width / font_metrics.cell_width).floor() as usize;
@@ -237,20 +266,104 @@ impl Element for TerminalElement {
             let cell_x = origin.x + (point.column.0 as f32) * prepaint.font_metrics.cell_width;
             let cell_y = origin.y + (point.line.0 as f32) * prepaint.font_metrics.cell_height;
 
+            // 跳过宽字符占位符 (CJK字符的第二列)
+            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                continue;
+            }
+
+            // 判断是否为宽字符
+            let is_wide = cell.flags.contains(Flags::WIDE_CHAR);
+
             // 绘制背景色(如果不是默认背景)
             if !matches!(cell.bg, AnsiColor::Named(NamedColor::Background)) {
                 let bg_color = self.convert_color(&cell.bg, theme);
+                //宽字符背景占用2列
+                let bg_width = if is_wide {
+                    prepaint.font_metrics.cell_width * 2.0
+                } else {
+                    prepaint.font_metrics.cell_width
+                };
                 let cell_bounds = Bounds::new(
                     Point::new(cell_x, cell_y),
                     Size {
-                        width: prepaint.font_metrics.cell_width,
+                        width: bg_width,
                         height: prepaint.font_metrics.cell_height,
                     },
                 );
                 window.paint_quad(fill(cell_bounds, bg_color));
             }
 
-            // TODO: 绘制字符 (后续实现)
+            // 绘制字符 (如果不是空格或空字符)
+            if cell.c != ' ' && cell.c != '\0' {
+                let fg_color = self.convert_color(&cell.fg, theme);
+                // 创建字符串
+                let text: SharedString = cell.c.to_string().into();
+                let font_size = px(14.0);
+
+                // 创建文本样式
+                let font = Font {
+                    weight: if cell.flags.contains(Flags::BOLD) {
+                        gpui::FontWeight::BOLD
+                    } else {
+                        gpui::FontWeight::NORMAL
+                    },
+                    style: if cell.flags.contains(Flags::ITALIC) {
+                        gpui::FontStyle::Italic
+                    } else {
+                        gpui::FontStyle::Normal
+                    },
+                    ..Default::default()
+                };
+
+                // 下划线样式
+                let underline = if cell.flags.intersects(
+                    Flags::UNDERLINE
+                        | Flags::DOUBLE_UNDERLINE
+                        | Flags::UNDERCURL
+                        | Flags::DOTTED_UNDERLINE
+                        | Flags::DASHED_UNDERLINE,
+                ) {
+                    Some(UnderlineStyle {
+                        thickness: px(1.0),
+                        color: Some(fg_color),
+                        wavy: cell.flags.contains(Flags::UNDERCURL),
+                    })
+                } else {
+                    None
+                };
+
+                // 删除线样式
+                let strikethrough = if cell.flags.contains(Flags::STRIKEOUT) {
+                    Some(StrikethroughStyle {
+                        thickness: px(1.0),
+                        color: Some(fg_color),
+                    })
+                } else {
+                    None
+                };
+
+                let text_run = TextRun {
+                    len: text.len(),
+                    font,
+                    color: fg_color,
+                    background_color: None,
+                    underline,
+                    strikethrough,
+                };
+
+                // 使用 text_system 绘制字符
+                let text_system = window.text_system();
+                let shaped = text_system.shape_line(text, font_size, &[text_run], None);
+                let text_pos = Point::new(cell_x, cell_y);
+                let _ = shaped.paint(
+                    text_pos,
+                    prepaint.font_metrics.cell_height,
+                    gpui::TextAlign::Left,
+                    None,
+                    window,
+                    cx,
+                );
+            }
         }
 
         // 4. 绘制光标
