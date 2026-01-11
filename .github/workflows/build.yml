@@ -39,7 +39,7 @@ jobs:
                       ext: ""
 
                     - name: macOS ARM64
-                      os: macos-latest
+                      os: macos-14
                       target: aarch64-apple-darwin
                       artifact: zeterm-macos-arm64
                       ext: ""
@@ -49,11 +49,10 @@ jobs:
               uses: actions/checkout@v4
 
             - name: Install Rust toolchain
-              uses: dtolnay/rust-toolchain@stable
+              uses: dtolnay/rust-toolchain@1.92
               with:
                   targets: ${{ matrix.platform.target }}
 
-            # Linux dependencies
             - name: Install Linux dependencies
               if: runner.os == 'Linux'
               run: |
@@ -61,21 +60,24 @@ jobs:
                   sudo apt-get install -y \
                     libxcb-shape0-dev \
                     libxcb-xfixes0-dev \
+                    libxcb-render0-dev \
+                    libxcb-randr0-dev \
                     libxkbcommon-dev \
                     libxkbcommon-x11-dev \
                     libwayland-dev \
                     libvulkan-dev \
                     libssl-dev \
+                    libfontconfig1-dev \
+                    libasound2-dev \
+                    libatk1.0-dev \
                     pkg-config \
                     cmake
 
-            # Windows dependencies
             - name: Install Windows dependencies
               if: runner.os == 'Windows'
               run: |
                   choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
 
-            # macOS dependencies
             - name: Install macOS dependencies
               if: runner.os == 'macOS'
               run: |
@@ -110,7 +112,6 @@ jobs:
                   path: artifacts/
                   retention-days: 7
 
-    # Create release when tag is pushed
     release:
         name: Create Release
         needs: build
@@ -148,3 +149,4 @@ jobs:
                   draft: false
                   prerelease: ${{ contains(github.ref, '-') }}
                   generate_release_notes: true
+
