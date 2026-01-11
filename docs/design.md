@@ -51,12 +51,14 @@
 ```rust
 #[async_trait]
 pub trait TerminalConnection: Send + Sync {
-    async fn write(&mut self, bytes: &[u8]) -> Result<()>;
-    async fn resize(&mut self, rows: u16, cols: u16) -> Result<()>;
-    fn receive_stream(&mut self) -> BoxStream<'static, Result<Vec<u8>>>;
-    async fn close(&mut self) -> Result<()>;
+    async fn write(&mut self, bytes: &[u8]) -> Result<(), ConnectionError>;
+    async fn resize(&mut self, rows: u16, cols: u16) -> Result<(), ConnectionError>;
+    fn receive_stream(&mut self) -> BoxStream<'static, Result<Vec<u8>, ConnectionError>>;
+    async fn close(&mut self) -> Result<(), ConnectionError>;
 }
 ```
+
+>📖 完整 API 定义（含详细注释）见 [API 文档](./api.md)
 
 > 📖 详细设计见 [TerminalConnection Trait](./core/connection-trait.md)
 
@@ -176,8 +178,4 @@ cargo test
 
 ## 十、参考资源
 
-- [GPUI 文档](https://docs.rs/gpui)
-- [GPUI Component](https://github.com/longbridge/gpui-component)
-- [Zed Terminal源码](https://github.com/zed-industries/zed/tree/main/crates/terminal_view)
-- [Alacritty Terminal](https://github.com/alacritty/alacritty)
-- [Russh](https://github.com/warp-tech/russh)
+> 📖 完整的参考资源列表见 [README.md](./README.md#-相关资源)

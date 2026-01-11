@@ -21,20 +21,38 @@
 
 | 数据类型 | 存储方式 | 说明 |
 |----------|----------|------|
-| 配置文件 | TOML 文件 | 用户可编辑 |
-| 主机列表 | SQLite | 支持搜索和分组 |
+| 全局配置 | TOML 文件 | 用户可编辑 (`config.toml`) |
+| 主机列表 | TOML + SQLite | TOML 用于导入导出，SQLite 用于运行时 |
 | 会话历史 | SQLite | 连接记录 |
 | 敏感信息 | 系统密钥链 | 密码、私钥密码 |
 
+> **说明**: 主机配置支持两种存储方式：
+> - **TOML 文件** (`hosts.toml`): 便于用户手动编辑、版本控制和跨设备同步
+> - **SQLite 数据库**: 运行时使用，支持高效搜索、分组和历史记录
+> 
+> 启动时会将 `hosts.toml` 同步到 SQLite，UI 修改会同时更新两者。
+
 ### 2.2 目录结构
 
+配置目录 (用户可编辑):
 ```
-~/.local/share/zeterm/     # Linux
+~/.config/zeterm/              # Linux (XDG_CONFIG_HOME)
 ~/Library/Application Support/zeterm/  # macOS
-%APPDATA%\zeterm\          # Windows
-├── zeterm.db              # SQLite 数据库
-├── sessions/              # 会话快照
-└── logs/                  # 日志文件
+%APPDATA%\zeterm\              # Windows
+├── config.toml                # 全局配置
+├── hosts.toml                 # 主机列表 (可选，用于导入导出)
+├── known_hosts                # SSH 主机密钥
+└── themes/                    # 自定义主题
+```
+
+数据目录 (程序管理):
+```
+~/.local/share/zeterm/         # Linux (XDG_DATA_HOME)
+~/Library/Application Support/zeterm/  # macOS
+%APPDATA%\zeterm\# Windows
+├── zeterm.db                  # SQLite 数据库
+├── sessions/                  # 会话快照
+└── logs/                      # 日志文件
 ```
 
 ---

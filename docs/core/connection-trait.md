@@ -21,18 +21,20 @@
 #[async_trait]
 pub trait TerminalConnection: Send + Sync {
     /// 发送数据到远端(键盘输入转换的ANSI 序列)
-    async fn write(&mut self, bytes: &[u8]) -> Result<()>;
+    async fn write(&mut self, bytes: &[u8]) -> Result<(), ConnectionError>;
 
     /// 调整终端窗口大小
-    async fn resize(&mut self, rows: u16, cols: u16) -> Result<()>;
+    async fn resize(&mut self, rows: u16, cols: u16) -> Result<(), ConnectionError>;
 
     /// 获取数据接收流(只能调用一次)
-    fn receive_stream(&mut self) -> BoxStream<'static, Result<Vec<u8>>>;
+    fn receive_stream(&mut self) -> BoxStream<'static, Result<Vec<u8>, ConnectionError>>;
 
     /// 关闭连接
-    async fn close(&mut self) -> Result<()>;
+    async fn close(&mut self) -> Result<(), ConnectionError>;
 }
 ```
+
+> 📖 完整 API 定义（含详细注释）见 [API 文档](../api.md)
 
 ---
 

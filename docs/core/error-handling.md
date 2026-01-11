@@ -103,9 +103,11 @@ ZetermError (顶层)
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `max_attempts` | 3 | 最大重试次数 |
-| `initial_delay_ms` | 1000 | 初始延迟 |
+| `initial_delay_ms` | 1000 | 初始延迟 (毫秒) |
 | `backoff_multiplier` | 2.0 | 退避倍数 |
-| `max_delay_ms` | 30000 | 最大延迟 |
+| `max_delay_ms` | 30000 | 最大延迟 (毫秒) |
+
+> **注意**: 这些参数与 [连接状态机](./state-machine.md) 和 [API 文档](../api.md) 中的定义保持一致。
 
 ### 5.2 恢复决策
 

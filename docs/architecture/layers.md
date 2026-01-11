@@ -112,12 +112,14 @@ pub trait TerminalConnection: Send + Sync {
 }
 
 // 主机仓储抽象 (领域层)
+// 完整定义见 api.md
 #[async_trait]
 pub trait HostRepository: Send + Sync {
-    async fn list_all(&self) -> Result<Vec<HostConfig>>;
-    async fn get(&self, id: &str) -> Result<Option<HostConfig>>;
-    async fn save(&self, host: &HostConfig) -> Result<()>;
-    async fn delete(&self, id: &str) -> Result<()>;
+    async fn list_all(&self) -> Result<Vec<HostConfig>, StorageError>;
+    async fn get(&self, id: &str) -> Result<Option<HostConfig>, StorageError>;
+    async fn create(&self, host: &HostConfig) -> Result<(), StorageError>;
+    async fn update(&self, host: &HostConfig) -> Result<(), StorageError>;
+    async fn delete(&self, id: &str) -> Result<(), StorageError>;
 }
 ```
 

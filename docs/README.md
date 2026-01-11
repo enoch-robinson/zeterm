@@ -12,6 +12,8 @@
 |------|------|
 | [design.md](./design.md) | 总体设计概述 |
 | [roadmap.md](./roadmap.md) | 实现路径与里程碑 |
+| [api.md](./api.md) | API 文档 ⭐ NEW |
+| [quick-reference.md](./quick-reference.md) | 快速参考卡 ⭐ NEW |
 
 ### 架构设计 (`architecture/`)
 
@@ -36,7 +38,9 @@
 |------|------|
 | [session-model.md](./modules/session-model.md) | SessionCoordinator 会话模型 |
 | [terminal-view.md](./modules/terminal-view.md) | TerminalView 渲染视图 (参考 Zed) |
-| [zed-terminal-analysis.md](./modules/zed-terminal-analysis.md) | Zed 终端渲染技术分析 ⭐ |
+| [terminal-rendering.md](./modules/terminal-rendering.md) | 终端渲染实现细节 ⭐ NEW |
+| [key-mappings.md](./modules/key-mappings.md) | 按键映射表 ⭐ NEW |
+| [zed-terminal-analysis.md](./modules/zed-terminal-analysis.md) | Zed 终端渲染技术分析 |
 | [ssh-backend.md](./modules/ssh-backend.md) | SSH 后端实现 (russh) |
 | [sftp.md](./modules/sftp.md) | SFTP 文件管理模块 |
 
@@ -46,39 +50,37 @@
 |------|------|
 | [config.md](./infrastructure/config.md) | 配置管理系统 |
 | [persistence.md](./infrastructure/persistence.md) | 数据持久化设计 |
+| [platform.md](./infrastructure/platform.md) | 跨平台差异处理 ⭐ NEW |
 
 ---
 
 ## 🏗️ 架构概览
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                表现层 (Presentation)                    │
-│                GPUI Views                           │
-├─────────────────────────────────────────────────────────────┤
-│                    应用层 (Application)                     │
-│                 Use Cases & Coordinators                    │
-├─────────────────────────────────────────────────────────────┤
-│                    领域层 (Domain)                          │
-│                Entities, Traits & Rules                     │
-├─────────────────────────────────────────────────────────────┤
-│                    适配器层 (Adapter)                       │
-│                Protocol Converters                        │
-├─────────────────────────────────────────────────────────────┤
-│                基础设施层 (Infrastructure)                  │
-│                  IO & External Services                     │
-└─────────────────────────────────────────────────────────────┘
-```
+Zeterm 采用**五层架构**设计，实现 UI 层与网络层的彻底解耦：
+
+| 层级 | 职责 | 核心组件 |
+|------|------|----------|
+| 表现层 | UI渲染、事件捕获 | TerminalView, SftpView |
+| 应用层 | 用例协调、状态管理 | SessionCoordinator |
+| 领域层 | 业务实体、Trait 抽象 | TerminalConnection |
+| 适配器层 | 协议转换 | SshAdapter |
+| 基础设施层 | IO、外部服务 | SshConnection, SQLite |
+
+> 📖 详细架构设计见 [五层架构详解](./architecture/layers.md)
 
 ---
 
 ## 🎯 设计原则
 
-1. **分层解耦** - UI 层与网络层通过 Trait 彻底解耦
-2. **异步优先** - 基于 Tokio 的全异步 IO 模型
-3. **类型安全** - 利用 Rust 类型系统在编译期捕获错误
-4. **可测试性** - 所有核心组件可 Mock、可单测
-5. **职责分离** - 终端状态与连接管理解耦
+| 原则 | 说明 |
+|------|------|
+| 分层解耦 | UI 层与网络层通过 Trait 彻底解耦 |
+| 异步优先 | 基于 Tokio 的全异步 IO 模型 |
+| 类型安全 | 利用 Rust 类型系统在编译期捕获错误 |
+| 可测试性 | 所有核心组件可 Mock、可单测 |
+| 职责分离 | 终端状态与连接管理解耦 |
+
+> 📖 详细设计见 [总体设计](./design.md)
 
 ---
 
@@ -90,6 +92,8 @@
 | **窗口 UI 组件** | gpui-component | Tab、Dock、Modal、按钮等 |
 
 > ⚠️ 终端渲染器需参考 Zed 实现，gpui-component 不提供终端渲染能力。
+>
+> 📖 详细实现见 [TerminalView](./modules/terminal-view.md)
 
 ---
 

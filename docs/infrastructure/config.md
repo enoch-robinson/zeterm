@@ -17,15 +17,20 @@
 
 ## 二、目录结构
 
+### 配置目录 (用户可编辑)
+
 ```
-~/.config/zeterm/          # Linux
+~/.config/zeterm/              # Linux (XDG_CONFIG_HOME)
 ~/Library/Application Support/zeterm/  # macOS
-%APPDATA%\zeterm\          # Windows
-├── config.toml            # 全局配置
-├── hosts.toml             # 主机列表
-└── themes/                # 主题配置
+%APPDATA%\zeterm\              # Windows
+├── config.toml                # 全局配置
+├── hosts.toml                 # 主机列表 (可选，用于导入导出)
+├── known_hosts                # SSH 主机密钥
+└── themes/                    # 主题配置
     └── custom.toml
 ```
+
+> **注意**: 数据目录（SQLite 数据库、会话快照、日志等）位于不同路径，详见 [持久化设计](./persistence.md)。
 
 ---
 
@@ -74,10 +79,15 @@
 
 | 配置项 | 默认值 | 说明 |
 |--------|--------|------|
-| `connect_timeout` | 30| 连接超时 (秒) |
+| `connect_timeout` | 30 | 连接超时 (秒) |
 | `keepalive_interval` | 60 | 心跳间隔 (秒) |
 | `auto_reconnect` | true | 自动重连 |
 | `max_reconnect_attempts` | 3 | 最大重连次数 |
+| `reconnect_initial_delay_ms` | 1000 | 重连初始延迟 (毫秒) |
+| `reconnect_max_delay_ms` | 30000 | 重连最大延迟 (毫秒) |
+| `reconnect_backoff_multiplier` | 2.0 | 重连退避倍数 |
+
+> **注意**: 重连策略参数与[API 文档](../api.md) 中 `SessionConfig` 的定义保持一致。
 
 ### 3.3 示例配置
 
@@ -101,6 +111,10 @@ font_size = 14.0
 connect_timeout = 30
 keepalive_interval = 60
 auto_reconnect = true
+max_reconnect_attempts = 3
+reconnect_initial_delay_ms = 1000
+reconnect_max_delay_ms = 30000
+reconnect_backoff_multiplier = 2.0
 ```
 
 ---

@@ -115,10 +115,12 @@ pub struct ConnectionStateMachine {
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `enabled` | true | 是否启用自动重连 |
-| `max_attempts` | 5 | 最大重试次数 |
-| `initial_delay` | 1s | 初始延迟 |
-| `max_delay` | 60s | 最大延迟 |
-| `backoff_factor` | 2.0 | 退避倍数 |
+| `max_attempts` | 3 | 最大重试次数 |
+| `initial_delay_ms` | 1000 | 初始延迟 (毫秒) |
+| `max_delay_ms` | 30000 | 最大延迟 (毫秒) |
+| `backoff_multiplier` | 2.0 | 退避倍数 |
+
+> **注意**: 这些参数与 `SessionConfig` 中的 `max_reconnect_attempts` 等配置对应，详见 [API 文档](../api.md)。
 
 ### 5.2 退避算法
 

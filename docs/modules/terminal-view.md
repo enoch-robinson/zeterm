@@ -6,14 +6,15 @@
 
 ## 一、设计概述
 
-### 1.1 组件分工
+### 1.1 组件分工 ⭐权威定义
 
-| 组件 | 来源 | 用途 |
-|------|------|------|
-| **终端渲染器** | 参考 Zed `terminal_view` | 字符网格绘制、光标、选择 |
-| **窗口 UI 组件** | gpui-component | Tab、Dock、Modal、按钮等 |
+| 组件 | 来源 | 用途 | 说明 |
+|------|------|------|------|
+| **TerminalView** | 自行实现 | 终端主视图 | 参考 Zed `terminal_view` |
+| **TerminalElement** | 自行实现 | 底层渲染元素 | 参考 Zed `terminal_element` |
+| **窗口 UI组件** | gpui-component | Tab、Dock、Modal 等 | 直接复用 |
 
->⚠️ **重要**: 终端渲染器需要自行实现（参考 Zed），gpui-component 不提供终端渲染能力。
+> ⚠️ **重要**: 终端渲染器（字符网格、光标、选择）需参考 Zed 自行实现，gpui-component **不提供**终端渲染能力。
 
 ### 1.2 设计目标
 

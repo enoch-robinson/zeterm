@@ -89,13 +89,9 @@ zeterm/
 
 ### 4.2 组件分工
 
-| 组件 | 来源 | 用途 |
-|------|------|------|
-| **TerminalView** | 参考 Zed `terminal_view` | 终端字符网格渲染 |
-| **TerminalElement** | 参考 Zed `terminal_element` | 底层绘制实现 |
-| **窗口 UI** | gpui-component | Tab、Dock、按钮等 |
-
 >⚠️ **重要**: 终端渲染器需参考 Zed 实现，gpui-component 不提供终端渲染能力。
+>
+> 📖 详细组件分工见 [TerminalView](./modules/terminal-view.md)
 
 ### 4.3 任务清单
 
