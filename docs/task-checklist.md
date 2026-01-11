@@ -43,28 +43,36 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 创建根目录 `Cargo.toml`，配置 workspace | P0 | 0.5h |
-| ⬜ | 创建 `zeterm` crate (主程序) | P0 | 0.5h |
-| ⬜ | 创建 `zeterm-core` crate (领域层) | P0 | 0.5h |
-| ⬜ | 创建 `zeterm-mock` crate (Mock 实现) | P0 | 0.5h |
-| ⬜ | 配置共享依赖版本 (workspace.dependencies) | P1 | 0.5h |
-| ⬜ | 配置 rustfmt.toml 代码格式化规则 | P2 | 0.25h |
-| ⬜ | 配置 clippy.toml 代码检查规则 | P2 | 0.25h |
-| ⬜ | 创建 .gitignore 文件 | P1 | 0.1h |
+| ✅ | 创建根目录 `Cargo.toml`，配置 workspace | P0 | 0.5h |
+| ✅ | 创建 `zeterm` crate (主程序) | P0 | 0.5h |
+| ✅ | 创建 `zeterm-core` crate (领域层) | P0 | 0.5h |
+| ✅ | 创建 `zeterm-mock` crate (Mock 实现) | P0 | 0.5h |
+| ✅ | 创建 `zeterm-ssh` crate (SSH 后端) | P0 | 0.5h |
+| ✅ | 创建 `zeterm-storage` crate (持久化) | P0 | 0.5h |
+| ✅ | 配置共享依赖版本 (workspace.dependencies) | P1 | 0.5h |
+| ✅ | 配置 rustfmt.toml 代码格式化规则 | P2 | 0.25h |
+| ✅ | 配置 clippy.toml 代码检查规则 | P2 | 0.25h |
+| ✅ | 创建 .gitignore 文件 | P1 | 0.1h |
 
 #### 2.1.2 依赖配置
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 添加 GPUI 依赖 | P0 | 0.25h |
-| ⬜ | 添加 gpui-component 依赖 | P0 | 0.25h |
-| ⬜ | 添加 alacritty_terminal 依赖 | P0 | 0.25h |
-| ⬜ | 添加 tokio 异步运行时依赖 | P0 | 0.25h |
-| ⬜ | 添加 futures 依赖 | P0 | 0.1h |
-| ⬜ | 添加 async-trait 依赖 | P0 | 0.1h |
-| ⬜ | 添加 tracing 日志依赖 | P1 | 0.1h |
-| ⬜ | 添加 thiserror 错误处理依赖 | P1 | 0.1h |
-| ⬜ | 添加 anyhow 依赖 | P1 | 0.1h |
+| ✅ | 添加 GPUI 依赖 (git: zed-industries/zed) | P0 | 0.25h |
+| ✅ | 添加 gpui-component 依赖 (git: longbridge/gpui-component) | P0 | 0.25h |
+| ✅ | 添加 alacritty_terminal 依赖 (0.25.1) | P0 | 0.25h |
+| ✅ | 添加 tokio 异步运行时依赖 (1.49.0) | P0 | 0.25h |
+| ✅ | 添加 futures 依赖 (0.3.31) | P0 | 0.1h |
+| ✅ | 添加 async-trait 依赖 (0.1.89) | P0 | 0.1h |
+| ✅ | 添加 tracing 日志依赖 (0.1.44) | P1 | 0.1h |
+| ✅ | 添加 thiserror 错误处理依赖 (2.0.17) | P1 | 0.1h |
+| ✅ | 添加 anyhow 依赖 (1.0.100) | P1 | 0.1h |
+| ✅ | 添加 russh SSH 依赖 (0.56.0) | P0 | 0.1h |
+| ✅ | 添加 russh-sftp 依赖 (2.1.1) | P1 | 0.1h |
+| ✅ | 添加 sqlx 数据库依赖 (0.8.x) | P0 | 0.1h |
+| ✅ | 添加 serde 序列化依赖 (1.0.228) | P0 | 0.1h |
+| ✅ | 添加 toml 配置依赖 (0.9.11) | P0 | 0.1h |
+| ✅ | 配置 [patch.crates-io] 解决 ashpd 兼容性问题 | P0 | 0.5h |
 
 ---
 
@@ -1263,3 +1271,4 @@
 | 版本 | 日期 | 说明 |
 |------|------|------|
 | v1.0 | - | 初始版本，包含完整任务清单 |
+| v1.1 | 2026-01-11 | 更新 Phase 1 项目初始化任务状态，标记已完成的Cargo Workspace 设置和依赖配置任务 |

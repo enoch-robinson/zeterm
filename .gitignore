@@ -38,4 +38,23 @@ data/
 # Zed 编辑器配置
 .zed/
 
+# 日志文件
 **/*.log
+logs/
+
+# Zeterm 项目特定
+# 用户配置目录 (运行时生成)
+zeterm-config/
+
+# 测试输出
+test-output/
+*.test.db
+
+# 性能分析
+*.profraw
+*.profdata
+perf.data*
+flamegraph.svg
+
+# 文档构建输出
+/docs/book/
