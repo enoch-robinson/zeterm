@@ -3,5 +3,8 @@
 //! 包含所有 GPUI 视图组件和UI 相关实现。
 
 mod main_window;
+mod terminal_view;
 
 pub use main_window::MainWindow;
+pub use terminal_view::{TerminalElement, TerminalView};
+
