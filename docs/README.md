@@ -36,6 +36,7 @@
 |------|------|
 | [session-model.md](./modules/session-model.md) | SessionCoordinator 会话模型 |
 | [terminal-view.md](./modules/terminal-view.md) | TerminalView 渲染视图 (参考 Zed) |
+| [zed-terminal-analysis.md](./modules/zed-terminal-analysis.md) | Zed 终端渲染技术分析 ⭐ |
 | [ssh-backend.md](./modules/ssh-backend.md) | SSH 后端实现 (russh) |
 | [sftp.md](./modules/sftp.md) | SFTP 文件管理模块 |
 
