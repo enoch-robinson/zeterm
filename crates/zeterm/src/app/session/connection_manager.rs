@@ -2,18 +2,30 @@
 //!
 //! 管理终端连接的生命周期，包括连接建立、数据传输和断开。
 
-use std::sync::Arc;
 use std::time::Instant;
 
+use futures::stream::BoxStream;
 use parking_lot::RwLock;
-use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use zeterm_core::{ConnectionState, DisconnectReason, TerminalConnection};
+use zeterm_core::{ConnectionError, ConnectionState, DisconnectReason, TerminalConnection};
 
 /// 连接管理器
 ///
 /// 负责管理单个终端连接的生命周期。
+///
+/// # 职责
+///
+/// - 持有后端连接实例
+/// - 管理连接状态
+/// - 提供数据发送接口
+/// - 处理连接关闭
+///
+/// # 注意
+///
+/// 数据接收流(receive_stream) 不存储在此结构中，
+/// 而是在 `set_connection` 时直接返回，由调用者负责处理。
+/// 这样可以避免 `Send + Sync` 的问题。
 pub struct ConnectionManager {
     /// 后端连接
     connection: RwLock<Option<Box<dyn TerminalConnection>>>,
@@ -33,14 +45,33 @@ impl ConnectionManager {
         }
     }
 
-    /// 设置连接
-    pub fn set_connection(&self, conn: Box<dyn TerminalConnection>) {
+    /// 设置连接并返回数据接收流
+    ///
+    /// 设置后端连接，同时返回数据接收流供调用者使用。
+    ///
+    /// # Arguments
+    ///
+    /// * `conn` - 后端连接实例
+    ///
+    /// # Returns
+    ///
+    /// 返回数据接收流，调用者需要负责处理这个流。
+    pub fn set_connection(
+        &self,
+        conn: Box<dyn TerminalConnection>,
+    ) -> BoxStream<'static, Result<Vec<u8>, ConnectionError>> {
+        // 获取数据接收流
+        let stream = conn.receive_stream();
+
         let mut connection = self.connection.write();
         *connection = Some(conn);
+
         *self.state.write() = ConnectionState::Connected {
             connected_at: Instant::now(),
         };
         info!("Connection established");
+
+        stream
     }
 
     /// 获取连接状态
@@ -61,6 +92,55 @@ impl ConnectionManager {
     /// 取消操作
     pub fn cancel(&self) {
         *self.cancelled.write() = true;
+    }
+
+    /// 发送数据到后端连接
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - 要发送的字节数据
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - 发送成功
+    /// * `Err(ConnectionError)` - 发送失败
+    pub async fn write(&self, data: &[u8]) -> Result<(), ConnectionError> {
+        let conn = self.connection.read();
+        match conn.as_ref() {
+            Some(conn) => {
+                debug!("Writing {} bytes to connection", data.len());
+                conn.write(data).await
+            }
+            None => {
+                warn!("Attempted to write to disconnected connection");
+                Err(ConnectionError::Disconnected)
+            }
+        }
+    }
+
+    /// 调整远端终端大小
+    ///
+    /// # Arguments
+    ///
+    /// * `rows` - 新的行数
+    /// * `cols` - 新的列数
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - 调整成功
+    /// * `Err(ConnectionError)` - 调整失败
+    pub async fn resize(&self, rows: u16, cols: u16) -> Result<(), ConnectionError> {
+        let conn = self.connection.read();
+        match conn.as_ref() {
+            Some(conn) => {
+                debug!("Resizing connection to {}x{}", cols, rows);
+                conn.resize(rows, cols).await
+            }
+            None => {
+                warn!("Attempted to resize disconnected connection");
+                Err(ConnectionError::Disconnected)
+            }
+        }
     }
 
     /// 关闭连接
@@ -86,6 +166,12 @@ impl Default for ConnectionManager {
     }
 }
 
+// 手动实现 Send 和 Sync
+// ConnectionManager 内部使用 RwLock 保护所有字段，是线程安全的
+//TerminalConnection trait 要求 Send + Sync
+unsafe impl Send for ConnectionManager {}
+unsafe impl Sync for ConnectionManager {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -95,15 +181,13 @@ mod tests {
     fn test_connection_manager_new() {
         let manager = ConnectionManager::new();
         assert!(!manager.is_connected());
-        assert!(!manager.is_cancelled());
-        assert!(matches!(manager.state(), ConnectionState::Idle));
+        assert!(!manager.is_cancelled());assert!(matches!(manager.state(), ConnectionState::Idle));
     }
 
     #[test]
     fn test_connection_manager_default() {
         let manager = ConnectionManager::default();
-        assert!(!manager.is_connected());
-    }
+        assert!(!manager.is_connected());}
 
     #[test]
     fn test_connection_manager_cancel() {
@@ -120,5 +204,23 @@ mod tests {
         let state = manager.state();
         assert!(matches!(state, ConnectionState::Idle));
         assert!(!state.is_active());
+    }
+
+    #[tokio::test]
+    async fn test_connection_manager_write_disconnected() {
+        let manager = ConnectionManager::new();
+
+        // 未连接时写入应该返回错误
+        let result = manager.write(b"test").await;
+        assert!(matches!(result, Err(ConnectionError::Disconnected)));
+    }
+
+    #[tokio::test]
+    async fn test_connection_manager_resize_disconnected() {
+        let manager = ConnectionManager::new();
+
+        // 未连接时调整大小应该返回错误
+        let result = manager.resize(24, 80).await;
+        assert!(matches!(result, Err(ConnectionError::Disconnected)));
     }
 }

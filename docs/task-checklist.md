@@ -244,21 +244,21 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 实现 `start_data_pump()` 方法 | P0 | 3h |
-| ⬜ | 使用 `cx.spawn()` 启动后台任务 | P0 | 1h |
-| ⬜ | 实现数据接收循环 | P0 | 2h |
-| ⬜ | 调用 `terminal.advance_bytes()` | P0 | 0.5h |
-| ⬜ | 调用 `cx.notify()` 触发重绘 | P0 | 0.5h |
-| ⬜ | 实现优雅取消 (select! + cancel_token) | P0 | 1h |
+| ✅ | 实现 `start_data_pump()` 方法 | P0 | 3h |
+| ✅ | 使用 `std::thread::spawn()` 启动后台任务 | P0 | 1h |
+| ✅ | 实现数据接收循环 | P0 | 2h |
+| ✅ | 调用 `terminal.advance_bytes()` | P0 | 0.5h |
+| ✅ | 调用 notify_callback触发重绘 | P0 | 0.5h |
+| ✅ | 实现优雅取消 (select! + cancel_token) | P0 | 1h |
 
 #### 2.6.4 对外接口
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 实现 `send_input()` 方法 | P0 | 1h |
-| ⬜ | 实现 `resize()` 方法 | P0 | 1h |
-| ⬜ | 实现 `renderable_content()` 方法 | P0 | 0.5h |
-| ⬜ | 实现 `close()` 方法 | P0 | 1h |
+| ✅ | 实现 `send_input()` 方法 | P0 | 1h |
+| ✅ | 实现 `resize()` 方法 | P0 | 1h |
+| ✅ | 实现 `renderable_content()` 方法 | P0 | 0.5h |
+| ✅ | 实现 `close()` 方法 | P0 | 1h |
 
 ---
 

@@ -4,4 +4,4 @@
 
 mod terminal_state;
 
-pub use terminal_state::{TerminalConfig, TerminalEvent, TerminalState};
+pub use terminal_state::{EventProxy, TerminalConfig, TerminalEvent, TerminalState};
