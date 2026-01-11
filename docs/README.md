@@ -27,6 +27,8 @@
 | [connection-trait.md](./core/connection-trait.md) | TerminalConnection Trait 设计 |
 | [state-machine.md](./core/state-machine.md) | 连接状态机设计 |
 | [error-handling.md](./core/error-handling.md) | 错误处理策略 |
+| [testing.md](./core/testing.md) | 测试策略与Mock 指南 |
+| [security.md](./core/security.md) | 安全设计与凭证保护 |
 
 ### 功能模块 (`modules/`)
 
