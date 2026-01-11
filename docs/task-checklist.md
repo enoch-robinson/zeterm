@@ -530,19 +530,19 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 创建 `zeterm-ssh` crate | P0 | 0.5h |
-| ⬜ | 添加 russh 依赖 | P0 | 0.25h |
-| ⬜ | 添加 russh-keys 依赖 | P0 | 0.25h |
-| ⬜ | 添加 russh-sftp 依赖 (可选) | P2 | 0.25h |
+| ✅ | 创建 `zeterm-ssh` crate | P0 | 0.5h |
+| ✅ | 添加 russh 依赖 | P0 | 0.25h |
+| ✅ | 添加 russh-keys 依赖 | P0 | 0.25h |
+| ✅ | 添加 russh-sftp 依赖 (可选) | P2 | 0.25h |
 
 #### 4.1.2 russh API 研究
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 阅读 russh 文档和示例 | P0 | 4h |
-| ⬜ | 理解 Handler trait 机制 | P0 | 2h |
-| ⬜ | 理解 Channel和 Session 关系 | P0 | 2h |
-| ⬜ | 编写简单的连接测试 | P0 | 2h |
+| ✅ | 阅读 russh 文档和示例 | P0 | 4h |
+| ✅ | 理解 Handler trait 机制 | P0 | 2h |
+| ✅ | 理解 Channel和 Session 关系 | P0 | 2h |
+| ✅ | 编写简单的连接测试 | P0 | 2h |
 
 ---
 
@@ -552,32 +552,32 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 创建 `connection.rs` 文件 | P0 | 0.25h |
-| ⬜ | 定义 `SshConnection` 结构体 | P0 | 1h |
-| ⬜ | 添加 session handle 字段 | P0 | 0.5h |
-| ⬜ | 添加 channel id 字段 | P0 | 0.5h |
-| ⬜ | 添加 mpsc channel 字段 | P0 | 0.5h |
-| ⬜ | 定义 `SshConfig` 结构体 | P0 | 1h |
+| ✅ | 创建 `connection.rs` 文件 | P0 | 0.25h |
+| ✅ | 定义 `SshConnection` 结构体 | P0 | 1h |
+| ✅ | 添加 session handle 字段 | P0 | 0.5h |
+| ✅ | 添加 channel id 字段 | P0 | 0.5h |
+| ✅ | 添加 mpsc channel 字段 | P0 | 0.5h |
+| ✅ | 定义 `SshConfig` 结构体 | P0 | 1h |
 
 #### 4.2.2 SshHandler 实现
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 创建 `handler.rs` 文件 | P0 | 0.25h |
-| ⬜ | 定义 `SshHandler` 结构体 | P0 | 1h |
-| ⬜ | 实现 `client::Handler` trait | P0 | 3h |
-| ⬜ | 实现 `data()` 回调 - 发送数据到 channel | P0 | 2h |
-| ⬜ | 实现 `eof()` 回调 - 关闭发送端 | P0 | 1h |
-| ⬜ | 实现 `check_server_key()` 回调 | P0 | 2h |
+| ✅ | 创建 `handler.rs` 文件 | P0 | 0.25h |
+| ✅ | 定义 `SshHandler` 结构体 | P0 | 1h |
+| ✅ | 实现 `client::Handler` trait | P0 | 3h |
+| ✅ | 实现 `data()` 回调 - 发送数据到 channel | P0 | 2h |
+| ✅ | 实现 `eof()` 回调 - 关闭发送端 | P0 | 1h |
+| ✅ | 实现 `check_server_key()` 回调 | P0 | 2h |
 
 #### 4.2.3 TerminalConnection 实现
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 实现 `write()` 方法 | P0 | 2h |
-| ⬜ | 实现 `resize()` 方法 | P0 | 2h |
-| ⬜ | 实现 `receive_stream()` 方法 | P0 | 3h |
-| ⬜ | 实现 `close()` 方法 | P0 | 2h |
+| ✅ | 实现 `write()` 方法 | P0 | 2h |
+| ✅ | 实现 `resize()` 方法 | P0 | 2h |
+| ✅ | 实现 `receive_stream()` 方法 | P0 | 3h |
+| ✅ | 实现 `close()` 方法 | P0 | 2h |
 
 ---
 
@@ -587,28 +587,28 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 实现 `connect()` 异步方法 | P0 | 2h |
-| ⬜ | DNS 解析处理 | P0 | 1h |
-| ⬜ | TCP 连接超时处理 | P0 | 1h |
-| ⬜ | 连接错误转换 | P0 | 1h |
+| ✅ | 实现 `connect()` 异步方法 | P0 | 2h |
+| ✅ | DNS 解析处理 | P0 | 1h |
+| ✅ | TCP 连接超时处理 | P0 | 1h |
+| ✅ | 连接错误转换 | P0 | 1h |
 
 #### 4.3.2 SSH 握手
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 调用 `client::connect()` | P0 | 1h |
-| ⬜ | 配置 SSH 客户端选项 | P0 | 1h |
-| ⬜ | 处理协议版本协商 | P1 | 1h |
+| ✅ | 调用 `client::connect()` | P0 | 1h |
+| ✅ | 配置 SSH 客户端选项 | P0 | 1h |
+| ✅ | 处理协议版本协商 | P1 | 1h |
 
 #### 4.3.3 PTY 和 Shell
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 打开会话 channel | P0 | 1h |
-| ⬜ | 请求 PTY (request_pty) | P0 | 2h |
-| ⬜ | 配置终端类型 (xterm-256color) | P0 | 0.5h |
-| ⬜ | 配置初始窗口大小 | P0 | 0.5h |
-| ⬜ | 请求 Shell (request_shell) | P0 | 1h |
+| ✅ | 打开会话 channel | P0 | 1h |
+| ✅ | 请求 PTY (request_pty) | P0 | 2h |
+| ✅ | 配置终端类型 (xterm-256color) | P0 | 0.5h |
+| ✅ | 配置初始窗口大小 | P0 | 0.5h |
+| ✅ | 请求 Shell (request_shell) | P0 | 1h |
 
 ---
 
@@ -618,21 +618,21 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 创建 `auth.rs` 文件 | P0 | 0.25h |
-| ⬜ | 实现 `authenticate_password()` | P0 | 2h |
-| ⬜ | 处理认证失败错误 | P0 | 1h |
+| ✅ | 创建 `auth.rs` 文件 | P0 | 0.25h |
+| ✅ | 实现 `authenticate_password()` | P0 | 2h |
+| ✅ | 处理认证失败错误 | P0 | 1h |
 | ⬜ | 支持密码重试 | P1 | 1h |
 
 #### 4.4.2 公钥认证
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 实现私钥文件加载 | P0 | 2h |
-| ⬜ | 支持 RSA 密钥 | P0 | 1h |
-| ⬜ | 支持 Ed25519 密钥 | P0 | 1h |
+| ✅ | 实现私钥文件加载 | P0 | 2h |
+| ✅ | 支持 RSA 密钥 | P0 | 1h |
+| ✅ | 支持 Ed25519 密钥 | P0 | 1h |
 | ⬜ | 支持 ECDSA 密钥 | P2 | 1h |
-| ⬜ | 实现 `authenticate_publickey()` | P0 | 2h |
-| ⬜ | 处理加密私钥 (passphrase) | P0 | 2h |
+| ✅ | 实现 `authenticate_publickey()` | P0 | 2h |
+| ✅ | 处理加密私钥 (passphrase) | P0 | 2h |
 
 #### 4.4.3 SSH Agent 认证
 

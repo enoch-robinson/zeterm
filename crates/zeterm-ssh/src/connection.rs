@@ -1,0 +1,401 @@
+//! SSH 连接模块
+//!
+//! 实现基于 russh 的 SSH 连接，实现 TerminalConnection trait。
+
+use std::sync::Arc;
+use std::time::Instant;
+
+use async_trait::async_trait;
+use futures::StreamExt;
+use futures::stream::BoxStream;
+use parking_lot::Mutex;
+use russh::Channel;
+use russh::client::{self, Handle, Msg};
+use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
+
+use zeterm_core::errors::ConnectionError;
+use zeterm_core::traits::{ConnectionInfo, ConnectionType, TerminalConnection};
+
+use crate::config::{AuthMethod, SshConfig};
+use crate::handler::{DataReceiver, SshHandler, create_data_channel};
+
+/// SSH 连接内部状态
+struct SshConnectionInner {
+    /// SSH 会话句柄
+    session: Option<Handle<SshHandler>>,
+    /// SSH 通道
+    channel: Option<Channel<Msg>>,
+    /// 数据接收器（只能取出一次）
+    data_receiver: Option<DataReceiver>,
+    /// 连接建立时间
+    connected_at: Option<Instant>,
+    /// 当前终端尺寸
+    terminal_size: (u16, u16),
+}
+
+/// SSH 连接
+///
+/// 实现 TerminalConnection trait，提供 SSH 连接功能。
+pub struct SshConnection {
+    /// 连接配置
+    config: SshConfig,
+    /// 内部状态
+    inner: Arc<Mutex<SshConnectionInner>>,
+    /// 连接状态
+    connected: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl SshConnection {
+    /// 创建新的 SSH 连接（未连接状态）
+    pub fn new(config: SshConfig) -> Self {
+        let terminal_size = (config.terminal_cols, config.terminal_rows);
+
+        Self {
+            config,
+            inner: Arc::new(Mutex::new(SshConnectionInner {
+                session: None,
+                channel: None,
+                data_receiver: None,
+                connected_at: None,
+                terminal_size,
+            })),
+            connected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    /// 建立 SSH 连接
+    pub async fn connect(&self) -> Result<(), ConnectionError> {
+        // 验证配置
+        self.config
+            .validate()
+            .map_err(|e| ConnectionError::Configuration(e.to_string()))?;
+
+        info!("Connecting to {}...", self.config.address());
+
+        // 创建数据通道
+        let (data_sender, data_receiver) = create_data_channel();
+
+        // 创建 SSH Handler
+        let handler = SshHandler::new(
+            data_sender,
+            self.config.host_key_verification.clone(),
+            self.config.host.clone(),
+            self.config.port,
+        );
+
+        // 配置 SSH 客户端
+        let ssh_config = client::Config {
+            inactivity_timeout: self.config.keepalive_interval,
+            keepalive_interval: self.config.keepalive_interval,
+            keepalive_max: 3,
+            ..Default::default()
+        };
+
+        // 建立 TCP 连接并进行 SSH 握手
+        let mut session = tokio::time::timeout(
+            self.config.connect_timeout,
+            client::connect(Arc::new(ssh_config), self.config.address(), handler),
+        )
+        .await
+        .map_err(|_| ConnectionError::Timeout)?
+        .map_err(|e| ConnectionError::Connection(e.to_string()))?;
+
+        info!("SSH handshake completed, authenticating...");
+
+        // 执行认证
+        self.authenticate(&mut session).await?;
+
+        info!("Authentication successful, opening channel...");
+
+        // 打开会话通道
+        let channel = session
+            .channel_open_session()
+            .await
+            .map_err(|e| ConnectionError::Connection(e.to_string()))?;
+
+        // 请求 PTY
+        channel
+            .request_pty(
+                false,
+                &self.config.terminal_type,
+                self.config.terminal_cols as u32,
+                self.config.terminal_rows as u32,
+                0,
+                0,
+                &[],
+            )
+            .await
+            .map_err(|e| ConnectionError::Connection(format!("Failed to request PTY: {}", e)))?;
+
+        // 请求 Shell
+        channel
+            .request_shell(false)
+            .await
+            .map_err(|e| ConnectionError::Connection(format!("Failed to request shell: {}", e)))?;
+
+        info!("SSH session established on channel {:?}", channel.id());
+
+        // 更新内部状态
+        {
+            let mut inner = self.inner.lock();
+            inner.session = Some(session);
+            inner.channel = Some(channel);
+            inner.data_receiver = Some(data_receiver);
+            inner.connected_at = Some(Instant::now());
+        }
+
+        self.connected
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        Ok(())
+    }
+
+    /// 执行认证
+    async fn authenticate(&self, session: &mut Handle<SshHandler>) -> Result<(), ConnectionError> {
+        match &self.config.auth_method {
+            AuthMethod::None => Err(ConnectionError::Authentication(
+                "No authentication method configured".into(),
+            )),
+            AuthMethod::Password(password) => self.authenticate_password(session, password).await,
+            AuthMethod::PublicKey {
+                key_path,
+                passphrase,
+            } => {
+                self.authenticate_publickey(session, key_path, passphrase.as_deref())
+                    .await
+            },
+            AuthMethod::Agent => self.authenticate_agent(session).await,
+            AuthMethod::KeyboardInteractive => Err(ConnectionError::Authentication(
+                "Keyboard interactive authentication not yet implemented".into(),
+            )),
+        }
+    }
+
+    /// 密码认证
+    async fn authenticate_password(
+        &self,
+        session: &mut Handle<SshHandler>,
+        password: &str,
+    ) -> Result<(), ConnectionError> {
+        debug!(
+            "Attempting password authentication for user: {}",
+            self.config.username
+        );
+
+        let auth_result = session
+            .authenticate_password(&self.config.username, password)
+            .await
+            .map_err(|e| ConnectionError::Authentication(e.to_string()))?;
+
+        if auth_result.success() {
+            info!("Password authentication successful");
+            Ok(())
+        } else {
+            Err(ConnectionError::Authentication(
+                "Password authentication failed".into(),
+            ))
+        }
+    }
+
+    /// 公钥认证
+    async fn authenticate_publickey(
+        &self,
+        session: &mut Handle<SshHandler>,
+        key_path: &std::path::Path,
+        passphrase: Option<&str>,
+    ) -> Result<(), ConnectionError> {
+        debug!(
+            "Attempting public key authentication for user: {} with key: {:?}",
+            self.config.username, key_path
+        );
+
+        // 加载私钥
+        let key_pair = russh::keys::load_secret_key(key_path, passphrase)
+            .map_err(|e| ConnectionError::Authentication(format!("Failed to load key: {}", e)))?;
+
+        // 创建带哈希算法的私钥
+        let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), None);
+
+        let auth_result = session
+            .authenticate_publickey(&self.config.username, key_with_hash)
+            .await
+            .map_err(|e| ConnectionError::Authentication(e.to_string()))?;
+
+        if auth_result.success() {
+            info!("Public key authentication successful");
+            Ok(())
+        } else {
+            Err(ConnectionError::Authentication(
+                "Public key authentication failed".into(),
+            ))
+        }
+    }
+
+    /// SSH Agent认证
+    async fn authenticate_agent(
+        &self,
+        _session: &mut Handle<SshHandler>,
+    ) -> Result<(), ConnectionError> {
+        Err(ConnectionError::Authentication(
+            "SSH Agent authentication not yet implemented".into(),
+        ))
+    }
+
+    /// 获取配置
+    pub fn config(&self) -> &SshConfig {
+        &self.config
+    }
+}
+
+#[async_trait]
+impl TerminalConnection for SshConnection {
+    async fn write(&self, bytes: &[u8]) -> Result<(), ConnectionError> {
+        // 取出 channel，释放锁
+        let channel = {
+            let mut inner = self.inner.lock();
+            inner.channel.take().ok_or(ConnectionError::NotConnected)?
+        };
+
+        // 发送数据到通道
+        let result = channel.data(bytes).await;
+
+        // 放回 channel
+        {
+            let mut inner = self.inner.lock();
+            inner.channel = Some(channel);
+        }
+
+        result.map_err(|e| ConnectionError::Io(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn resize(&self, rows: u16, cols: u16) -> Result<(), ConnectionError> {
+        // 取出 channel，释放锁
+        let channel = {
+            let mut inner = self.inner.lock();
+            inner.channel.take().ok_or(ConnectionError::NotConnected)?
+        };
+
+        // 发送窗口大小变更
+        let result = channel.window_change(cols as u32, rows as u32, 0, 0).await;
+
+        // 放回 channel 并更新终端尺寸
+        {
+            let mut inner = self.inner.lock();
+            inner.channel = Some(channel);
+            inner.terminal_size = (cols, rows);
+        }
+
+        result.map_err(|e| ConnectionError::Io(e.to_string()))?;
+        debug!("Terminal resized to {}x{}", cols, rows);
+
+        Ok(())
+    }
+
+    fn receive_stream(&self) -> BoxStream<'static, Result<Vec<u8>, ConnectionError>> {
+        let mut inner = self.inner.lock();
+
+        if let Some(receiver) = inner.data_receiver.take() {
+            // 将receiver 转换为 Stream
+            let stream = tokio_stream::wrappers::UnboundedReceiverStream::new(receiver);
+            Box::pin(stream.map(Ok))
+        } else {
+            // 已经被取走了，返回空流
+            warn!("receive_stream() called multiple times, returning empty stream");
+            Box::pin(futures::stream::empty())
+        }
+    }
+
+    async fn close(&self) -> Result<(), ConnectionError> {
+        info!("Closing SSH connection...");
+
+        // 取出 channel 和 session，释放锁
+        let (channel, session) = {
+            let mut inner = self.inner.lock();
+            (inner.channel.take(), inner.session.take())
+        };
+
+        // 发送 EOF
+        if let Some(channel) = channel {
+            if let Err(e) = channel.eof().await {
+                warn!("Failed to send EOF: {}", e);
+            }
+        }
+
+        // 断开连接
+        if let Some(session) = session {
+            if let Err(e) = session
+                .disconnect(
+                    russh::Disconnect::ByApplication,
+                    "User requested disconnect",
+                    "",
+                )
+                .await
+            {
+                warn!("Failed to disconnect: {}", e);
+            }
+        }
+
+        // 清理剩余状态
+        {
+            let mut inner = self.inner.lock();
+            inner.data_receiver = None;
+        }
+
+        self.connected
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+
+        info!("SSH connection closed");
+        Ok(())
+    }
+}
+
+impl ConnectionInfo for SshConnection {
+    fn is_connected(&self) -> bool {
+        self.connected.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn connection_type(&self) -> ConnectionType {
+        ConnectionType::Ssh
+    }
+
+    fn remote_address(&self) -> Option<String> {
+        if self.is_connected() {
+            Some(self.config.address())
+        } else {
+            None
+        }
+    }
+
+    fn connected_at(&self) -> Option<Instant> {
+        self.inner.lock().connected_at
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ssh_connection_new() {
+        let config = SshConfig::new("example.com", "user").with_password("secret");
+        let conn = SshConnection::new(config);
+
+        assert!(!conn.is_connected());
+        assert_eq!(conn.connection_type(), ConnectionType::Ssh);
+        assert_eq!(conn.remote_address(), None);
+    }
+
+    #[test]
+    fn test_ssh_connection_config() {
+        let config = SshConfig::new("example.com", "user")
+            .with_port(2222)
+            .with_password("secret");
+        let conn = SshConnection::new(config);
+
+        assert_eq!(conn.config().host, "example.com");
+        assert_eq!(conn.config().port, 2222);
+        assert_eq!(conn.config().username, "user");
+    }
+}

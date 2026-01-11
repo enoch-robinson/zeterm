@@ -29,9 +29,25 @@ pub enum ConnectionError {
     #[error("Connection disconnected")]
     Disconnected,
 
+    ///未连接
+    #[error("Not connected")]
+    NotConnected,
+
+    /// 连接错误
+    #[error("Connection error: {0}")]
+    Connection(String),
+
+    /// 配置错误
+    #[error("Configuration error: {0}")]
+    Configuration(String),
+
+    /// 认证错误
+    #[error("Authentication error: {0}")]
+    Authentication(String),
+
     /// IO 错误
     #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(String),
 
     /// SSH 协议错误
     #[error("SSH error: {0}")]
@@ -61,7 +77,10 @@ impl ConnectionError {
 
     /// 检查是否是致命错误
     pub fn is_fatal(&self) -> bool {
-        matches!(self, Self::Refused | Self::DnsResolution(_))
+        matches!(
+            self,
+            Self::Refused | Self::DnsResolution(_) | Self::Authentication(_)
+        )
     }
 }
 
