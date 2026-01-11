@@ -8874,9 +8874,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "futures",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-stream",
  "tracing",
  "zeterm-core",
 ]

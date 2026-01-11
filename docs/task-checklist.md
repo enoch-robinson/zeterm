@@ -105,42 +105,50 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 创建 `traits/mod.rs` 模块文件 | P0 | 0.25h |
-| ⬜ | 创建 `traits/connection.rs` 文件 | P0 | 0.25h |
-| ⬜ | 定义 `TerminalConnection` trait | P0 | 2h |
-| ⬜ | 定义 `write()` 方法签名 | P0 | 0.5h |
-| ⬜ | 定义 `resize()` 方法签名 | P0 | 0.5h |
-| ⬜ | 定义 `receive_stream()` 方法签名 | P0 | 0.5h |
-| ⬜ | 定义 `close()` 方法签名 | P0 | 0.5h |
-| ⬜ | 添加 `Send + Sync` 约束 | P0 | 0.25h |
+| ✅ | 创建 `traits/mod.rs` 模块文件 | P0 | 0.25h |
+| ✅ | 创建 `traits/connection.rs` 文件 | P0 | 0.25h |
+| ✅ | 定义 `TerminalConnection` trait | P0 | 2h |
+| ✅ | 定义 `write()` 方法签名 | P0 | 0.5h |
+| ✅ | 定义 `resize()` 方法签名 | P0 | 0.5h |
+| ✅ | 定义 `receive_stream()` 方法签名 | P0 | 0.5h |
+| ✅ | 定义 `close()` 方法签名 | P0 | 0.5h |
+| ✅ | 添加 `Send + Sync` 约束 | P0 | 0.25h |
 
 #### 2.3.2 ConnectionInfo Trait
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 定义 `ConnectionInfo` trait | P1 | 1h |
-| ⬜ | 定义 `is_connected()` 方法 | P1 | 0.25h |
-| ⬜ | 定义 `connection_type()` 方法 | P1 | 0.25h |
-| ⬜ | 定义 `remote_address()` 方法 | P1 | 0.25h |
-| ⬜ | 定义 `ConnectionType` 枚举 | P1 | 0.5h |
+| ✅ | 定义 `ConnectionInfo` trait | P1 | 1h |
+| ✅ | 定义 `is_connected()` 方法 | P1 | 0.25h |
+| ✅ | 定义 `connection_type()` 方法 | P1 | 0.25h |
+| ✅ | 定义 `remote_address()` 方法 | P1 | 0.25h |
+| ✅ | 定义 `ConnectionType` 枚举 | P1 | 0.5h |
 
 #### 2.3.3 错误类型定义
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 创建 `errors/mod.rs` 模块文件 | P0 | 0.25h |
-| ⬜ | 定义 `ConnectionError` 枚举 | P0 | 1h |
-| ⬜ | 实现 `std::error::Error` trait | P0 | 0.5h |
-| ⬜ | 添加错误变体: DnsResolution, Timeout, Refused 等 | P0 | 1h |
-| ⬜ | 实现 `is_retryable()` 方法 | P1 | 0.5h |
+| ✅ | 创建 `errors/mod.rs` 模块文件 | P0 | 0.25h |
+| ✅ | 定义 `ConnectionError` 枚举 | P0 | 1h |
+| ✅ | 实现 `std::error::Error` trait (thiserror) | P0 | 0.5h |
+| ✅ | 添加错误变体: DnsResolution, Timeout, Refused 等 | P0 | 1h |
+| ✅ | 实现 `is_retryable()` 方法 | P1 | 0.5h |
+| ✅ | 定义 `AuthError` 枚举 | P0 | 1h |
+| ✅ | 定义 `StorageError` 枚举 | P1 | 0.5h |
+| ✅ | 定义 `ConfigError` 枚举 | P1 | 0.5h |
 
 #### 2.3.4 基础实体定义
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 创建 `entities/mod.rs` 模块文件 | P0 | 0.25h |
-| ⬜ | 定义 `TerminalSize` 结构体 | P0 | 0.5h |
-| ⬜ | 定义 `SessionId` 类型 | P1 | 0.25h |
+| ✅ | 创建 `entities/mod.rs` 模块文件 | P0 | 0.25h |
+| ✅ | 定义 `TerminalSize` 结构体 | P0 | 0.5h |
+| ✅ | 定义 `SessionId` 类型 | P1 | 0.25h |
+| ✅ | 创建 `state/mod.rs` 模块文件 | P0 | 0.25h |
+| ✅ | 定义 `ConnectionState` 枚举 | P0 | 1h |
+| ✅ | 定义 `DisconnectReason` 枚举 | P0 | 0.5h |
+| ✅ | 定义 `UiConnectionStatus` 枚举 | P1 | 0.5h |
+| ✅ | 更新 `lib.rs` 导出所有模块 | P0 | 0.25h |
 
 ---
 
@@ -150,27 +158,31 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 创建 `mock_connection.rs` 文件 | P0 | 0.25h |
-| ⬜ | 定义 `MockConnection` 结构体 | P0 | 0.5h |
-| ⬜ | 添加 mpsc channel 字段 | P0 | 0.5h |
-| ⬜ | 实现 `new()` 构造函数 | P0 | 1h |
+| ✅ | 创建 `lib.rs` 实现 MockConnection | P0 | 0.25h |
+| ✅ | 定义 `MockConnection` 结构体 | P0 | 0.5h |
+| ✅ | 添加 mpsc channel 字段 | P0 | 0.5h |
+| ✅ | 实现 `new()` 构造函数 | P0 | 1h |
+| ✅ | 定义 `MockConfig` 配置结构体 | P0 | 0.5h |
 
 #### 2.4.2 TerminalConnection 实现
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 实现 `write()` 方法 (打印到日志) | P0 | 0.5h |
-| ⬜ | 实现 `resize()` 方法 (记录尺寸) | P0 | 0.5h |
-| ⬜ | 实现 `receive_stream()` 方法 | P0 | 2h |
-| ⬜ | 实现 `close()` 方法 | P0 | 0.5h |
+| ✅ | 实现 `write()` 方法 (回显输入) | P0 | 0.5h |
+| ✅ | 实现 `resize()` 方法 (记录尺寸) | P0 | 0.5h |
+| ✅ | 实现 `receive_stream()` 方法 | P0 | 2h |
+| ✅ | 实现 `close()` 方法 | P0 | 0.5h |
+| ✅ | 实现 `ConnectionInfo` trait | P0 | 0.5h |
 
 #### 2.4.3 测试数据生成
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 实现定时输出 "Hello World\n" | P0 | 1h |
-| ⬜ | 实现 `inject_output()` 方法 (测试用) | P1 | 1h |
-| ⬜ | 支持配置输出频率 | P2 | 0.5h |
+| ✅ | 实现定时自动输出功能 | P0 | 1h |
+| ✅ | 实现 `inject_output()` 方法 (测试用) | P1 | 1h |
+| ✅ | 支持配置输出频率 (MockConfig) | P2 | 0.5h |
+| ✅ | 实现 `inject_colored_text()` 方法 | P2 | 0.5h |
+| ✅ | 添加单元测试 | P0 | 1h |
 
 ---
 
@@ -254,10 +266,12 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 配置 tracing-subscriber | P1 | 1h |
-| ⬜ | 设置日志级别过滤 | P1 | 0.5h |
-| ⬜ | 配置日志输出格式 | P2 | 0.5h |
-| ⬜ | 添加关键位置的日志输出 | P1 | 1h |
+| ✅ | 配置 tracing-subscriber | P1 | 1h |
+| ✅ | 设置日志级别过滤 (EnvFilter) | P1 | 0.5h |
+| ✅ | 配置日志输出格式 | P2 | 0.5h |
+| ✅ | 创建 `LogConfig` 配置结构体 | P1 | 0.5h |
+| ✅ | 实现 `init_logging()` 函数 | P0 | 0.5h |
+| ✅ | 添加开发/生产环境配置预设 | P2 | 0.5h |
 
 ---
 
