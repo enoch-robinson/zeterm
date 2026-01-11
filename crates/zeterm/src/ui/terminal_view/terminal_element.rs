@@ -220,10 +220,10 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        let theme = cx.theme();
-
-        // 动态计算字体度量
+        // 动态计算字体度量 (先调用，避免借用冲突)
         let font_metrics = self.calculate_font_metrics(window, cx);
+
+        let theme = cx.theme();
 
         // 计算终端尺寸
         let cols = (bounds.size.width / font_metrics.cell_width).floor() as usize;
@@ -249,7 +249,7 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let theme = cx.theme();
+        let theme = cx.theme().clone();
 
         // 1. 绘制背景
         window.paint_quad(fill(bounds, prepaint.background_color));
@@ -283,7 +283,7 @@ impl Element for TerminalElement {
 
             // 绘制背景色(如果不是默认背景)
             if !matches!(bg, AnsiColor::Named(NamedColor::Background)) {
-                let bg_color = self.convert_color(&bg, theme);
+                let bg_color = self.convert_color(&bg, &theme);
                 //宽字符背景占用2列
                 let bg_width = if is_wide {
                     prepaint.font_metrics.cell_width * 2.0
@@ -307,7 +307,7 @@ impl Element for TerminalElement {
 
             // 绘制字符 (如果不是空格或空字符)
             if cell.c != ' ' && cell.c != '\0' {
-                let mut fg_color = self.convert_color(&fg, theme);
+                let mut fg_color = self.convert_color(&fg, &theme);
 
                 // 处理暗淡显示 (DIM)
                 if cell.flags.contains(Flags::DIM) {
