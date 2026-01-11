@@ -9,7 +9,8 @@ use std::time::Instant;
 use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
-use tokio::sync::Mutex;
+use std::sync::Mutex;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::mpsc;
 use tracing::{debug, info};
 
@@ -45,14 +46,14 @@ pub struct MockConnection {
     config: MockConfig,
     /// 数据接收通道发送端
     data_tx: mpsc::Sender<Vec<u8>>,
-    /// 数据接收通道接收端（只能取出一次）
+    /// 数据接收通道接收端（只能取出一次，使用 std::sync::Mutex 避免异步阻塞）
     data_rx: Mutex<Option<mpsc::Receiver<Vec<u8>>>>,
     /// 是否已连接
     connected: AtomicBool,
     /// 连接时间
-    connected_at: Mutex<Option<Instant>>,
+    connected_at: AsyncMutex<Option<Instant>>,
     /// 终端尺寸
-    size: Mutex<(u16, u16)>,
+    size: AsyncMutex<(u16, u16)>,
     /// 自动输出任务取消标志
     cancel_auto_output: AtomicBool,
 }
@@ -67,8 +68,8 @@ impl MockConnection {
             data_tx,
             data_rx: Mutex::new(Some(data_rx)),
             connected: AtomicBool::new(false),
-            connected_at: Mutex::new(None),
-            size: Mutex::new((24, 80)),
+            connected_at: AsyncMutex::new(None),
+            size: AsyncMutex::new((24, 80)),
             cancel_auto_output: AtomicBool::new(false),
         }
     }
@@ -187,9 +188,9 @@ impl TerminalConnection for MockConnection {
     }
 
     fn receive_stream(&self) -> BoxStream<'static, Result<Vec<u8>, ConnectionError>> {
-        //尝试获取接收端（只能获取一次）
+        // 尝试获取接收端（只能获取一次）
         let rx = {
-            let mut guard = self.data_rx.blocking_lock();
+            let mut guard = self.data_rx.lock().unwrap();
             guard.take()
         };
 

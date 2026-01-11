@@ -86,3 +86,39 @@ impl Default for ConnectionManager {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zeterm_core::ConnectionState;
+
+    #[test]
+    fn test_connection_manager_new() {
+        let manager = ConnectionManager::new();
+        assert!(!manager.is_connected());
+        assert!(!manager.is_cancelled());
+        assert!(matches!(manager.state(), ConnectionState::Idle));
+    }
+
+    #[test]
+    fn test_connection_manager_default() {
+        let manager = ConnectionManager::default();
+        assert!(!manager.is_connected());
+    }
+
+    #[test]
+    fn test_connection_manager_cancel() {
+        let manager = ConnectionManager::new();
+        assert!(!manager.is_cancelled());
+
+        manager.cancel();
+        assert!(manager.is_cancelled());
+    }
+
+    #[test]
+    fn test_connection_manager_state_idle() {
+        let manager = ConnectionManager::new();
+        let state = manager.state();
+        assert!(matches!(state, ConnectionState::Idle));
+        assert!(!state.is_active());
+    }
+}

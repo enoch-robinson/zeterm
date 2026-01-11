@@ -82,20 +82,20 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 创建 main.rs 入口文件 | P0 | 0.5h |
-| ⬜ | 初始化 GPUI App | P0 | 1h |
-| ⬜ | 创建主窗口 (Window) | P0 | 1h |
-| ⬜ | 设置窗口标题和默认尺寸 | P1 | 0.5h |
-| ⬜ | 配置窗口最小尺寸限制 | P2 | 0.25h |
+| ✅ | 创建 main.rs 入口文件 | P0 | 0.5h |
+| ✅ | 初始化 GPUI App | P0 | 1h |
+| ✅ | 创建主窗口 (Window) | P0 | 1h |
+| ✅ | 设置窗口标题和默认尺寸 | P1 | 0.5h |
+| ✅ | 配置窗口最小尺寸限制 | P2 | 0.25h |
 
 #### 2.2.2 gpui-component 集成
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 初始化 Root 组件 | P0 | 1h |
-| ⬜ | 配置默认主题 (Theme) | P0 | 0.5h |
-| ⬜ | 验证基础组件渲染 (Button, Text) | P1 | 1h |
-| ⬜ | 创建简单的测试布局 | P1 | 1h |
+| ✅ | 初始化 Root 组件 | P0 | 1h |
+| ✅ | 配置默认主题 (Theme) | P0 | 0.5h |
+| ✅ | 验证基础组件渲染 (Button, Text) | P1 | 1h |
+| ✅ | 创建简单的测试布局 | P1 | 1h |
 
 ---
 
@@ -192,30 +192,30 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 创建 `terminal_state.rs` 文件 | P0 | 0.25h |
-| ⬜ | 定义 `TerminalState` 结构体 | P0 | 1h |
-| ⬜ | 创建 `Term` 实例 | P0 | 2h |
-| ⬜ | 配置终端尺寸 (默认 80x24) | P0 | 0.5h |
-| ⬜ | 配置滚动缓冲区大小 | P1 | 0.5h |
+| ✅ | 创建 `terminal_state.rs` 文件 | P0 | 0.25h |
+| ✅ | 定义 `TerminalState` 结构体 | P0 | 1h |
+| ✅ | 创建 `Term` 实例 | P0 | 2h |
+| ✅ | 配置终端尺寸 (默认 80x24) | P0 | 0.5h |
+| ✅ | 配置滚动缓冲区大小 | P1 | 0.5h |
 
 #### 2.5.2 EventListener 实现
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 定义 `EventProxy` 结构体 | P0 | 0.5h |
-| ⬜ | 实现 `EventListener` trait | P0 | 2h |
-| ⬜ | 处理 `PtyWrite` 事件 | P0 | 1h |
-| ⬜ | 处理 `Title` 事件 | P2 | 0.5h |
-| ⬜ | 处理 `Bell` 事件 | P2 | 0.5h |
+| ✅ | 定义 `EventProxy` 结构体 | P0 | 0.5h |
+| ✅ | 实现 `EventListener` trait | P0 | 2h |
+| ✅ | 处理 `PtyWrite` 事件 | P0 | 1h |
+| ✅ | 处理 `Title` 事件 | P2 | 0.5h |
+| ✅ | 处理 `Bell` 事件 | P2 | 0.5h |
 
 #### 2.5.3 核心方法实现
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 实现 `advance_bytes()` 方法 | P0 | 1h |
-| ⬜ | 实现 `renderable_content()` 方法 | P0 | 1h |
-| ⬜ | 实现 `resize()` 方法 | P0 | 1h |
-| ⬜ | 实现线程安全访问 (Arc<Mutex<Term>>) | P0 | 1h |
+| ✅ | 实现 `advance_bytes()` 方法 | P0 | 1h |
+| ✅ | 实现 `renderable_content()` 方法 | P0 | 1h |
+| ✅ | 实现 `resize()` 方法 | P0 | 1h |
+| ✅ | 实现线程安全访问 (Arc<Mutex<Term>>) | P0 | 1h |
 
 ---
 
@@ -225,20 +225,20 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 创建 `session_coordinator.rs` 文件 | P0 | 0.25h |
-| ⬜ | 定义 `SessionCoordinator` 结构体 | P0 | 1h |
-| ⬜ | 添加 `TerminalState` 字段 | P0 | 0.5h |
-| ⬜ | 添加 `ConnectionManager` 字段 | P0 | 0.5h |
-| ⬜ | 实现 `new()` 构造函数 | P0 | 1h |
+| ✅ | 创建 `session_coordinator.rs` 文件 | P0 | 0.25h |
+| ✅ | 定义 `SessionCoordinator` 结构体 | P0 | 1h |
+| ✅ | 添加 `TerminalState` 字段 | P0 | 0.5h |
+| ✅ | 添加 `ConnectionManager` 字段 | P0 | 0.5h |
+| ✅ | 实现 `new()` 构造函数 | P0 | 1h |
 
 #### 2.6.2 ConnectionManager 实现
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 创建 `connection_manager.rs` 文件 | P0 | 0.25h |
-| ⬜ | 定义 `ConnectionManager` 结构体 | P0 | 1h |
-| ⬜ | 添加后端连接字段 | P0 | 0.5h |
-| ⬜ | 添加 CancellationToken 字段 | P0 | 0.5h |
+| ✅ | 创建 `connection_manager.rs` 文件 | P0 | 0.25h |
+| ✅ | 定义 `ConnectionManager` 结构体 | P0 | 1h |
+| ✅ | 添加后端连接字段 | P0 | 0.5h |
+| ✅ | 添加 CancellationToken 字段 | P0 | 0.5h |
 
 #### 2.6.3 Data Pump 实现
 
@@ -279,10 +279,10 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | MockConnection 单元测试 | P0 | 2h |
-| ⬜ | TerminalState 单元测试 | P0 | 2h |
-| ⬜ | ConnectionManager 单元测试 | P1 | 2h |
-| ⬜ | 集成测试: Mock → Alacritty 数据流 | P0 | 3h |
+| ✅ | MockConnection 单元测试 | P0 | 2h |
+| ✅ | TerminalState 单元测试 | P0 | 2h |
+| ✅ | ConnectionManager 单元测试 | P1 | 2h |
+| ✅ | 集成测试: Mock → Alacritty 数据流 | P0 | 3h |
 
 ---
 
@@ -290,12 +290,12 @@
 
 | 状态 | 验证项 |
 |------|--------|
-| ⬜ | 运行 `cargo build`，编译成功 |
-| ⬜ | 运行 `cargo run`，看到 GPUI 窗口 |
-| ⬜ | gpui-component 基础组件正常渲染 |
-| ⬜ | MockConnection 每秒输出 "Hello World\n" |
-| ⬜ | 控制台打印 Alacritty 解析后的内容 |
-| ⬜ | 运行 `cargo test`，所有测试通过 |
+| ✅ | 运行 `cargo build`，编译成功 |
+| ✅ | 运行 `cargo run`，看到 GPUI 窗口 |
+| ✅ | gpui-component 基础组件正常渲染 |
+| ✅ | MockConnection 每秒输出 "Hello World\n" |
+| ✅ | 控制台打印 Alacritty 解析后的内容 |
+| ✅ | 运行 `cargo test`，所有测试通过 |
 
 ---
 
