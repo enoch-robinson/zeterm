@@ -70,18 +70,36 @@ pub trait TerminalConnection: Send + Sync {
 
 ## 五、技术栈
 
-| 领域 | 技术选型 |
-|------|----------|
-| UI 框架 | GPUI (Zed) |
-| 终端模拟 | alacritty_terminal |
-| SSH 协议 | russh |
-| 异步运行时 | Tokio |
-| 数据存储 | SQLite (sqlx) |
-| 配置格式 | TOML |
+| 领域 | 技术选型 | 说明 |
+|------|----------|------|
+| UI 框架 | GPUI (Zed) | GPU 加速渲染引擎 |
+| UI 组件库 | gpui-component | 60+ 现成组件，Dock 布局 |
+| 终端模拟 | alacritty_terminal | 成熟的终端状态机 |
+| SSH 协议 | russh | 纯 Rust 异步 SSH |
+| 异步运行时 | Tokio | Rust 生态标准 |
+| 数据存储 | SQLite (sqlx) | 轻量跨平台 |
+| 配置格式 | TOML | 人类可读 |
 
 ---
 
-## 六、文档导航
+## 六、gpui-component 组件复用
+
+| 组件 | 用途 |
+|------|------|
+| `Button`, `Input`, `Modal` | 连接对话框、设置界面 |
+| `Table` | 主机列表、SFTP 文件列表 |
+| `Tree` | 文件浏览器树形结构 |
+| `Tab` | 多标签页管理 |
+| `Dock` | 分屏布局（水平/垂直分割） |
+| `Dropdown`, `ContextMenu` | 右键菜单、下拉选择 |
+| `Notification`, `Toast` | 连接状态提示 |
+| `Progress` | 文件传输进度 |
+
+>📖 组件文档: https://docs.rs/gpui-component
+
+---
+
+## 七、文档导航
 
 ### 架构设计
 
@@ -110,7 +128,7 @@ pub trait TerminalConnection: Send + Sync {
 
 ---
 
-## 七、快速开始
+## 八、快速开始
 
 ```bash
 # 克隆项目
@@ -126,9 +144,10 @@ cargo test
 
 ---
 
-## 八、参考资源
+## 九、参考资源
 
 - [GPUI 文档](https://docs.rs/gpui)
+- [GPUI Component](https://github.com/longbridge/gpui-component) - UI 组件库
 - [Alacritty Terminal](https://github.com/alacritty/alacritty)
 - [Russh](https://github.com/warp-tech/russh)
 - [Zed Editor](https://github.com/zed-industries/zed)
