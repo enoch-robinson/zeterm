@@ -1,0 +1,150 @@
+name: Build
+
+on:
+    push:
+        branches: [main, master]
+        tags:
+            - "v*"
+    pull_request:
+        branches: [main, master]
+    workflow_dispatch:
+
+env:
+    CARGO_TERM_COLOR: always
+
+jobs:
+    build:
+        name: Build - ${{ matrix.platform.name }}
+        runs-on: ${{ matrix.platform.os }}
+        strategy:
+            fail-fast: false
+            matrix:
+                platform:
+                    - name: Windows x64
+                      os: windows-latest
+                      target: x86_64-pc-windows-msvc
+                      artifact: zeterm-windows-x64
+                      ext: .exe
+
+                    - name: Linux x64
+                      os: ubuntu-latest
+                      target: x86_64-unknown-linux-gnu
+                      artifact: zeterm-linux-x64
+                      ext: ""
+
+                    - name: macOS x64
+                      os: macos-latest
+                      target: x86_64-apple-darwin
+                      artifact: zeterm-macos-x64
+                      ext: ""
+
+                    - name: macOS ARM64
+                      os: macos-latest
+                      target: aarch64-apple-darwin
+                      artifact: zeterm-macos-arm64
+                      ext: ""
+
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+
+            - name: Install Rust toolchain
+              uses: dtolnay/rust-action@stable
+              with:
+                  targets: ${{ matrix.platform.target }}
+
+            # Linux dependencies
+            - name: Install Linux dependencies
+              if: runner.os == 'Linux'
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y \
+                    libxcb-shape0-dev \
+                    libxcb-xfixes0-dev \
+                    libxkbcommon-dev \
+                    libxkbcommon-x11-dev \
+                    libwayland-dev \
+                    libvulkan-dev \
+                    libssl-dev \
+                    pkg-config \
+                    cmake
+
+            # Windows dependencies
+            - name: Install Windows dependencies
+              if: runner.os == 'Windows'
+              run: |
+                  choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+
+            # macOS dependencies
+            - name: Install macOS dependencies
+              if: runner.os == 'macOS'
+              run: |
+                  brew install cmake
+
+            - name: Setup Rust cache
+              uses: Swatinem/rust-cache@v2
+              with:
+                  key: ${{ matrix.platform.target }}
+
+            - name: Build release binary
+              run: cargo build --release --target ${{ matrix.platform.target }}
+
+            - name: Prepare artifact (Unix)
+              if: runner.os != 'Windows'
+              run: |
+                  mkdir -p artifacts
+                  cp target/${{ matrix.platform.target }}/release/zeterm${{ matrix.platform.ext }} artifacts/
+                  chmod +x artifacts/zeterm${{ matrix.platform.ext }}
+
+            - name: Prepare artifact (Windows)
+              if: runner.os == 'Windows'
+              shell: pwsh
+              run: |
+                  New-Item -ItemType Directory -Force -Path artifacts
+                  Copy-Item "target/${{ matrix.platform.target }}/release/zeterm${{ matrix.platform.ext }}" -Destination "artifacts/"
+
+            - name: Upload artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ${{ matrix.platform.artifact }}
+                  path: artifacts/
+                  retention-days: 7
+
+    # Create release when tag is pushed
+    release:
+        name: Create Release
+        needs: build
+        if: startsWith(github.ref, 'refs/tags/v')
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+
+        steps:
+            - name: Download all artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  path: artifacts
+
+            - name: Prepare release files
+              run: |
+                  cd artifacts
+                  for dir in */; do
+                    name="${dir%/}"
+                    cd "$name"
+                    if [ -f "zeterm.exe" ]; then
+                      zip "../${name}.zip" zeterm.exe
+                    else
+                      tar -czvf "../${name}.tar.gz" zeterm
+                    fi
+                    cd ..
+                  done
+
+            - name: Create GitHub Release
+              uses: softprops/action-gh-release@v1
+              with:
+                  files: |
+                      artifacts/*.zip
+                      artifacts/*.tar.gz
+                  draft: false
+                  prerelease: ${{ contains(github.ref, '-') }}
+                  generate_release_notes: true
