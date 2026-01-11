@@ -11,8 +11,7 @@ use futures::stream::BoxStream;
 use parking_lot::Mutex;
 use russh::Channel;
 use russh::client::{self, Handle, Msg};
-use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use zeterm_core::errors::ConnectionError;
 use zeterm_core::traits::{ConnectionInfo, ConnectionType, TerminalConnection};

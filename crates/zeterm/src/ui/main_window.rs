@@ -22,6 +22,7 @@ use crate::app::session::SessionCoordinator;
 use crate::ui::terminal_view::TerminalElement;
 use zeterm_core::ConnectionState;
 use zeterm_mock::{MockConfig, MockConnection};
+use zeterm_ssh::{SshConfig, SshConnection};
 
 /// 主窗口视图
 ///
@@ -39,6 +40,14 @@ pub struct MainWindow {
     status_text: Arc<RwLock<String>>,
     /// 是否已启动数据泵
     data_pump_started: Arc<RwLock<bool>>,
+    /// SSH 主机地址
+    ssh_host: Arc<RwLock<String>>,
+    /// SSH 用户名
+    ssh_username: Arc<RwLock<String>>,
+    /// SSH 密码
+    ssh_password: Arc<RwLock<String>>,
+    /// SSH 端口
+    ssh_port: Arc<RwLock<u16>>,
 }
 
 impl MainWindow {
@@ -54,6 +63,10 @@ impl MainWindow {
             coordinator,
             status_text: Arc::new(RwLock::new("Ready".to_string())),
             data_pump_started: Arc::new(RwLock::new(false)),
+            ssh_host: Arc::new(RwLock::new("localhost".to_string())),
+            ssh_username: Arc::new(RwLock::new("root".to_string())),
+            ssh_password: Arc::new(RwLock::new(String::new())),
+            ssh_port: Arc::new(RwLock::new(22)),
         }
     }
 
@@ -130,6 +143,83 @@ impl MainWindow {
         cx.notify();
     }
 
+    /// 启动 SSH 连接
+    pub fn start_ssh_session(&self, cx: &mut Context<Self>) {
+        // 检查是否已启动
+        {
+            let started = self.data_pump_started.read();
+            if *started {
+                warn!("Session already started");
+                return;
+            }
+        }
+
+        info!("Starting SSH session...");
+
+        // 获取 SSH 配置
+        let host = self.ssh_host.read().clone();
+        let username = self.ssh_username.read().clone();
+        let password = self.ssh_password.read().clone();
+        let port = *self.ssh_port.read();
+
+        if host.is_empty() || username.is_empty() {
+            *self.status_text.write() = "Please enter host and username".to_string();
+            cx.notify();
+            return;
+        }
+
+        // 更新状态
+        {
+            *self.status_text.write() = format!("Connecting to {}@{}:{}...", username, host, port);
+        }
+
+        let coordinator = self.coordinator.clone();
+        let status_text = self.status_text.clone();
+        let data_pump_started = self.data_pump_started.clone();
+
+        // 使用 std::thread::spawn 启动独立线程
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+
+            rt.block_on(async move {
+                // 创建 SSH 配置
+                let config = SshConfig::new(&host, &username)
+                    .with_port(port)
+                    .with_password(&password)
+                    .with_terminal_size(80, 24);
+
+                // 创建 SSH 连接
+                let ssh_conn = SshConnection::new(config);
+
+                // 连接
+                info!("Connecting to SSH server...");
+                if let Err(e) = ssh_conn.connect().await {
+                    *status_text.write() = format!("SSH connection failed: {}", e);
+                    return;
+                }
+
+                // 设置连接并获取数据流
+                let stream = coordinator.set_connection(Box::new(ssh_conn));
+                *status_text.write() = format!("Connected to {}@{}:{}", username, host, port);
+                *data_pump_started.write() = true;
+
+                info!("SSH connection established, starting data pump...");
+
+                // 启动数据泵
+                coordinator
+                    .start_data_pump(stream, move || {
+                        debug!("Data pump notify callback triggered");
+                    })
+                    .await;
+
+                info!("Data pump stopped");
+                *status_text.write() = "Disconnected".to_string();
+                *data_pump_started.write() = false;
+            });
+        });
+
+        cx.notify();
+    }
     /// 断开连接
     pub fn disconnect(&self, _cx: &mut Context<Self>) {
         let coordinator = self.coordinator.clone();
@@ -248,6 +338,11 @@ impl MainWindow {
         let theme = cx.theme();
         let terminal_size = self.coordinator.terminal_size();
 
+        // 获取当前 SSH 配置值
+        let ssh_host = self.ssh_host.read().clone();
+        let ssh_username = self.ssh_username.read().clone();
+        let ssh_port = *self.ssh_port.read();
+
         div()
             .flex_1()
             .w_full()
@@ -261,7 +356,7 @@ impl MainWindow {
                     .flex()
                     .flex_col()
                     .items_center()
-                    .gap_4()
+                    .gap_6()
                     // 欢迎标题
                     .child(
                         div()
@@ -274,7 +369,66 @@ impl MainWindow {
                         div()
                             .text_size(px(14.0))
                             .text_color(theme.muted_foreground)
-                            .child("Phase 2: TerminalView集成测试"),
+                            .child("Phase 3: SSH集成测试"),
+                    )
+                    // SSH 连接信息显示
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .p_4()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(theme.border)
+                            .bg(theme.secondary)
+                            .child(
+                                div()
+                                    .text_size(px(14.0))
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .child("SSH Connection Settings"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(theme.muted_foreground)
+                                    .child(format!("Host: {}:{}", ssh_host, ssh_port)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(theme.muted_foreground)
+                                    .child(format!("Username: {}", ssh_username)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(theme.muted_foreground)
+                                    .child("Password: ********"),
+                            ),
+                    )
+                    // 连接按钮组
+                    .child(
+                        div()
+                            .flex()
+                            .gap_3()
+                            .child(
+                                Button::new("btn-ssh-connect")
+                                    .label("Connect SSH")
+                                    .primary()
+                                    .with_size(Size::Medium)
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.start_ssh_session(cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("btn-mock-connect")
+                                    .label("Connect Mock")
+                                    .with_size(Size::Medium)
+                                    .on_click(cx.listener(|this, _event, _window, cx| {
+                                        this.start_mock_session(cx);
+                                    })),
+                            ),
                     )
                     // 终端尺寸信息
                     .child(
@@ -286,24 +440,12 @@ impl MainWindow {
                                 terminal_size.cols, terminal_size.rows
                             )),
                     )
-                    // 连接按钮
-                    .child(
-                        div().flex().gap_2().child(
-                            Button::new("btn-connect")
-                                .label("Connect Mock")
-                                .primary()
-                                .with_size(Size::Medium)
-                                .on_click(cx.listener(|this, _event, _window, cx| {
-                                    this.start_mock_session(cx);
-                                })),
-                        ),
-                    )
-                    // 快捷键提示
+                    // 提示信息
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(px(11.0))
                             .text_color(theme.muted_foreground)
-                            .child("点击按钮连接 Mock 终端"),
+                            .child("提示: 修改 main_window.rs 中的 ssh_host/username/password 来配置连接"),
                     ),
             )
     }
