@@ -12,8 +12,10 @@
 |------|------|
 | [design.md](./design.md) | 总体设计概述 |
 | [roadmap.md](./roadmap.md) | 实现路径与里程碑 |
-| [api.md](./api.md) | API 文档 ⭐ NEW |
-| [quick-reference.md](./quick-reference.md) | 快速参考卡 ⭐ NEW |
+| [api.md](./api.md) | API 文档 |
+| [quick-reference.md](./quick-reference.md) | 快速参考卡 |
+| [implementation-guide.md](./implementation-guide.md) | 产品开发实现步骤 ⭐ NEW |
+| [task-checklist.md](./task-checklist.md) | 详细任务实现清单 ⭐ NEW |
 
 ### 架构设计 (`architecture/`)
 
