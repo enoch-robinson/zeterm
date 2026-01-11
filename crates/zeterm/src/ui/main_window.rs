@@ -19,6 +19,7 @@ use parking_lot::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::app::session::SessionCoordinator;
+use crate::ui::terminal_view::TerminalElement;
 use zeterm_core::ConnectionState;
 use zeterm_mock::{MockConfig, MockConnection};
 
@@ -217,10 +218,37 @@ impl MainWindow {
     fn render_content(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let is_connected = self.coordinator.is_connected();
-        let terminal_size = self.coordinator.terminal_size();
 
         div()
             .id("content")
+            .flex_1()
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(if is_connected {
+                // 连接后显示终端
+                div()
+                    .id("terminal-container")
+                    .flex_1()
+                    .w_full()
+                    .child(TerminalElement::new(
+                        self.coordinator.clone(),
+                        true, // focused
+                        true, // cursor_visible
+                    ))
+                    .into_any_element()
+            } else {
+                // 未连接时显示欢迎界面
+                self.render_welcome(cx).into_any_element()
+            })
+    }
+
+    /// 渲染欢迎界面
+    fn render_welcome(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let terminal_size = self.coordinator.terminal_size();
+
+        div()
             .flex_1()
             .w_full()
             .flex()
@@ -234,7 +262,7 @@ impl MainWindow {
                     .flex_col()
                     .items_center()
                     .gap_4()
-                    //欢迎标题
+                    // 欢迎标题
                     .child(
                         div()
                             .text_size(px(28.0))
@@ -246,7 +274,7 @@ impl MainWindow {
                         div()
                             .text_size(px(14.0))
                             .text_color(theme.muted_foreground)
-                            .child("Phase1: SessionCoordinator + Data Pump 集成完成"),
+                            .child("Phase 2: TerminalView集成测试"),
                     )
                     // 终端尺寸信息
                     .child(
@@ -262,21 +290,11 @@ impl MainWindow {
                     .child(
                         div().flex().gap_2().child(
                             Button::new("btn-connect")
-                                .label(if is_connected {
-                                    "Disconnect"
-                                } else {
-                                    "Connect Mock"
-                                })
+                                .label("Connect Mock")
                                 .primary()
                                 .with_size(Size::Medium)
                                 .on_click(cx.listener(|this, _event, _window, cx| {
-                                    if this.coordinator.is_connected() {
-                                        // 断开连接
-                                        this.disconnect(cx);
-                                    } else {
-                                        // 启动连接
-                                        this.start_mock_session(cx);
-                                    }
+                                    this.start_mock_session(cx);
                                 })),
                         ),
                     )
@@ -285,7 +303,7 @@ impl MainWindow {
                         div()
                             .text_size(px(12.0))
                             .text_color(theme.muted_foreground)
-                            .child("按 Ctrl+Q 退出"),
+                            .child("点击按钮连接 Mock 终端"),
                     ),
             )
     }
