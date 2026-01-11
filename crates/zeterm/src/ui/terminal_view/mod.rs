@@ -18,9 +18,17 @@ use tracing::{debug, info};
 
 use crate::app::session::SessionCoordinator;
 
+mod colors;
+mod font_metrics;
+mod key_mapping;
 mod terminal_element;
+mod wide_char;
 
+pub use colors::{ColorPalette, NamedColor, Rgb, TerminalColor, terminal_color_to_hsla};
+pub use font_metrics::FontMetrics;
+pub use key_mapping::{KeyMapping, Modifiers, keystroke_to_bytes};
 pub use terminal_element::TerminalElement;
+pub use wide_char::{CellContent, CharWidth, char_width, is_wide_char, string_width};
 
 /// 终端视图
 ///

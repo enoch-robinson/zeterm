@@ -10,6 +10,10 @@ license.workspace = true
 name = "zeterm"
 path = "src/main.rs"
 
+[lib]
+name = "zeterm"
+path = "src/lib.rs"
+
 [dependencies]
 # Internal crates
 zeterm-core.workspace = true
