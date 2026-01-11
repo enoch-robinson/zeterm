@@ -2,6 +2,7 @@
 //!
 //! 基于 Rust + GPUI 的跨平台 SSH 终端平台。
 
+mod app;
 mod logging;
 mod ui;
 
@@ -92,4 +93,3 @@ fn main() {
         info!("Zeterm initialized successfully");
     });
 }
-
