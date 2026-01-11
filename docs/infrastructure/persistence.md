@@ -6,10 +6,12 @@
 
 ## 一、设计目标
 
-1. **可靠存储** - 确保用户数据不丢失
-2. **快速访问** - 启动时快速加载
-3. **跨平台** - 支持 Windows/macOS/Linux
-4. **可迁移** - 支持导入导出
+| 目标 | 说明 |
+|------|------|
+| 可靠存储 | 确保用户数据不丢失 |
+| 快速访问 | 启动时快速加载 |
+| 跨平台 | 支持 Windows/macOS/Linux |
+| 可迁移 | 支持导入导出 |
 
 ---
 
@@ -22,7 +24,6 @@
 | 配置文件 | TOML 文件 | 用户可编辑 |
 | 主机列表 | SQLite | 支持搜索和分组 |
 | 会话历史 | SQLite | 连接记录 |
-| 命令历史 | SQLite | 可选功能 |
 | 敏感信息 | 系统密钥链 | 密码、私钥密码 |
 
 ### 2.2 目录结构
@@ -33,9 +34,7 @@
 %APPDATA%\zeterm\          # Windows
 ├── zeterm.db              # SQLite 数据库
 ├── sessions/              # 会话快照
-│   └── {session_id}.json
 └── logs/                  # 日志文件
-    └── zeterm.log
 ```
 
 ---
@@ -44,223 +43,90 @@
 
 ### 3.1 主机表 (`hosts`)
 
-```sql
-CREATE TABLE hosts (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    host TEXT NOT NULL,
-    port INTEGER DEFAULT 22,
-    username TEXT NOT NULL,
-    auth_type TEXT NOT NULL,  -- 'password', 'publickey', 'agent'
-    auth_data TEXT,           -- JSON,加密存储
-    group_name TEXT,
-    tags TEXT,-- JSON数组
-    terminal_config TEXT,     -- JSON,覆盖配置
-    startup_command TEXT,
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
-);
-
-CREATE INDEX idx_hosts_group ON hosts(group_name);
-CREATE INDEX idx_hosts_name ON hosts(name);
-```
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | TEXT PK | 唯一标识 |
+| `name` | TEXT | 显示名称 |
+| `host` | TEXT | 主机地址 |
+| `port` | INTEGER | 端口 (默认 22) |
+| `username` | TEXT | 用户名 |
+| `auth_type` | TEXT | 认证类型 |
+| `auth_data` | TEXT | 认证数据 (JSON, 加密) |
+| `group_name` | TEXT | 分组名称 |
+| `tags` | TEXT | 标签 (JSON 数组) |
+| `created_at` | INTEGER | 创建时间 |
+| `updated_at` | INTEGER | 更新时间 |
 
 ### 3.2 连接历史表 (`connection_history`)
 
-```sql
-CREATE TABLE connection_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    host_id TEXT NOT NULL,
-    connected_at INTEGER NOT NULL,
-    disconnected_at INTEGER,
-    duration_secs INTEGER,
-    disconnect_reason TEXT,
-    FOREIGN KEY (host_id) REFERENCES hosts(id)
-);
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | INTEGER PK | 自增 ID |
+| `host_id` | TEXT FK | 关联主机 |
+| `connected_at` | INTEGER | 连接时间 |
+| `disconnected_at` | INTEGER | 断开时间 |
+| `duration_secs` | INTEGER | 持续时长 |
+| `disconnect_reason` | TEXT | 断开原因 |
 
-CREATE INDEX idx_history_host ON connection_history(host_id);
-CREATE INDEX idx_history_time ON connection_history(connected_at DESC);
-```
+### 3.3 索引
 
-### 3.3 会话快照表 (`session_snapshots`)
-
-```sql
-CREATE TABLE session_snapshots (
-    id TEXT PRIMARY KEY,
-    host_id TEXT NOT NULL,
-    layout TEXT NOT NULL,     -- JSON,窗口布局
-    scroll_position INTEGER,
-    created_at INTEGER NOT NULL,
-    FOREIGN KEY (host_id) REFERENCES hosts(id)
-);
-```
+| 索引 | 字段 | 用途 |
+|------|------|------|
+| `idx_hosts_group` | `group_name` | 按分组查询 |
+| `idx_hosts_name` | `name` | 按名称搜索 |
+| `idx_history_time` | `connected_at DESC` | 最近连接 |
 
 ---
 
 ## 四、数据访问层
 
-### 4.1 Repository 接口
+### 4.1HostRepository接口
 
-```rust
-use async_trait::async_trait;
-use anyhow::Result;
+| 方法 | 说明 |
+|------|------|
+| `list_all()` | 获取所有主机 |
+| `list_by_group(group)` | 按分组获取|
+| `search(query)` | 搜索主机 |
+| `get(id)` | 获取单个主机 |
+| `create(host)` | 创建主机 |
+| `update(host)` | 更新主机 |
+| `delete(id)` | 删除主机 |
 
-#[async_trait]
-pub trait HostRepository: Send + Sync {
-    /// 获取所有主机
-    async fn list_all(&self) -> Result<Vec<HostConfig>>;
-    
-    /// 按分组获取
-    async fn list_by_group(&self, group: &str) -> Result<Vec<HostConfig>>;
-    
-    /// 搜索主机
-    async fn search(&self, query: &str) -> Result<Vec<HostConfig>>;
-    
-    /// 获取单个主机
-    async fn get(&self, id: &str) -> Result<Option<HostConfig>>;
-    
-    /// 创建主机
-    async fn create(&self, host: &HostConfig) -> Result<()>;
-    
-    /// 更新主机
-    async fn update(&self, host: &HostConfig) -> Result<()>;
-    
-    /// 删除主机
-    async fn delete(&self, id: &str) -> Result<()>;
-}
-```
+### 4.2 实现
 
-### 4.2 SQLite 实现
+使用 `sqlx` 实现 SQLite 访问：
 
-```rust
-use sqlx::{SqlitePool, sqlite::SqlitePoolOptions};
-
-pub struct SqliteHostRepository {
-    pool: SqlitePool,
-}
-
-impl SqliteHostRepository {
-    pub async fn new(db_path: &str) -> Result<Self> {
-        let pool = SqlitePoolOptions::new()
-            .max_connections(5)
-            .connect(&format!("sqlite:{}", db_path))
-            .await?;
-        
-        // 运行迁移
-        sqlx::migrate!("./migrations")
-            .run(&pool)
-            .await?;
-        
-        Ok(Self { pool })
-    }
-}
-
-#[async_trait]
-impl HostRepository for SqliteHostRepository {
-    async fn list_all(&self) -> Result<Vec<HostConfig>> {
-        let rows = sqlx::query_as!(
-            HostRow,
-            "SELECT * FROM hosts ORDER BY name"
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        
-        rows.into_iter()
-            .map(|r| r.try_into())
-            .collect()
-    }
-    
-    async fn search(&self, query: &str) -> Result<Vec<HostConfig>> {
-        let pattern = format!("%{}%", query);
-        let rows = sqlx::query_as!(
-            HostRow,
-            r#"
-            SELECT * FROM hosts 
-            WHERE name LIKE ? OR host LIKE ? OR tags LIKE ?
-            ORDER BY name
-            "#,
-            pattern, pattern, pattern
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        
-        rows.into_iter()
-            .map(|r| r.try_into())
-            .collect()
-    }
-    
-    // ... 其他方法实现
-}
-```
+- 连接池管理 (`SqlitePool`)
+- 编译时 SQL 检查 (`query_as!`)
+- 自动迁移 (`sqlx::migrate!`)
 
 ---
 
 ## 五、会话恢复
 
-### 5.1 会话状态结构
+### 5.1 会话快照内容
 
-```rust
-/// 可持久化的会话状态
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SessionSnapshot {
-    /// 会话 ID
-    pub id: String,
-    /// 关联的主机 ID
-    pub host_id: String,
-    
-    /// 窗口布局
-    pub layout: WindowLayout,
-    
-    /// 各终端的滚动位置
-    pub scroll_positions: HashMap<String, u32>,
-    
-    /// 创建时间
-    pub created_at: i64,
-}
+| 字段 | 说明 |
+|------|------|
+| `id` | 会话 ID |
+| `host_id` | 关联主机 |
+| `layout` | 窗口布局 (JSON) |
+| `scroll_positions` | 各终端滚动位置 |
+| `created_at` | 创建时间 |
 
-/// 窗口布局
-#[derive(Debug, Serialize, Deserialize)]
-pub enum WindowLayout {
-    Single { terminal_id: String },
-    Split {
-        direction: SplitDirection,
-        ratio: f32,
-        first: Box<WindowLayout>,
-        second: Box<WindowLayout>,
-    },
-}
+### 5.2 自动保存策略
+
+- **保存间隔**: 30 秒
+- **触发条件**: 布局变化、滚动位置变化
+- **保存内容**: 窗口布局、滚动位置
+
+### 5.3 恢复流程
+
 ```
-
-### 5.2 自动保存
-
-```rust
-impl SessionManager {
-    /// 启动自动保存任务
-    pub fn start_auto_save(&self, interval: Duration) {
-        let sessions = self.sessions.clone();
-        let db = self.db.clone();
-        
-        tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(interval);
-            loop {
-                ticker.tick().await;
-                
-                let snapshots: Vec<_> = sessions
-                    .read()
-                    .await
-                    .values()
-                    .map(|s| s.to_snapshot())
-                    .collect();
-                
-                for snapshot in snapshots {
-                    if let Err(e) = db.save_snapshot(&snapshot).await {
-                        tracing::warn!("保存会话快照失败: {}", e);
-                    }
-                }
-            }
-        });
-    }
-}
+1. 启动时检查 restore_session 配置
+2. 加载最近的会话快照
+3. 恢复窗口布局
+4. 重新建立连接 (可选)
 ```
 
 ---
@@ -269,60 +135,18 @@ impl SessionManager {
 
 ### 6.1 版本管理
 
-```rust
-/// 数据库版本
-const CURRENT_VERSION: u32 = 1;
-
-/// 检查并执行迁移
-pub async fn migrate(pool: &SqlitePool) -> Result<()> {
-    let version = get_db_version(pool).await?;
-    
-    if version < CURRENT_VERSION {
-        for v in version..CURRENT_VERSION {
-            run_migration(pool, v + 1).await?;
-        }
-    }
-    
-    Ok(())
-}
-```
+-数据库版本号存储在 `_meta` 表
+- 启动时检查版本，执行增量迁移
+- 迁移脚本位于 `migrations/` 目录
 
 ### 6.2 导入导出
 
-```rust
-/// 导出数据
-pub async fn export_data(db: &Database, path: &Path) -> Result<()> {
-    let export = ExportData {
-        version: CURRENT_VERSION,
-        hosts: db.hosts().list_all().await?,
-        // 不导出敏感信息
-    };
-    
-    let json = serde_json::to_string_pretty(&export)?;
-    std::fs::write(path, json)?;
-    Ok(())
-}
+| 操作 | 格式 | 内容 |
+|------|------|------|
+| 导出 | JSON | 主机列表 (不含密码) |
+| 导入 | JSON | 合并或覆盖主机 |
 
-/// 导入数据
-pub async fn import_data(db: &Database, path: &Path) -> Result<ImportResult> {
-    let content = std::fs::read_to_string(path)?;
-    let data: ExportData = serde_json::from_str(&content)?;
-    
-    let mut imported = 0;
-    let mut skipped = 0;
-    
-    for host in data.hosts {
-        if db.hosts().get(&host.id).await?.is_none() {
-            db.hosts().create(&host).await?;
-            imported += 1;
-        } else {
-            skipped += 1;
-        }
-    }
-    
-    Ok(ImportResult { imported, skipped })
-}
-```
+**注意**: 敏感信息不包含在导出文件中。
 
 ---
 

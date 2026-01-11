@@ -1,6 +1,6 @@
 # Zeterm 总体设计
 
-> 利用 Rust 强大的类型系统（Traits）切断 UI 层与网络层的直接耦合，实现一个高性能、易维护、易测试的现代化SSH 终端平台。
+> 基于 Rust + GPUI 的现代化SSH 终端平台
 
 ---
 
@@ -10,38 +10,43 @@
 
 ### 核心特性
 
--🚀 **高性能** - 基于 Rust 和 GPU 加速渲染
-- 🔌 **可扩展** - Trait 抽象支持多种连接后端
-- 🧪 **可测试** - 分层架构便于单元测试
-- 🎨 **现代 UI** - 基于 Zed 编辑器的GPUI 框架
+| 特性 | 说明 |
+|------|------|
+| 🚀 高性能 | 基于 Rust 和 GPU 加速渲染 |
+| 🔌 可扩展 | Trait抽象支持多种连接后端 |
+| 🧪 可测试 | 分层架构便于单元测试 |
+| 🎨 现代 UI | 基于 Zed 编辑器的 GPUI 框架 |
 
 ---
 
-## 二、架构总览
+## 二、五层架构
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                表现层 (Presentation)│
+│                表现层 (Presentation)                    │
 │GPUI Views│
 ├─────────────────────────────────────────────────────────────┤
-│                   状态模型层 (Model)                         │
-│                    App State & Logic│
+│                    应用层 (Application)                     │
+│                   Use Cases & Coordinators                  │
 ├─────────────────────────────────────────────────────────────┤
-│                适配器层 (Adapter)                        │
-│                    Traits & Interfaces│
+│                    领域层 (Domain)                          │
+│                 Entities, Traits & Rules                    │
 ├─────────────────────────────────────────────────────────────┤
-│                基础设施层 (Infrastructure)                 │
-│                   IO & External Services│
+│                    适配器层 (Adapter)                       │
+│                   Protocol Converters                       │
+├─────────────────────────────────────────────────────────────┤
+│                基础设施层 (Infrastructure)                  │
+│                   IO & External Services                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
->📖 详细设计见 [四层架构详解](./architecture/layers.md)
+>📖 详细设计见 [五层架构详解](./architecture/layers.md)
 
 ---
 
 ## 三、核心抽象
 
-整个系统最关键的设计是 `TerminalConnection` Trait，它将UI 与具体连接实现彻底解耦：
+整个系统最关键的设计是 `TerminalConnection` Trait：
 
 ```rust
 #[async_trait]
@@ -59,21 +64,49 @@ pub trait TerminalConnection: Send + Sync {
 
 ## 四、关键组件
 
-| 组件 | 职责 | 文档 |
+| 组件 | 层级 | 职责 |
 |------|------|------|
-| `SessionModel` | 会话状态管理，连接 UI 与后端 | [详情](./modules/session-model.md) |
-| `TerminalView` | 终端渲染视图 (移植自 Zed) | [详情](./modules/terminal-view.md) |
-| `SshConnection` | SSH 后端实现 (russh) | [详情](./modules/ssh-backend.md) |
-| `ConnectionStateMachine` | 连接生命周期状态机 | [详情](./core/state-machine.md) |
+| `TerminalView` | 表现层 | 终端渲染视图 (参考 Zed) |
+| `SessionCoordinator` | 应用层 | 协调终端状态与连接管理 |
+| `TerminalState` | 应用层 | 管理 Alacritty 终端状态 |
+| `ConnectionManager` | 应用层 | 管理连接后端和数据泵 |
+| `TerminalConnection` | 领域层 | 连接抽象 Trait |
+| `ConnectionStateMachine` | 领域层 | 连接生命周期状态机 |
+| `SshConnection` | 基础设施层 | SSH 后端实现 (russh) |
 
 ---
 
-## 五、技术栈
+## 五、组件分工
+
+### 5.1 终端渲染 vs窗口 UI
+
+| 组件类型 | 来源 | 用途 |
+|----------|------|------|
+| **终端渲染器** | 参考 Zed `terminal_view` | 字符网格、光标、选择 |
+| **窗口 UI 组件** | gpui-component | Tab、Dock、Modal、按钮等 |
+
+>⚠️ 终端渲染器需参考 Zed 实现，gpui-component 不提供终端渲染能力。
+
+### 5.2 gpui-component 复用
+
+| 组件 | 用途 |
+|------|------|
+| `Tab` | 多标签页管理 |
+| `Dock` | 分屏布局 |
+| `Tree` | 主机列表 |
+| `Table` | SFTP 文件列表 |
+| `Modal` + `Input` | 连接对话框 |
+| `ContextMenu` | 右键菜单 |
+| `Theme` | 颜色主题 |
+
+---
+
+## 六、技术栈
 
 | 领域 | 技术选型 | 说明 |
 |------|----------|------|
-| UI 框架 | GPUI (Zed) | GPU 加速渲染引擎 |
-| UI 组件库 | gpui-component | 60+ 现成组件，Dock 布局 |
+| UI框架 | GPUI (Zed) | GPU 加速渲染引擎 |
+| UI 组件库 | gpui-component | 60+ 现成组件 |
 | 终端模拟 | alacritty_terminal | 成熟的终端状态机 |
 | SSH 协议 | russh | 纯 Rust 异步 SSH |
 | 异步运行时 | Tokio | Rust 生态标准 |
@@ -82,53 +115,50 @@ pub trait TerminalConnection: Send + Sync {
 
 ---
 
-## 六、gpui-component 组件复用
+## 七、设计原则
 
-| 组件 | 用途 |
+| 原则 | 说明 |
 |------|------|
-| `Button`, `Input`, `Modal` | 连接对话框、设置界面 |
-| `Table` | 主机列表、SFTP 文件列表 |
-| `Tree` | 文件浏览器树形结构 |
-| `Tab` | 多标签页管理 |
-| `Dock` | 分屏布局（水平/垂直分割） |
-| `Dropdown`, `ContextMenu` | 右键菜单、下拉选择 |
-| `Notification`, `Toast` | 连接状态提示 |
-| `Progress` | 文件传输进度 |
-
->📖 组件文档: https://docs.rs/gpui-component
+| 分层解耦 | UI 层与网络层通过 Trait 彻底解耦 |
+| 异步优先 | 基于 Tokio 的全异步 IO 模型 |
+| 类型安全 | 利用 Rust 类型系统在编译期捕获错误 |
+| 可测试性 | 所有核心组件可Mock、可单测 |
+| 职责分离 | 终端状态与连接管理解耦 |
 
 ---
 
-## 七、文档导航
+## 八、文档导航
 
 ### 架构设计
 
-- [四层架构详解](./architecture/layers.md) - 分层设计与职责划分
-- [数据流与线程模型](./architecture/data-flow.md) - 数据流转与并发处理
+- [五层架构详解](./architecture/layers.md)
+- [数据流与线程模型](./architecture/data-flow.md)
 
 ### 核心抽象
 
-- [TerminalConnection Trait](./core/connection-trait.md) - 连接接口设计
-- [连接状态机](./core/state-machine.md) - 生命周期管理
-- [错误处理策略](./core/error-handling.md) - 错误类型与传播
+- [TerminalConnection Trait](./core/connection-trait.md)
+- [连接状态机](./core/state-machine.md)
+- [错误处理策略](./core/error-handling.md)
 
 ### 功能模块
 
-- [SSH 后端实现](./modules/ssh-backend.md) - russh 集成方案
-- [SFTP 模块](./modules/sftp.md) - 文件管理功能
+- [SessionModel](./modules/session-model.md)
+- [TerminalView](./modules/terminal-view.md)
+- [SSH 后端实现](./modules/ssh-backend.md)
+- [SFTP 模块](./modules/sftp.md)
 
 ### 基础设施
 
-- [配置管理](./infrastructure/config.md) - 配置系统设计
-- [数据持久化](./infrastructure/persistence.md) - 存储方案
+- [配置管理](./infrastructure/config.md)
+- [数据持久化](./infrastructure/persistence.md)
 
 ### 实现计划
 
-- [实现路径](./roadmap.md) - 分阶段开发计划与里程碑
+- [实现路径](./roadmap.md)
 
 ---
 
-## 八、快速开始
+## 九、快速开始
 
 ```bash
 # 克隆项目
@@ -144,10 +174,10 @@ cargo test
 
 ---
 
-## 九、参考资源
+## 十、参考资源
 
 - [GPUI 文档](https://docs.rs/gpui)
-- [GPUI Component](https://github.com/longbridge/gpui-component) - UI 组件库
+- [GPUI Component](https://github.com/longbridge/gpui-component)
+- [Zed Terminal源码](https://github.com/zed-industries/zed/tree/main/crates/terminal_view)
 - [Alacritty Terminal](https://github.com/alacritty/alacritty)
 - [Russh](https://github.com/warp-tech/russh)
-- [Zed Editor](https://github.com/zed-industries/zed)

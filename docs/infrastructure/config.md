@@ -6,134 +6,82 @@
 
 ## 一、设计目标
 
-1. **层次化配置** - 支持全局配置、主机配置、会话配置
-2. **多格式支持** - TOML 为主，兼容 JSON
-3. **安全存储** - 敏感信息加密或使用系统密钥链
-4. **热更新** - 部分配置支持运行时更新
+| 目标 | 说明 |
+|------|------|
+| 层次化配置 | 支持全局配置、主机配置、会话配置 |
+| 多格式支持 | TOML 为主，兼容 JSON |
+| 安全存储 | 敏感信息加密或使用系统密钥链 |
+| 热更新 | 部分配置支持运行时更新 |
 
 ---
 
-## 二、配置层次结构
+## 二、目录结构
 
 ```
-~/.config/zeterm/
-├── config.toml          # 全局配置
-├── hosts.toml           # 主机列表
-├── themes/# 主题配置
-│   ├── default.toml
-│   └── custom.toml
-└── keys/                # SSH 密钥 (可选)
-    └── ...
+~/.config/zeterm/          # Linux
+~/Library/Application Support/zeterm/  # macOS
+%APPDATA%\zeterm\          # Windows
+├── config.toml            # 全局配置
+├── hosts.toml             # 主机列表
+└── themes/                # 主题配置
+    └── custom.toml
 ```
 
 ---
 
 ## 三、全局配置 (`config.toml`)
 
-### 3.1 配置结构
+### 3.1 配置分类
 
-```rust
-use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+| 分类 | 说明 |
+|------|------|
+| `[general]` | 通用设置 (语言、日志等) |
+| `[terminal]` | 终端设置 (滚动、光标等) |
+| `[appearance]` | 外观设置 (主题、字体等) |
+| `[network]` | 网络设置 (超时、重连等) |
+| `[keybindings]` | 快捷键绑定 |
 
-/// 全局配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppConfig {
-    /// 通用设置
-    pub general: GeneralConfig,
-    
-    /// 终端设置
-    pub terminal: TerminalConfig,
-    
-    /// 外观设置
-    pub appearance: AppearanceConfig,
-    
-    /// 网络设置
-    pub network: NetworkConfig,
-    
-    /// 快捷键
-    pub keybindings: KeybindingsConfig,
-}
+### 3.2 配置项参考
 
-/// 通用设置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GeneralConfig {
-    /// 语言
-    pub language: String,
-    
-    /// 启动时恢复上次会话
-    pub restore_session: bool,
-    
-    /// 日志级别
-    pub log_level: LogLevel,
-    
-    /// 数据目录
-    pub data_dir: Option<PathBuf>,
-}
+#### General
 
-/// 终端设置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TerminalConfig {
-    /// 默认 Shell
-    pub default_shell: Option<String>,
-    
-    ///滚动缓冲区行数
-    pub scrollback_lines: u32,
-    
-    /// 光标样式
-    pub cursor_style: CursorStyle,
-    
-    /// 光标闪烁
-    pub cursor_blink: bool,
-    
-    /// 启用响铃
-    pub bell_enabled: bool,
-}
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `language` | "zh-CN" | 界面语言 |
+| `restore_session` | true | 启动时恢复上次会话 |
+| `log_level` | "info" | 日志级别 |
 
-/// 外观设置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppearanceConfig {
-    /// 主题名称
-    pub theme: String,
-    
-    /// 字体族
-    pub font_family: String,
-    
-    /// 字体大小
-    pub font_size: f32,
-    
-    /// 行高
-    pub line_height: f32,
-    
-    /// 窗口透明度
-    pub opacity: f32,
-}
+#### Terminal
 
-/// 网络设置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkConfig {
-    /// 连接超时 (秒)
-    pub connect_timeout: u64,
-    
-    /// 心跳间隔 (秒)
-    pub keepalive_interval: u64,
-    
-    /// 自动重连
-    pub auto_reconnect: bool,
-    
-    /// 最大重连次数
-    pub max_reconnect_attempts: u32,
-    
-    /// 代理设置
-    pub proxy: Option<ProxyConfig>,
-}
-```
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `scrollback_lines` | 10000 | 滚动缓冲区行数 |
+| `cursor_style` | "block" | 光标样式 (block/beam/underline) |
+| `cursor_blink` | true | 光标闪烁 |
+| `bell_enabled` | false | 启用响铃 |
 
-### 3.2 示例配置文件
+#### Appearance
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `theme` | "default" | 主题名称 |
+| `font_family` | "JetBrains Mono" | 字体族 |
+| `font_size` | 14.0 | 字体大小 |
+| `line_height` | 1.2 | 行高倍数 |
+| `opacity` | 1.0 |窗口透明度 |
+
+#### Network
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `connect_timeout` | 30| 连接超时 (秒) |
+| `keepalive_interval` | 60 | 心跳间隔 (秒) |
+| `auto_reconnect` | true | 自动重连 |
+| `max_reconnect_attempts` | 3 | 最大重连次数 |
+
+### 3.3 示例配置
 
 ```toml
-# Zeterm 全局配置
-
 [general]
 language = "zh-CN"
 restore_session = true
@@ -143,101 +91,48 @@ log_level = "info"
 scrollback_lines = 10000
 cursor_style = "block"
 cursor_blink = true
-bell_enabled = false
 
 [appearance]
 theme = "default"
 font_family = "JetBrains Mono"
 font_size = 14.0
-line_height = 1.2
-opacity = 1.0
 
 [network]
 connect_timeout = 30
 keepalive_interval = 60
 auto_reconnect = true
-max_reconnect_attempts = 3
-
-[keybindings]
-copy = "ctrl+shift+c"
-paste = "ctrl+shift+v"
-new_tab = "ctrl+shift+t"
-close_tab = "ctrl+shift+w"
-split_horizontal = "ctrl+shift+h"
-split_vertical = "ctrl+shift+v"
 ```
 
 ---
 
 ## 四、主机配置 (`hosts.toml`)
 
-### 4.1 结构定义
+### 4.1 主机字段
 
-```rust
-/// 主机配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HostConfig {
-    /// 唯一标识
-    pub id: String,
-    
-    /// 显示名称
-    pub name: String,
-    
-    /// 主机地址
-    pub host: String,
-    
-    /// 端口
-    pub port: u16,
-    
-    /// 用户名
-    pub username: String,
-    
-    /// 认证方式
-    pub auth: HostAuthConfig,
-    
-    /// 分组
-    pub group: Option<String>,
-    
-    /// 标签
-    pub tags: Vec<String>,
-    
-    /// 终端覆盖配置
-    pub terminal: Option<TerminalOverride>,
-    
-    /// 启动命令
-    pub startup_command: Option<String>,
-}
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `id` | ✅ | 唯一标识 |
+| `name` | ✅ | 显示名称 |
+| `host` | ✅ | 主机地址 |
+| `port` | ❌ | 端口 (默认 22) |
+| `username` | ✅ | 用户名 |
+| `auth` | ✅ | 认证配置 |
+| `group` | ❌ | 分组名称 |
+| `tags` | ❌ | 标签列表 |
+| `startup_command` | ❌ | 启动命令 |
 
-/// 主机认证配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum HostAuthConfig {
-    #[serde(rename = "password")]
-    Password {
-        /// 密码 (加密存储或引用密钥链)
-        password: SecretString,
-    },
-    
-    #[serde(rename = "publickey")]
-    PublicKey {
-        /// 私钥路径
-        key_path: PathBuf,
-        /// 私钥密码
-        passphrase: Option<SecretString>,
-    },
-    
-    #[serde(rename = "agent")]
-    Agent,
-    #[serde(rename = "ask")]
-    AskOnConnect,
-}
-```
+### 4.2 认证方式
 
-### 4.2 示例主机配置
+| 类型 | 配置 |
+|------|------|
+|密码 | `type = "password"`, `password = "..."` |
+| 公钥 | `type = "publickey"`, `key_path = "..."` |
+| Agent | `type = "agent"` |
+| 每次询问 | `type = "ask"` |
+
+### 4.3 示例
 
 ```toml
-# 主机列表
-
 [[hosts]]
 id = "prod-server-1"
 name = "生产服务器 1"
@@ -255,9 +150,7 @@ key_path = "~/.ssh/id_rsa"
 id = "dev-server"
 name = "开发服务器"
 host = "dev.example.com"
-port = 22
 username = "developer"
-group = "Development"
 
 [hosts.auth]
 type = "password"
@@ -266,153 +159,50 @@ password = "keychain:dev-server-password"  # 引用系统密钥链
 
 ---
 
-## 五、配置加载器
+## 五、敏感信息处理
 
-```rust
-use std::path::Path;
-use anyhow::Result;
+### 5.1 存储方式
 
-pub struct ConfigManager {
-    /// 配置目录
-    config_dir: PathBuf,
-    
-    /// 当前配置
-    app_config: AppConfig,
-    
-    /// 主机列表
-    hosts: Vec<HostConfig>,
-    
-    /// 配置变更通知
-    change_tx: broadcast::Sender<ConfigChange>,
-}
+| 方式 | 格式 | 说明 |
+|------|------|------|
+| 系统密钥链 | `keychain:key-name` | 推荐，最安全 |
+| 环境变量 | `env:VAR_NAME` | 适合CI/CD |
+| 明文 | 直接写入 | 不推荐 |
 
-impl ConfigManager {
-    /// 加载配置
-    pub fn load(config_dir: impl AsRef<Path>) -> Result<Self> {
-        let config_dir = config_dir.as_ref().to_path_buf();
-        
-        // 加载全局配置
-        let config_path = config_dir.join("config.toml");
-        let app_config = if config_path.exists() {
-            let content = std::fs::read_to_string(&config_path)?;
-            toml::from_str(&content)?
-        } else {
-            AppConfig::default()
-        };
-        
-        // 加载主机配置
-        let hosts_path = config_dir.join("hosts.toml");
-        let hosts = if hosts_path.exists() {
-            let content = std::fs::read_to_string(&hosts_path)?;
-            let hosts_file: HostsFile = toml::from_str(&content)?;
-            hosts_file.hosts
-        } else {
-            Vec::new()
-        };
-        
-        let (change_tx, _) = broadcast::channel(16);
-        
-        Ok(Self {
-            config_dir,
-            app_config,
-            hosts,
-            change_tx,
-        })
-    }
-    
-    /// 保存配置
-    pub fn save(&self) -> Result<()> {
-        // 保存全局配置
-        let config_content = toml::to_string_pretty(&self.app_config)?;
-        std::fs::write(
-            self.config_dir.join("config.toml"),
-            config_content,
-        )?;
-        
-        // 保存主机配置
-        let hosts_file = HostsFile { hosts: self.hosts.clone() };
-        let hosts_content = toml::to_string_pretty(&hosts_file)?;
-        std::fs::write(
-            self.config_dir.join("hosts.toml"),
-            hosts_content,
-        )?;
-        
-        Ok(())
-    }
-    
-    /// 订阅配置变更
-    pub fn subscribe(&self) -> broadcast::Receiver<ConfigChange> {
-        self.change_tx.subscribe()
-    }
-}
+### 5.2 密钥链集成
+
+- **macOS**: Keychain
+- **Windows**: Credential Manager
+- **Linux**: Secret Service (GNOME Keyring / KWallet)
+
+---
+
+## 六、配置加载流程
+
+```
+1. 确定配置目录 (平台相关)
+2. 加载config.toml (不存在则使用默认)
+3. 加载 hosts.toml (不存在则为空)
+4. 解析敏感信息引用 (keychain:/env:)
+5. 验证配置有效性
+6. 启动文件监听 (热更新)
 ```
 
 ---
 
-## 六、敏感信息处理
+## 七、热更新支持
 
-### 6.1 密钥链集成
-
-```rust
-use keyring::Entry;
-
-/// 密钥链管理器
-pub struct SecretStore {
-    service_name: String,
-}
-
-impl SecretStore {
-    pub fn new() -> Self {
-        Self {
-            service_name: "zeterm".to_string(),
-        }
-    }
-    
-    /// 存储密码
-    pub fn set_password(&self, key: &str, password: &str) -> Result<()> {
-        let entry = Entry::new(&self.service_name, key)?;
-        entry.set_password(password)?;
-        Ok(())
-    }
-    
-    /// 获取密码
-    pub fn get_password(&self, key: &str) -> Result<String> {
-        let entry = Entry::new(&self.service_name, key)?;
-        Ok(entry.get_password()?)
-    }
-    
-    /// 删除密码
-    pub fn delete_password(&self, key: &str) -> Result<()> {
-        let entry = Entry::new(&self.service_name, key)?;
-        entry.delete_password()?;
-        Ok(())
-    }
-}
-```
-
-### 6.2 密码引用解析
-
-```rust
-/// 解析密码配置
-pub fn resolve_password(value: &str, store: &SecretStore) -> Result<String> {
-    if value.starts_with("keychain:") {
-        // 从密钥链获取
-        let key = value.strip_prefix("keychain:").unwrap();
-        store.get_password(key)
-    } else if value.starts_with("env:") {
-        // 从环境变量获取
-        let var = value.strip_prefix("env:").unwrap();
-        std::env::var(var).map_err(|e| anyhow::anyhow!("环境变量不存在: {}", e))
-    } else {
-        // 直接使用 (不推荐)
-        Ok(value.to_string())
-    }
-}
-```
+| 配置类型 | 热更新 | 说明 |
+|----------|--------|------|
+| 外观设置 | ✅ | 立即生效 |
+| 快捷键 | ✅ | 立即生效 |
+| 终端设置 | ⚠️ | 新会话生效 |
+| 网络设置 | ⚠️ | 新连接生效 |
+| 主机列表 | ✅ | 立即生效 |
 
 ---
 
-## 七、相关文档
+## 八、相关文档
 
 - [持久化设计](./persistence.md) - 数据存储方案
 - [错误处理](../core/error-handling.md) - ConfigError 定义

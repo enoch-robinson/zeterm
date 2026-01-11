@@ -1,4 +1,4 @@
-# 四层架构详解
+# 五层架构详解
 
 > Zeterm 的分层架构设计与职责划分
 
@@ -8,123 +8,101 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    表现层 (Presentation)│
+│                    表现层 (Presentation)                    │
 │GPUI Views│
 ├─────────────────────────────────────────────────────────────┤
-│                   状态模型层 (Model)                         │
-│                    App State & Logic│
+│                    应用层 (Application)                     │
+│                   Use Cases & Coordinators                  │
+├─────────────────────────────────────────────────────────────┤
+│                    领域层 (Domain)│
+│                 Entities, Traits & Rules│
 ├─────────────────────────────────────────────────────────────┤
 │                适配器层 (Adapter)                        │
-│                    Traits & Interfaces│
+│                  Protocol Converters                │
 ├─────────────────────────────────────────────────────────────┤
-│                基础设施层 (Infrastructure)                 │
+│                基础设施层 (Infrastructure)                  │
 │                   IO & External Services│
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 二、表现层 (Presentation Layer)
+## 二、各层职责
 
-### 2.1 职责
+### 2.1 表现层 (Presentation)
 
-- **纯渲染** - 只负责将状态绘制到屏幕
-- **事件捕获** - 接收用户输入并向下传递
-- **无业务逻辑** - 不知道 SSH、网络等概念
-
-### 2.2 核心组件
-
-| 组件 | 职责 |
+| 职责 | 说明 |
 |------|------|
-| `TerminalView` | 终端字符网格渲染 |
-| `SftpView` | 文件管理器视图 |
-| `TabBar` | 标签页管理 |
-| `HostList` | 主机列表侧边栏 |
-| `StatusBar` | 状态栏显示 |
+| 纯渲染 | 将状态绘制到屏幕 |
+| 事件捕获 | 接收用户输入并向下传递 |
+| 无业务逻辑 | 不知道 SSH、网络等概念 |
 
-### 2.3 设计原则
+**核心组件**: `TerminalView`, `SftpView`, `HostListView`, `TabBar`
 
-```rust
-// ✅ 正确：View 只读取Model 状态
-impl Render for TerminalView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let content = self.session.read(cx).renderable_content();
-        // 渲染 content...
-    }
-}
+### 2.2 应用层 (Application)
 
-// ❌ 错误：View 直接操作网络
-impl Render for TerminalView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        self.ssh_client.send_data(...); // 不应该在这里！}
-}
-```
+| 职责 | 说明 |
+|------|------|
+| 用例协调 | 编排领域对象完成业务流程 |
+| 状态管理 | 管理 UI 状态与领域状态的映射 |
+| 事件分发 | 处理用户操作并调用领域服务 |
+
+**核心组件**: `SessionCoordinator`, `WorkspaceManager`, `ConnectionStore`
+
+### 2.3 领域层 (Domain)
+
+| 职责 | 说明 |
+|------|------|
+| 业务实体 | 定义核心数据结构 |
+| 领域接口 | 声明 Trait 抽象 |
+| 业务规则 | 封装领域逻辑 |
+
+**核心组件**: `TerminalConnection` Trait, `HostConfig`, `SessionConfig`, `ConnectionState`
+
+### 2.4 适配器层 (Adapter)
+
+| 职责 | 说明 |
+|------|------|
+| 协议转换 | 将外部协议转换为领域接口 |
+| 格式适配 | 数据格式转换 |
+
+**核心组件**: `SshAdapter`, `EventStreamConverter`
+
+### 2.5 基础设施层 (Infrastructure)
+
+| 职责 | 说明 |
+|------|------|
+| 具体实现 | 实现领域层定义的 Trait |
+| 外部交互 | 网络、文件系统、数据库 |
+
+**核心组件**: `SshConnection`, `SqliteHostRepository`, `SftpClient`
 
 ---
 
-## 三、状态模型层 (Model Layer)
+## 三、层级依赖规则
 
-### 3.1 职责
+```
+表现层 ──► 应用层 ──► 领域层 ◄── 适配器层 ◄── 基础设施层▲                │
+                        └─────────────────────────┘
+                依赖倒置 (DIP)
+```
 
-- **状态持有** - 管理应用的核心状态
-- **业务协调** - 协调 UI 与后端的交互
-- **事件分发** - 处理用户操作并更新状态
+### 依赖原则
 
-### 3.2 核心组件
-
-| 组件 | 职责 |
+| 规则 | 说明 |
 |------|------|
-| `SessionModel` | 单个终端会话的状态 |
-| `ConnectionStore` | 管理所有连接 |
-| `HostStore` | 主机配置管理 |
-| `WorkspaceModel` | 窗口布局状态 |
-
-### 3.3 SessionModel 结构
-
-```rust
-pub struct SessionModel {
-    /// 终端状态机(Alacritty)
-    term: Arc<Mutex<Term<EventProxy>>>,
-    
-    /// 连接后端 (多态)
-    backend: Box<dyn TerminalConnection>,
-    
-    /// 连接状态机
-    state: ConnectionStateMachine,
-    
-    /// 配置
-    config: TerminalConfig,
-}
-```
-
-### 3.4 数据流
-
-```
-用户输入 → View.dispatch_event()    ↓
-         Model.handle_input()
-                    ↓Backend.write()──────→远端服务器
-                                ↓
-         Backend.receive_stream() ←───┘
-                    ↓
-         Term.advance_bytes()
-                    ↓
-         cx.notify() → View.render()
-```
+| 向下依赖 | 上层只能依赖下层 |
+| 依赖倒置 | 基础设施层依赖领域层接口，而非反向 |
+| 接口隔离 | 每层只暴露必要接口 |
 
 ---
 
-## 四、适配器层 (Adapter Layer)
+## 四、关键接口定义
 
-### 4.1 职责
-
-- **定义接口** - 声明标准化的 Trait
-- **屏蔽差异** - 隐藏不同后端的实现细节
-- **依赖倒置** - 上层依赖抽象而非具体实现
-
-### 4.2 核心 Trait
+### 4.1 领域层核心 Trait
 
 ```rust
-/// 终端连接抽象
+// 终端连接抽象 (领域层)
 #[async_trait]
 pub trait TerminalConnection: Send + Sync {
     async fn write(&mut self, bytes: &[u8]) -> Result<()>;
@@ -133,16 +111,7 @@ pub trait TerminalConnection: Send + Sync {
     async fn close(&mut self) -> Result<()>;
 }
 
-/// 文件系统抽象
-#[async_trait]
-pub trait FileSystemBackend: Send + Sync {
-    async fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>>;
-    async fn read_file(&self, path: &str) -> Result<Vec<u8>>;
-    async fn write_file(&self, path: &str, data: &[u8]) -> Result<()>;
-    async fn delete(&self, path: &str) -> Result<()>;
-}
-
-/// 主机存储抽象
+// 主机仓储抽象 (领域层)
 #[async_trait]
 pub trait HostRepository: Send + Sync {
     async fn list_all(&self) -> Result<Vec<HostConfig>>;
@@ -152,89 +121,45 @@ pub trait HostRepository: Send + Sync {
 }
 ```
 
-### 4.3 优势
-
-1. **可测试** - 使用 Mock 实现进行单元测试
-2. **可扩展** - 新增后端只需实现 Trait
-3. **解耦** - UI 层完全不知道具体实现
-
----
-
-## 五、基础设施层 (Infrastructure Layer)
-
-### 5.1 职责
-
-- **具体实现** - 实现适配器层定义的 Trait
-- **外部交互** - 处理网络、文件系统、数据库
-- **协议处理** - SSH、SFTP、Telnet 等协议细节
-
-### 5.2 核心组件
-
-| 组件 | 实现 Trait | 依赖 |
-|------|------------|------|
-| `SshConnection` | `TerminalConnection` | russh |
-| `LocalPtyConnection` | `TerminalConnection` | portable-pty |
-| `SftpClient` | `FileSystemBackend` | russh-sftp |
-| `SqliteHostRepo` | `HostRepository` | sqlx |
-
-### 5.3 实现示例
+### 4.2 应用层协调器
 
 ```rust
-// SSH 后端实现
-pub struct SshConnection {
-    session: client::Handle<SshHandler>,
-    channel: Option<ChannelId>,
-    data_rx: mpsc::Receiver<Vec<u8>>,
-}
-
-#[async_trait]
-impl TerminalConnection for SshConnection {
-    async fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        // russh 具体实现...
-    }
-    // ...
-}
-
-// Local PTY 后端实现
-pub struct LocalPtyConnection {pty: Box<dyn PtyMaster>,
-    reader: Box<dyn Read + Send>,
-}
-
-#[async_trait]
-impl TerminalConnection for LocalPtyConnection {
-    async fn write(&mut self, bytes: &[u8]) -> Result<()> {
-        // portable-pty 具体实现...
-    }
-    // ...
+// 会话协调器 (应用层)
+pub struct SessionCoordinator {
+    terminal: Model<TerminalState>,       // 终端状态
+    connection: Model<ConnectionManager>, // 连接管理
 }
 ```
 
 ---
 
-## 六、层级依赖规则
-
-### 6.1 依赖方向
+## 五、模块映射
 
 ```
-表现层 ──────► 状态模型层 ──────► 适配器层 ◄────── 基础设施层
-   ││                ▲                │
-   │               │                 │                │
-   └───────────────┴─────────────────┴────────────────┘
-                只能向下依赖
+zeterm/
+├── crates/
+│   ├── zeterm/              # 表现层 + 应用层
+│   │   └── src/
+│   │       ├── ui/          # 表现层: Views
+│   │       └── app/         # 应用层: Coordinators
+│   ├── zeterm-core/         # 领域层
+│   │   └── src/
+│   │       ├── traits/      # 核心 Trait
+│   │       ├── entities/    # 业务实体
+│   │       └── state/       # 状态定义
+│   ├── zeterm-ssh/          # 适配器层 + 基础设施层
+│   │   └── src/
+│   │       ├── adapter.rs   # 协议适配
+│   │       └── connection.rs # SSH 实现
+│   └── zeterm-storage/      # 基础设施层
+│       └── src/
+│           └── sqlite.rs    # 持久化实现
 ```
-
-### 6.2 禁止事项
-
-|禁止 | 原因 |
-|------|------|
-| 表现层直接依赖基础设施层 | 破坏分层，难以测试 |
-| 状态模型层依赖具体实现 | 应依赖 Trait 抽象 |
-| 基础设施层依赖上层 | 违反依赖倒置原则 |
 
 ---
 
-## 七、相关文档
+## 六、相关文档
 
-- [数据流设计](./data-flow.md) - 详细的数据流转
-- [TerminalConnection Trait](../core/connection-trait.md) - 核心接口
-- [SessionModel](../modules/session-model.md) - 会话模型设计
+- [数据流设计](./data-flow.md) - 跨层数据流转
+- [TerminalConnection Trait](../core/connection-trait.md) - 核心接口详解
+- [SessionModel](../modules/session-model.md) - 应用层设计
