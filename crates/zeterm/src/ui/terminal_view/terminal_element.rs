@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use alacritty_terminal::term::cell::Flags;
-use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor};
+use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor};
 use gpui::{
     App, Bounds, Element, ElementId, Font, GlobalElementId, Hsla, IntoElement, LayoutId, Pixels,
     Point, SharedString, Size, StrikethroughStyle, Style, TextRun, UnderlineStyle, Window, fill,
@@ -274,9 +274,16 @@ impl Element for TerminalElement {
             // 判断是否为宽字符
             let is_wide = cell.flags.contains(Flags::WIDE_CHAR);
 
+            // 处理反色显示 (INVERSE)
+            let (fg, bg) = if cell.flags.contains(Flags::INVERSE) {
+                (cell.bg, cell.fg)
+            } else {
+                (cell.fg, cell.bg)
+            };
+
             // 绘制背景色(如果不是默认背景)
-            if !matches!(cell.bg, AnsiColor::Named(NamedColor::Background)) {
-                let bg_color = self.convert_color(&cell.bg, theme);
+            if !matches!(bg, AnsiColor::Named(NamedColor::Background)) {
+                let bg_color = self.convert_color(&bg, theme);
                 //宽字符背景占用2列
                 let bg_width = if is_wide {
                     prepaint.font_metrics.cell_width * 2.0
@@ -293,9 +300,19 @@ impl Element for TerminalElement {
                 window.paint_quad(fill(cell_bounds, bg_color));
             }
 
+            // 跳过隐藏字符
+            if cell.flags.contains(Flags::HIDDEN) {
+                continue;
+            }
+
             // 绘制字符 (如果不是空格或空字符)
             if cell.c != ' ' && cell.c != '\0' {
-                let fg_color = self.convert_color(&cell.fg, theme);
+                let mut fg_color = self.convert_color(&fg, theme);
+
+                // 处理暗淡显示 (DIM)
+                if cell.flags.contains(Flags::DIM) {
+                    fg_color.a *= 0.66;
+                }
                 // 创建字符串
                 let text: SharedString = cell.c.to_string().into();
                 let font_size = px(14.0);
@@ -367,24 +384,165 @@ impl Element for TerminalElement {
         }
 
         // 4. 绘制光标
-        if self.cursor_visible && self.focused {
+        if self.cursor_visible {
             let cursor = content.cursor;
             let cursor_x =
                 origin.x + (cursor.point.column.0 as f32) * prepaint.font_metrics.cell_width;
             let cursor_y =
                 origin.y + (cursor.point.line.0 as f32) * prepaint.font_metrics.cell_height;
 
-            let cursor_bounds = Bounds::new(
-                Point::new(cursor_x, cursor_y),
-                Size {
-                    width: prepaint.font_metrics.cell_width,
-                    height: prepaint.font_metrics.cell_height,
-                },
-            );
+            let cursor_color: Hsla = gpui::rgb(0x00ff00).into(); // 绿色光标
 
-            // 绘制光标 (实心方块)
-            let cursor_color: Hsla = gpui::rgb(0xffffff).into();
-            window.paint_quad(fill(cursor_bounds, cursor_color));
+            match cursor.shape {
+                CursorShape::Block => {
+                    // 实心方块光标
+                    let cursor_bounds = Bounds::new(
+                        Point::new(cursor_x, cursor_y),
+                        Size {
+                            width: prepaint.font_metrics.cell_width,
+                            height: prepaint.font_metrics.cell_height,
+                        },
+                    );
+                    if self.focused {
+                        window.paint_quad(fill(cursor_bounds, cursor_color));
+                    } else {
+                        // 失焦时显示空心方块
+                        let border = px(1.5);
+                        // 上边
+                        window.paint_quad(fill(
+                            Bounds::new(
+                                Point::new(cursor_x, cursor_y),
+                                Size {
+                                    width: prepaint.font_metrics.cell_width,
+                                    height: border,
+                                },
+                            ),
+                            cursor_color,
+                        ));
+                        // 下边
+                        window.paint_quad(fill(
+                            Bounds::new(
+                                Point::new(
+                                    cursor_x,
+                                    cursor_y + prepaint.font_metrics.cell_height - border,
+                                ),
+                                Size {
+                                    width: prepaint.font_metrics.cell_width,
+                                    height: border,
+                                },
+                            ),
+                            cursor_color,
+                        ));
+                        // 左边
+                        window.paint_quad(fill(
+                            Bounds::new(
+                                Point::new(cursor_x, cursor_y),
+                                Size {
+                                    width: border,
+                                    height: prepaint.font_metrics.cell_height,
+                                },
+                            ),
+                            cursor_color,
+                        ));
+                        // 右边
+                        window.paint_quad(fill(
+                            Bounds::new(
+                                Point::new(
+                                    cursor_x + prepaint.font_metrics.cell_width - border,
+                                    cursor_y,
+                                ),
+                                Size {
+                                    width: border,
+                                    height: prepaint.font_metrics.cell_height,
+                                },
+                            ),
+                            cursor_color,
+                        ));
+                    }
+                },
+                CursorShape::Beam => {
+                    // 竖线光标
+                    let cursor_bounds = Bounds::new(
+                        Point::new(cursor_x, cursor_y),
+                        Size {
+                            width: px(2.0),
+                            height: prepaint.font_metrics.cell_height,
+                        },
+                    );
+                    window.paint_quad(fill(cursor_bounds, cursor_color));
+                },
+                CursorShape::Underline => {
+                    // 下划线光标
+                    let cursor_bounds = Bounds::new(
+                        Point::new(
+                            cursor_x,
+                            cursor_y + prepaint.font_metrics.cell_height - px(2.0),
+                        ),
+                        Size {
+                            width: prepaint.font_metrics.cell_width,
+                            height: px(2.0),
+                        },
+                    );
+                    window.paint_quad(fill(cursor_bounds, cursor_color));
+                },
+                CursorShape::HollowBlock => {
+                    // 空心方块光标
+                    let border = px(1.5);
+                    // 上边
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            Point::new(cursor_x, cursor_y),
+                            Size {
+                                width: prepaint.font_metrics.cell_width,
+                                height: border,
+                            },
+                        ),
+                        cursor_color,
+                    ));
+                    // 下边
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            Point::new(
+                                cursor_x,
+                                cursor_y + prepaint.font_metrics.cell_height - border,
+                            ),
+                            Size {
+                                width: prepaint.font_metrics.cell_width,
+                                height: border,
+                            },
+                        ),
+                        cursor_color,
+                    ));
+                    // 左边
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            Point::new(cursor_x, cursor_y),
+                            Size {
+                                width: border,
+                                height: prepaint.font_metrics.cell_height,
+                            },
+                        ),
+                        cursor_color,
+                    ));
+                    // 右边
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            Point::new(
+                                cursor_x + prepaint.font_metrics.cell_width - border,
+                                cursor_y,
+                            ),
+                            Size {
+                                width: border,
+                                height: prepaint.font_metrics.cell_height,
+                            },
+                        ),
+                        cursor_color,
+                    ));
+                },
+                CursorShape::Hidden => {
+                    // 隐藏光标，不绘制
+                },
+            }
         }
     }
 }
