@@ -39,6 +39,7 @@ mod config;
 mod connection;
 mod handler;
 mod keepalive;
+mod known_hosts;
 mod reconnect;
 
 // 重新导出主要类型
@@ -64,6 +65,11 @@ pub use keepalive::{
     DEFAULT_KEEPALIVE_INTERVAL_SECS as KEEPALIVE_INTERVAL_SECS, DEFAULT_KEEPALIVE_TIMEOUT_SECS,
     DEFAULT_MAX_MISSED_KEEPALIVES, KeepaliveCallback, KeepaliveConfig, KeepaliveEvent,
     KeepaliveManager, KeepaliveState, KeepaliveStats, LoggingKeepaliveCallback,
+};
+
+pub use known_hosts::{
+    HostKeyEntry, KNOWN_HOSTS_FILENAME, KeyType, KnownHostsError, KnownHostsStore,
+    VerificationResult,
 };
 
 // 重新导出常量
