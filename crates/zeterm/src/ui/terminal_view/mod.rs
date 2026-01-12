@@ -227,101 +227,19 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        debug!("Key down: {:?}", event.keystroke);
+        let key = event.keystroke.key.as_str();
+        let modifiers = key_mapping::Modifiers::new(
+            event.keystroke.modifiers.control,
+            event.keystroke.modifiers.alt,
+            event.keystroke.modifiers.shift,
+        );
 
-        // 将按键转换为终端输入
-        let input = self.keystroke_to_input(&event.keystroke);
-
-        if !input.is_empty() {
-            // 发送到后端
-            let coordinator = self.coordinator.clone();
-            let input_clone = input.clone();
-
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-                rt.block_on(async {
-                    coordinator.send_input(&input_clone).await;
-                });
-            });
-
+        let mapping = key_mapping::keystroke_to_bytes(key, modifiers);
+        if !mapping.is_empty() {
+            debug!("Key pressed: {} -> {:?}", key, mapping.bytes);
+            self.coordinator.send_input_sync(&mapping.bytes);
             cx.notify();
         }
-    }
-
-    /// 将GPUI 按键转换为终端输入字节
-    fn keystroke_to_input(&self, keystroke: &gpui::Keystroke) -> Vec<u8> {
-        let mut input = Vec::new();
-
-        // 处理修饰键
-        let ctrl = keystroke.modifiers.control;
-        let alt = keystroke.modifiers.alt;
-
-        // 获取按键字符
-        let key = keystroke.key.as_str();
-
-        match key {
-            // 特殊键
-            "enter" => input.push(b'\r'),
-            "backspace" => input.push(0x7f),
-            "tab" => input.push(b'\t'),
-            "escape" => input.push(0x1b),
-            "space" => input.push(b' '),
-
-            // 方向键
-            "up" => input.extend_from_slice(b"\x1b[A"),
-            "down" => input.extend_from_slice(b"\x1b[B"),
-            "right" => input.extend_from_slice(b"\x1b[C"),
-            "left" => input.extend_from_slice(b"\x1b[D"),
-
-            // Home/End/PageUp/PageDown
-            "home" => input.extend_from_slice(b"\x1b[H"),
-            "end" => input.extend_from_slice(b"\x1b[F"),
-            "pageup" => input.extend_from_slice(b"\x1b[5~"),
-            "pagedown" => input.extend_from_slice(b"\x1b[6~"),
-
-            // Delete/Insert
-            "delete" => input.extend_from_slice(b"\x1b[3~"),
-            "insert" => input.extend_from_slice(b"\x1b[2~"),
-
-            // 功能键 F1-F12
-            "f1" => input.extend_from_slice(b"\x1bOP"),
-            "f2" => input.extend_from_slice(b"\x1bOQ"),
-            "f3" => input.extend_from_slice(b"\x1bOR"),
-            "f4" => input.extend_from_slice(b"\x1bOS"),
-            "f5" => input.extend_from_slice(b"\x1b[15~"),
-            "f6" => input.extend_from_slice(b"\x1b[17~"),
-            "f7" => input.extend_from_slice(b"\x1b[18~"),
-            "f8" => input.extend_from_slice(b"\x1b[19~"),
-            "f9" => input.extend_from_slice(b"\x1b[20~"),
-            "f10" => input.extend_from_slice(b"\x1b[21~"),
-            "f11" => input.extend_from_slice(b"\x1b[23~"),
-            "f12" => input.extend_from_slice(b"\x1b[24~"),
-
-            // 普通字符
-            _ => {
-                if key.len() == 1 {
-                    let c = key.chars().next().unwrap();
-
-                    if ctrl {
-                        // Ctrl+字母-> 控制字符
-                        if c.is_ascii_lowercase() {
-                            input.push(c as u8 - b'a' + 1);
-                        } else if c.is_ascii_uppercase() {
-                            input.push(c as u8 - b'A' + 1);
-                        }
-                    } else if alt {
-                        // Alt+字符 -> ESC + 字符
-                        input.push(0x1b);
-                        input.push(c as u8);
-                    } else {
-                        // 普通字符
-                        input.extend_from_slice(c.to_string().as_bytes());
-                    }
-                }
-            },
-        }
-
-        input
     }
 
     /// 获取会话协调器

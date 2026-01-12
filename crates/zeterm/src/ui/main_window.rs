@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, Styled, Window, div, px,
+    ParentElement, Render, Styled, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme, Sizable, Size,
@@ -20,8 +20,7 @@ use parking_lot::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::app::session::SessionCoordinator;
-use crate::ui::terminal_view::TerminalElement;
-use crate::ui::terminal_view::{Modifiers, keystroke_to_bytes};
+use crate::ui::terminal_view::TerminalView;
 use zeterm_core::ConnectionState;
 use zeterm_mock::{MockConfig, MockConnection};
 use zeterm_ssh::{SshConfig, SshConnection};
@@ -38,6 +37,8 @@ pub struct MainWindow {
     focus_handle: FocusHandle,
     /// 会话协调器
     coordinator: Arc<SessionCoordinator>,
+    /// 终端视图
+    terminal_view: Option<Entity<TerminalView>>,
     /// 连接状态显示文本
     status_text: Arc<RwLock<String>>,
     /// 是否已启动数据泵
@@ -86,6 +87,7 @@ impl MainWindow {
         Self {
             focus_handle: cx.focus_handle(),
             coordinator,
+            terminal_view: None,
             status_text: Arc::new(RwLock::new("Ready".to_string())),
             data_pump_started: Arc::new(RwLock::new(false)),
             ssh_host: Arc::new(RwLock::new(ssh_host)),
@@ -330,50 +332,49 @@ impl MainWindow {
     }
 
     /// 渲染主内容区域
-    fn render_content(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_content(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _theme = cx.theme();
         let is_connected = self.coordinator.is_connected();
-        let coordinator = self.coordinator.clone();
 
-        div()
-            .id("content")
-            .flex_1()
-            .w_full()
-            .flex()
-            .flex_col()
-            .child(if is_connected {
-                // 连接后显示终端
-                div()
-                    .id("terminal-container")
-                    .flex_1()
-                    .w_full()
-                    .track_focus(&self.focus_handle)
-                    .on_key_down(
-                        cx.listener(move |this, event: &KeyDownEvent, _window, _cx| {
-                            let key = event.keystroke.key.as_str();
-                            let modifiers = Modifiers::new(
-                                event.keystroke.modifiers.control,
-                                event.keystroke.modifiers.alt,
-                                event.keystroke.modifiers.shift,
-                            );
+        if is_connected {
+            // 确保 TerminalView 已创建
+            if self.terminal_view.is_none() {
+                let coordinator = self.coordinator.clone();
+                self.terminal_view = Some(cx.new(|cx| TerminalView::new(coordinator, cx)));
+                info!("TerminalView created");
+            }
 
-                            let mapping = keystroke_to_bytes(key, modifiers);
-                            if !mapping.is_empty() {
-                                debug!("Key pressed: {} -> {:?}", key, mapping.bytes);
-                                this.coordinator.send_input_sync(&mapping.bytes);
-                            }
-                        }),
-                    )
-                    .child(TerminalElement::new(
-                        coordinator,
-                        true, // focused
-                        true, // cursor_visible
-                    ))
-                    .into_any_element()
-            } else {
-                // 未连接时显示欢迎界面
-                self.render_welcome(cx).into_any_element()
-            })
+            // 渲染终端视图
+            div()
+                .id("content")
+                .flex_1()
+                .w_full()
+                .flex()
+                .flex_col()
+                .child(
+                    div()
+                        .id("terminal-container")
+                        .flex_1()
+                        .w_full()
+                        .child(self.terminal_view.clone().unwrap()),
+                )
+                .into_any_element()
+        } else {
+            // 未连接时清理 terminal_view 并显示欢迎界面
+            if self.terminal_view.is_some() {
+                self.terminal_view = None;
+                info!("TerminalView cleared");
+            }
+
+            div()
+                .id("content")
+                .flex_1()
+                .w_full()
+                .flex()
+                .flex_col()
+                .child(self.render_welcome(cx))
+                .into_any_element()
+        }
     }
 
     /// 渲染欢迎界面
