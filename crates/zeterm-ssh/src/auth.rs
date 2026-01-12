@@ -217,9 +217,6 @@ impl AuthState {
     }
 }
 
-/// 密码提供者回调类型
-pub type PasswordProvider = Box<dyn Fn(u32) -> Option<String> + Send + Sync>;
-
 /// 密码重试器
 pub struct PasswordRetrier {
     /// 重试配置

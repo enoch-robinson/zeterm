@@ -6,12 +6,11 @@
 //! - 首次连接处理
 //! - 密钥变更检测
 
-use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// 默认 known_hosts 文件名
 pub const KNOWN_HOSTS_FILENAME: &str = "known_hosts";

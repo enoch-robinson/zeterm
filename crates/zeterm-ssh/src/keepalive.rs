@@ -6,11 +6,10 @@
 //! - 自动触发重连
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
-use tokio::time::interval;
 use tracing::{debug, info, warn};
 
 /// 默认心跳间隔（秒）
@@ -242,8 +241,6 @@ pub struct KeepaliveManager {
     config: KeepaliveConfig,
     /// 是否正在运行
     running: Arc<AtomicBool>,
-    /// 发送计数
-    sent_count: Arc<AtomicU64>,
     /// 停止信号发送端
     stop_tx: Option<watch::Sender<bool>>,
 }
@@ -254,7 +251,6 @@ impl KeepaliveManager {
         Self {
             config,
             running: Arc::new(AtomicBool::new(false)),
-            sent_count: Arc::new(AtomicU64::new(0)),
             stop_tx: None,
         }
     }
