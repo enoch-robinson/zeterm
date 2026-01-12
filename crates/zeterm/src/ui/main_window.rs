@@ -4,6 +4,7 @@
 //! 集成 gpui-component 的Root 和 Theme 系统。
 //! 集成 SessionCoordinator 实现数据流管理。
 
+use std::env;
 use std::sync::Arc;
 
 use gpui::{
@@ -56,17 +57,40 @@ impl MainWindow {
         // 创建会话协调器
         let coordinator = Arc::new(SessionCoordinator::with_defaults());
 
+        // 从环境变量读取 SSH 配置，支持 ZETERM_SSH_* 和 SSH_* 两种前缀
+        let ssh_host = env::var("ZETERM_SSH_HOST")
+            .or_else(|_| env::var("SSH_HOST"))
+            .unwrap_or_else(|_| "localhost".to_string());
+
+        let ssh_username = env::var("ZETERM_SSH_USER")
+            .or_else(|_| env::var("SSH_USER"))
+            .unwrap_or_else(|_| "root".to_string());
+
+        let ssh_password = env::var("ZETERM_SSH_PASSWORD")
+            .or_else(|_| env::var("SSH_PASSWORD"))
+            .unwrap_or_default();
+
+        let ssh_port: u16 = env::var("ZETERM_SSH_PORT")
+            .or_else(|_| env::var("SSH_PORT"))
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(22);
+
         info!("MainWindow created with SessionCoordinator");
+        info!(
+            "SSH config from env: host={}, user={}, port={}",
+            ssh_host, ssh_username, ssh_port
+        );
 
         Self {
             focus_handle: cx.focus_handle(),
             coordinator,
             status_text: Arc::new(RwLock::new("Ready".to_string())),
             data_pump_started: Arc::new(RwLock::new(false)),
-            ssh_host: Arc::new(RwLock::new("localhost".to_string())),
-            ssh_username: Arc::new(RwLock::new("root".to_string())),
-            ssh_password: Arc::new(RwLock::new(String::new())),
-            ssh_port: Arc::new(RwLock::new(22)),
+            ssh_host: Arc::new(RwLock::new(ssh_host)),
+            ssh_username: Arc::new(RwLock::new(ssh_username)),
+            ssh_password: Arc::new(RwLock::new(ssh_password)),
+            ssh_port: Arc::new(RwLock::new(ssh_port)),
         }
     }
 
