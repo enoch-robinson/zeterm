@@ -11,11 +11,13 @@ use futures::stream::BoxStream;
 use parking_lot::Mutex;
 use russh::Channel;
 use russh::client::{self, Handle, Msg};
-use tracing::{debug, info, warn};
+use tokio::net::UnixStream;
+use tracing::{debug, error, info, warn};
 
 use zeterm_core::errors::ConnectionError;
 use zeterm_core::traits::{ConnectionInfo, ConnectionType, TerminalConnection};
 
+use crate::agent::{get_agent_socket_path, is_agent_available};
 use crate::config::{AuthMethod, SshConfig};
 use crate::handler::{DataReceiver, SshHandler, create_data_channel};
 
@@ -152,7 +154,57 @@ impl SshConnection {
 
     /// 执行认证
     async fn authenticate(&self, session: &mut Handle<SshHandler>) -> Result<(), ConnectionError> {
-        match &self.config.auth_method {
+        //尝试主认证方法
+        let primary_result = self
+            .try_auth_method(session, &self.config.auth_method)
+            .await;
+
+        if primary_result.is_ok() {
+            return primary_result;
+        }
+
+        // 如果主方法失败且有回退方法，尝试回退
+        if self.config.has_fallback() {
+            let primary_error = primary_result.unwrap_err();
+            warn!(
+                "Primary authentication failed: {}, trying fallback methods",
+                primary_error
+            );
+
+            for (i, fallback_method) in self.config.fallback_auth_methods.iter().enumerate() {
+                info!(
+                    "Trying fallback authentication method {}/{}",
+                    i + 1,
+                    self.config.fallback_auth_methods.len()
+                );
+
+                match self.try_auth_method(session, fallback_method).await {
+                    Ok(()) => {
+                        info!("Fallback authentication successful");
+                        return Ok(());
+                    },
+                    Err(e) => {
+                        debug!("Fallback method {} failed: {}", i + 1, e);
+                        continue;
+                    },
+                }
+            }
+
+            // 所有方法都失败了
+            Err(ConnectionError::Authentication(
+                "All authentication methods failed".into(),
+            ))
+        } else {
+            primary_result
+        }
+    }
+    /// 尝试单个认证方法
+    async fn try_auth_method(
+        &self,
+        session: &mut Handle<SshHandler>,
+        method: &AuthMethod,
+    ) -> Result<(), ConnectionError> {
+        match method {
             AuthMethod::None => Err(ConnectionError::Authentication(
                 "No authentication method configured".into(),
             )),
@@ -231,13 +283,90 @@ impl SshConnection {
         }
     }
 
-    /// SSH Agent认证
+    /// SSH Agent 认证
     async fn authenticate_agent(
         &self,
-        _session: &mut Handle<SshHandler>,
+        session: &mut Handle<SshHandler>,
     ) -> Result<(), ConnectionError> {
+        debug!(
+            "Attempting SSH Agent authentication for user: {}",
+            self.config.username
+        );
+
+        // 检查 Agent 是否可用
+        if !is_agent_available() {
+            warn!("SSH Agent not available (SSH_AUTH_SOCK not set)");
+            return Err(ConnectionError::Authentication(
+                "SSH Agent not available: SSH_AUTH_SOCK environment variable not set".into(),
+            ));
+        }
+
+        // 获取 Agent socket路径
+        let socket_path = get_agent_socket_path().map_err(|e| {
+            ConnectionError::Authentication(format!("Failed to get agent socket: {}", e))
+        })?;
+
+        info!("Connecting to SSH Agent at: {}", socket_path);
+
+        // 连接到 Agent
+        let stream = UnixStream::connect(&socket_path).await.map_err(|e| {
+            error!("Failed to connect to SSH Agent: {}", e);
+            ConnectionError::Authentication(format!("Failed to connect to SSH Agent: {}", e))
+        })?;
+
+        // 创建 Agent 客户端
+        let mut agent_client = russh::keys::agent::client::AgentClient::connect(stream);
+
+        // 获取 Agent 中的密钥列表
+        let identities = agent_client.request_identities().await.map_err(|e| {
+            error!("Failed to list keys from SSH Agent: {}", e);
+            ConnectionError::Authentication(format!("Failed to list keys from SSH Agent: {}", e))
+        })?;
+
+        if identities.is_empty() {
+            warn!("No keys found in SSH Agent");
+            return Err(ConnectionError::Authentication(
+                "No keys available in SSH Agent".into(),
+            ));
+        }
+
+        info!("Found {} key(s) in SSH Agent", identities.len());
+
+        // 尝试使用每个密钥进行认证
+        for (i, identity) in identities.iter().enumerate() {
+            let key_comment = identity.comment();
+            debug!("Trying key {}/{}: {}", i + 1, identities.len(), key_comment);
+
+            // 使用 Agent 进行公钥认证
+            let auth_result = session
+                .authenticate_publickey_with(
+                    &self.config.username,
+                    identity.clone(),
+                    None,
+                    &mut agent_client,
+                )
+                .await;
+
+            match auth_result {
+                Ok(result) if result.success() => {
+                    info!(
+                        "SSH Agent authentication successful with key: {}",
+                        key_comment
+                    );
+                    return Ok(());
+                },
+                Ok(_) => {
+                    debug!("Key {} rejected by server", key_comment);
+                },
+                Err(e) => {
+                    debug!("Authentication error with key {}: {}", key_comment, e);
+                },
+            }
+        }
+
+        // 所有密钥都失败了
         Err(ConnectionError::Authentication(
-            "SSH Agent authentication not yet implemented".into(),
+            "SSH Agent authentication failed: no key accepted by server".into(),
         ))
     }
 

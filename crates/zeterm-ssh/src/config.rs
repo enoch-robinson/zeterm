@@ -37,6 +37,8 @@ pub struct SshConfig {
     pub terminal_cols: u16,
     /// 初始终端高度（行数）
     pub terminal_rows: u16,
+    /// 回退认证方法列表
+    pub fallback_auth_methods: Vec<AuthMethod>,
 }
 
 impl Default for SshConfig {
@@ -52,6 +54,7 @@ impl Default for SshConfig {
             terminal_type: "xterm-256color".to_string(),
             terminal_cols: 80,
             terminal_rows: 24,
+            fallback_auth_methods: Vec::new(),
         }
     }
 }
@@ -104,6 +107,45 @@ impl SshConfig {
     pub fn with_agent(mut self) -> Self {
         self.auth_method = AuthMethod::Agent;
         self
+    }
+
+    /// 添加回退认证方法///
+    /// 当主认证方法失败时，会按顺序尝试回退方法
+    pub fn with_fallback(mut self, method: AuthMethod) -> Self {
+        self.fallback_auth_methods.push(method);
+        self
+    }
+    /// 添加密码作为回退认证
+    pub fn with_password_fallback(mut self, password: impl Into<String>) -> Self {
+        self.fallback_auth_methods
+            .push(AuthMethod::Password(password.into()));
+        self
+    }
+
+    /// 添加公钥作为回退认证
+    pub fn with_key_fallback(mut self, key_path: impl Into<PathBuf>) -> Self {
+        self.fallback_auth_methods.push(AuthMethod::PublicKey {
+            key_path: key_path.into(),
+            passphrase: None,
+        });
+        self
+    }
+
+    /// 添加 Agent 作为回退认证
+    pub fn with_agent_fallback(mut self) -> Self {
+        self.fallback_auth_methods.push(AuthMethod::Agent);
+        self
+    }
+
+    /// 获取所有认证方法（主方法 + 回退方法）
+    pub fn all_auth_methods(&self) -> Vec<&AuthMethod> {
+        let mut methods = vec![&self.auth_method];
+        methods.extend(self.fallback_auth_methods.iter());
+        methods
+    }
+    /// 检查是否有回退认证方法
+    pub fn has_fallback(&self) -> bool {
+        !self.fallback_auth_methods.is_empty()
     }
 
     /// 设置连接超时
@@ -285,4 +327,3 @@ mod tests {
         assert!(result.is_ok());
     }
 }
-

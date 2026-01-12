@@ -8,6 +8,7 @@
 //! - `handler` - SSH 事件处理器
 //! - `connection` - SSH 连接实现
 //! - `auth` - 认证重试与策略
+//! - `agent` - SSH Agent 支持
 //!
 //! # 示例
 //!
@@ -32,12 +33,17 @@
 //! conn.close().await?;
 //! ```
 
+mod agent;
 mod auth;
 mod config;
 mod connection;
 mod handler;
 
 // 重新导出主要类型
+pub use agent::{
+    AgentAuthConfig, AgentAuthResult, AgentError, AgentKeyInfo, AgentStatus,
+    check_agent_status_sync, get_agent_socket_path, is_agent_available, log_agent_status,
+};
 pub use auth::{
     AuthAttemptResult, AuthCredential, AuthMethodType, AuthProgressCallback, AuthRetryConfig,
     AuthState, AuthStrategy, DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY_MS, LoggingAuthCallback,
