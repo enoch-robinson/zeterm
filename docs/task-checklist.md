@@ -356,10 +356,10 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 | 备注 |
 |------|------|--------|----------|------|
-| ✅ | 注册 `on_key_down` 事件处理器 | P0 | 1h | 补充实现：添加 `track_focus` 和 `on_key_down` |
-| ✅ | 实现 `handle_key_down()` 方法 | P0 | 2h | 补充实现：添加 `send_input_sync` 同步方法 |
-| ✅ | 实现按键到 ANSI 序列转换 | P0 | 3h | `key_mapping.rs` 已实现 |
-| ✅ | 处理修饰键 (Ctrl, Alt, Shift) | P0 | 2h | `key_mapping.rs` 已实现 |
+| ✅ | 注册 `on_key_down` 事件处理器 | P0 | 1h | 重构：在TerminalView 中实现 |
+| ✅ | 实现 `handle_key_down()` 方法 | P0 | 2h | 重构：TerminalView.handle_key_down + send_input_sync |
+| ✅ | 实现按键到 ANSI 序列转换 | P0 | 3h | `key_mapping.rs` 模块，50+ 单元测试 |
+| ✅ | 处理修饰键 (Ctrl, Alt, Shift) | P0 | 2h | `key_mapping.rs` 支持组合键 |
 | ✅ | 处理功能键 (F1-F12) | P1 | 1h | `key_mapping.rs` 已实现 |
 
 ---
@@ -1286,3 +1286,4 @@
 |------|------|------|
 | v1.0 | - | 初始版本，包含完整任务清单 |
 | v1.1 | 2026-01-11 | 更新 Phase 1 项目初始化任务状态，标记已完成的Cargo Workspace 设置和依赖配置任务 |
+| v1.2 | 2026-01-12 | 架构重构：MainWindow 改用 TerminalView 组件，统一键盘处理使用 key_mapping 模块 |
