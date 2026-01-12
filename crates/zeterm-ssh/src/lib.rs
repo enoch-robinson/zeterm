@@ -38,6 +38,8 @@ mod auth;
 mod config;
 mod connection;
 mod handler;
+mod keepalive;
+mod reconnect;
 
 // 重新导出主要类型
 pub use agent::{
@@ -52,6 +54,17 @@ pub use auth::{
 pub use config::{AuthMethod, ConfigError, HostKeyVerification, SshConfig};
 pub use connection::SshConnection;
 pub use handler::{DataReceiver, DataSender, HandlerState, SshHandler, create_data_channel};
+pub use reconnect::{
+    DEFAULT_BACKOFF_MULTIPLIER, DEFAULT_INITIAL_DELAY_MS, DEFAULT_MAX_DELAY_MS,
+    DEFAULT_MAX_RECONNECT_ATTEMPTS, ExponentialBackoff, LoggingReconnectCallback,
+    ReconnectCallback, ReconnectEvent, ReconnectPolicy, ReconnectState,
+};
+
+pub use keepalive::{
+    DEFAULT_KEEPALIVE_INTERVAL_SECS as KEEPALIVE_INTERVAL_SECS, DEFAULT_KEEPALIVE_TIMEOUT_SECS,
+    DEFAULT_MAX_MISSED_KEEPALIVES, KeepaliveCallback, KeepaliveConfig, KeepaliveEvent,
+    KeepaliveManager, KeepaliveState, KeepaliveStats, LoggingKeepaliveCallback,
+};
 
 // 重新导出常量
 pub use config::{DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_KEEPALIVE_INTERVAL_SECS, DEFAULT_SSH_PORT};
