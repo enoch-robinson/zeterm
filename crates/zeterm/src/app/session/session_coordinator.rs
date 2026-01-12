@@ -261,6 +261,37 @@ impl SessionCoordinator {
         self.connection_manager.write(data).await
     }
 
+    /// 同步发送用户输入到后端连接
+    ///
+    ///这是`send_input` 的同步版本，用于在 GPUI 事件处理器中调用。
+    /// 内部使用后台线程执行异步操作。
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - 要发送的字节数据
+    pub fn send_input_sync(&self, data: &[u8]) {
+        if !self.is_connected() {
+            warn!("Cannot send input: not connected");
+            return;
+        }
+
+        let data = data.to_vec();
+        let connection_manager = self.connection_manager.clone();
+
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("Failed to create tokio runtime");
+
+            rt.block_on(async move {
+                if let Err(e) = connection_manager.write(&data).await {
+                    error!("Failed to send input: {}", e);
+                }
+            });
+        });
+    }
+
     /// 调整终端大小
     ///
     /// 同时调整本地终端状态机和远端终端的大小。

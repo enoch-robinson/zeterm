@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ParentElement, Render, Styled, Window, div, px,
+    KeyDownEvent, ParentElement, Render, Styled, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme, Sizable, Size,
@@ -21,6 +21,7 @@ use tracing::{debug, info, warn};
 
 use crate::app::session::SessionCoordinator;
 use crate::ui::terminal_view::TerminalElement;
+use crate::ui::terminal_view::{Modifiers, keystroke_to_bytes};
 use zeterm_core::ConnectionState;
 use zeterm_mock::{MockConfig, MockConnection};
 use zeterm_ssh::{SshConfig, SshConnection};
@@ -330,8 +331,9 @@ impl MainWindow {
 
     /// 渲染主内容区域
     fn render_content(&self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
+        let _theme = cx.theme();
         let is_connected = self.coordinator.is_connected();
+        let coordinator = self.coordinator.clone();
 
         div()
             .id("content")
@@ -345,8 +347,25 @@ impl MainWindow {
                     .id("terminal-container")
                     .flex_1()
                     .w_full()
+                    .track_focus(&self.focus_handle)
+                    .on_key_down(
+                        cx.listener(move |this, event: &KeyDownEvent, _window, _cx| {
+                            let key = event.keystroke.key.as_str();
+                            let modifiers = Modifiers::new(
+                                event.keystroke.modifiers.control,
+                                event.keystroke.modifiers.alt,
+                                event.keystroke.modifiers.shift,
+                            );
+
+                            let mapping = keystroke_to_bytes(key, modifiers);
+                            if !mapping.is_empty() {
+                                debug!("Key pressed: {} -> {:?}", key, mapping.bytes);
+                                this.coordinator.send_input_sync(&mapping.bytes);
+                            }
+                        }),
+                    )
                     .child(TerminalElement::new(
-                        self.coordinator.clone(),
+                        coordinator,
                         true, // focused
                         true, // cursor_visible
                     ))
