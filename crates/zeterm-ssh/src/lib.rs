@@ -7,6 +7,7 @@
 //! - `config` - SSH 连接配置
 //! - `handler` - SSH 事件处理器
 //! - `connection` - SSH 连接实现
+//! - `auth` - 认证重试与策略
 //!
 //! # 示例
 //!
@@ -31,15 +32,20 @@
 //! conn.close().await?;
 //! ```
 
+mod auth;
 mod config;
 mod connection;
 mod handler;
 
 // 重新导出主要类型
+pub use auth::{
+    AuthAttemptResult, AuthCredential, AuthMethodType, AuthProgressCallback, AuthRetryConfig,
+    AuthState, AuthStrategy, DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY_MS, LoggingAuthCallback,
+    PasswordRetrier, convert_auth_error,
+};
 pub use config::{AuthMethod, ConfigError, HostKeyVerification, SshConfig};
 pub use connection::SshConnection;
 pub use handler::{DataReceiver, DataSender, HandlerState, SshHandler, create_data_channel};
 
 // 重新导出常量
 pub use config::{DEFAULT_CONNECT_TIMEOUT_SECS, DEFAULT_KEEPALIVE_INTERVAL_SECS, DEFAULT_SSH_PORT};
-
