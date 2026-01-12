@@ -444,7 +444,7 @@
 | ✅ | 识别宽字符 (占用2列) | P0 | 2h |
 | ✅ | 正确计算宽字符位置 | P0 | 2h |
 | ✅ | 处理宽字符的占位符单元格 | P0 | 1h |
-| ⬜ | 测试中日韩字符显示 | P0 | 1h |
+| ✅ | 测试中日韩字符显示 | P0 | 1h |
 
 ---
 
@@ -680,20 +680,20 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 创建 `state/connection_state.rs` | P0 | 0.25h |
-| ⬜ | 定义 `ConnectionState` 枚举 | P0 | 1h |
-| ⬜ | 定义 `DisconnectReason` 枚举 | P0 | 0.5h |
-| ⬜ | 定义 `ConnectionEvent` 枚举 | P0 | 0.5h |
+| ✅ | 创建 `state/connection_state.rs` | P0 | 0.25h |
+| ✅ | 定义 `ConnectionState` 枚举 | P0 | 1h |
+| ✅ | 定义 `DisconnectReason` 枚举 | P0 | 0.5h |
+| ✅ | 定义 `ConnectionEvent` 枚举 | P0 | 0.5h |
 
 #### 4.6.2 状态机实现
 
 | 状态 | 任务 | 优先级 | 预估时间 |
 |------|------|--------|----------|
-| ⬜ | 定义 `ConnectionStateMachine` 结构体 | P0 | 1h |
-| ⬜ | 实现 `handle_event()` 方法 | P0 | 3h |
-| ⬜ | 实现状态转换规则 | P0 | 2h |
-| ⬜ | 使用 watch::channel 广播状态 | P0 | 1h |
-| ⬜ | 实现 `subscribe()` 方法 | P0 | 0.5h |
+| ✅ | 定义 `ConnectionStateMachine` 结构体 | P0 | 1h |
+| ✅ | 实现 `handle_event()` 方法 | P0 | 3h |
+| ✅ | 实现状态转换规则 | P0 | 2h |
+| ✅ | 使用 watch::channel 广播状态 | P0 | 1h |
+| ✅ | 实现 `subscribe()` 方法 | P0 | 0.5h |
 
 #### 4.6.3 重连策略
 
@@ -722,8 +722,8 @@
 |------|------|--------|----------|
 | ⬜ | SshHandler 单元测试 | P1 | 2h |
 | ⬜ | 认证流程单元测试 | P1 | 2h |
-| ⬜ | 状态机单元测试 | P0 | 2h |
-| ⬜ | 集成测试: 连接真实 SSH 服务器 | P0 | 3h |
+| ✅ | 状态机单元测试 | P0 | 2h |
+| ✅ | 集成测试: 连接真实 SSH 服务器 | P0 | 3h |
 
 ---
 

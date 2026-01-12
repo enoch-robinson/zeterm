@@ -2,6 +2,10 @@
 //!
 //! 定义连接的生命周期状态与转换规则。
 
+mod state_machine;
+
+pub use state_machine::{ConnectionStateMachine, StateChangeCallback};
+
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};

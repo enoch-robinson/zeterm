@@ -34,7 +34,8 @@ pub mod prelude {
     pub use crate::entities::{SessionId, TerminalSize};
     pub use crate::errors::{AuthError, ConfigError, ConnectionError, StorageError};
     pub use crate::state::{
-        ConnectionEvent, ConnectionState, DisconnectReason, UiConnectionStatus,
+        ConnectionEvent, ConnectionState, ConnectionStateMachine, DisconnectReason,
+        StateChangeCallback, UiConnectionStatus,
     };
     pub use crate::traits::{ConnectionInfo, ConnectionType, TerminalConnection};
 }
@@ -42,5 +43,8 @@ pub mod prelude {
 // Re-export commonly used types at crate root
 pub use entities::{SessionId, TerminalSize};
 pub use errors::{AuthError, ConfigError, ConnectionError, StorageError};
-pub use state::{ConnectionEvent, ConnectionState, DisconnectReason, UiConnectionStatus};
+pub use state::{
+    ConnectionEvent, ConnectionState, ConnectionStateMachine, DisconnectReason,
+    StateChangeCallback, UiConnectionStatus,
+};
 pub use traits::{ConnectionInfo, ConnectionType, TerminalConnection};

@@ -25,3 +25,4 @@ tracing.workspace = true
 # Utilities
 uuid.workspace = true
 chrono.workspace = true
+parking_lot.workspace = true
