@@ -162,14 +162,44 @@ impl AgentStatus {
     }
 }
 
-/// 检查 SSH Agent 是否可用
+/// 检查 SSH Agent 是否可用 - Unix 实现
+#[cfg(unix)]
 pub fn is_agent_available() -> bool {
     env::var("SSH_AUTH_SOCK").is_ok()
 }
 
-/// 获取 Agent socket 路径
+/// 检查 SSH Agent 是否可用 - Windows 实现
+#[cfg(windows)]
+pub fn is_agent_available() -> bool {
+    // Windows OpenSSH Agent使用命名管道
+    // 检查环境变量或默认管道路径
+    if env::var("SSH_AUTH_SOCK").is_ok() {
+        return true;
+    }
+    // 检查默认的 OpenSSH Agent 命名管道是否存在
+    std::fs::metadata(r"\\.\pipe\openssh-ssh-agent").is_ok()
+}
+
+/// 获取 Agent socket 路径 - Unix 实现
+#[cfg(unix)]
 pub fn get_agent_socket_path() -> Result<String, AgentError> {
     env::var("SSH_AUTH_SOCK").map_err(|_| AgentError::SocketNotSet)
+}
+
+/// 获取 Agent 命名管道路径 - Windows 实现
+#[cfg(windows)]
+pub fn get_agent_socket_path() -> Result<String, AgentError> {
+    // 优先使用环境变量
+    if let Ok(path) = env::var("SSH_AUTH_SOCK") {
+        return Ok(path);
+    }
+    // 使用默认的 OpenSSH Agent 命名管道路径
+    const DEFAULT_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
+    if std::fs::metadata(DEFAULT_PIPE).is_ok() {
+        Ok(DEFAULT_PIPE.to_string())
+    } else {
+        Err(AgentError::NotAvailable)
+    }
 }
 
 /// 检查 SSH Agent 状态

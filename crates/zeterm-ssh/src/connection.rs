@@ -11,6 +11,8 @@ use futures::stream::BoxStream;
 use parking_lot::Mutex;
 use russh::Channel;
 use russh::client::{self, Handle, Msg};
+// 条件编译：平台特定的 stream 类型
+#[cfg(unix)]
 use tokio::net::UnixStream;
 use tracing::{debug, error, info, warn};
 
@@ -283,7 +285,8 @@ impl SshConnection {
         }
     }
 
-    /// SSH Agent 认证
+    /// SSH Agent 认证 - Unix 实现
+    #[cfg(unix)]
     async fn authenticate_agent(
         &self,
         session: &mut Handle<SshHandler>,
@@ -301,22 +304,72 @@ impl SshConnection {
             ));
         }
 
-        // 获取 Agent socket路径
+        // 获取 Agent socket 路径
         let socket_path = get_agent_socket_path().map_err(|e| {
             ConnectionError::Authentication(format!("Failed to get agent socket: {}", e))
         })?;
 
         info!("Connecting to SSH Agent at: {}", socket_path);
 
-        // 连接到 Agent
+        // Unix: 使用 UnixStream 连接
         let stream = UnixStream::connect(&socket_path).await.map_err(|e| {
             error!("Failed to connect to SSH Agent: {}", e);
             ConnectionError::Authentication(format!("Failed to connect to SSH Agent: {}", e))
         })?;
 
-        // 创建 Agent 客户端
+        // 创建 Agent 客户端并执行认证
         let mut agent_client = russh::keys::agent::client::AgentClient::connect(stream);
+        self.do_agent_auth(session, &mut agent_client).await
+    }
 
+    /// SSH Agent 认证 - Windows 实现
+    #[cfg(windows)]
+    async fn authenticate_agent(
+        &self,
+        session: &mut Handle<SshHandler>,
+    ) -> Result<(), ConnectionError> {
+        use tokio::net::windows::named_pipe::ClientOptions;
+
+        debug!(
+            "Attempting SSH Agent authentication for user: {}",
+            self.config.username
+        );
+
+        // 检查 Agent 是否可用
+        if !is_agent_available() {
+            warn!("SSH Agent not available on Windows");
+            return Err(ConnectionError::Authentication(
+                "SSH Agent not available: OpenSSH Agent service may not be running".into(),
+            ));
+        }
+
+        // 获取 Agent 命名管道路径
+        let pipe_path = get_agent_socket_path().map_err(|e| {
+            ConnectionError::Authentication(format!("Failed to get agent pipe path: {}", e))
+        })?;
+
+        info!("Connecting to SSH Agent at: {}", pipe_path);
+
+        // Windows: 使用命名管道连接
+        let stream = ClientOptions::new().open(&pipe_path).map_err(|e| {
+            error!("Failed to connect to SSH Agent: {}", e);
+            ConnectionError::Authentication(format!("Failed to connect to SSH Agent: {}", e))
+        })?;
+
+        // 创建 Agent 客户端并执行认证
+        let mut agent_client = russh::keys::agent::client::AgentClient::connect(stream);
+        self.do_agent_auth(session, &mut agent_client).await
+    }
+
+    /// 公共的 Agent 认证逻辑
+    async fn do_agent_auth<S>(
+        &self,
+        session: &mut Handle<SshHandler>,
+        agent_client: &mut russh::keys::agent::client::AgentClient<S>,
+    ) -> Result<(), ConnectionError>
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
         // 获取 Agent 中的密钥列表
         let identities = agent_client.request_identities().await.map_err(|e| {
             error!("Failed to list keys from SSH Agent: {}", e);
@@ -343,7 +396,7 @@ impl SshConnection {
                     &self.config.username,
                     identity.clone(),
                     None,
-                    &mut agent_client,
+                    agent_client,
                 )
                 .await;
 
