@@ -5,6 +5,8 @@
 
 use std::sync::Arc;
 
+use super::fonts;
+
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor};
 use gpui::{
@@ -82,7 +84,7 @@ impl TerminalElement {
         let text_system = window.text_system();
 
         // 获取等宽字体的字符宽度
-        let font_id = text_system.resolve_font(&Font::default());
+        let font_id = text_system.resolve_font(&fonts::terminal_font());
         let cell_width = text_system
             .advance(font_id, font_size, 'M')
             .map(|advance| advance.width)
@@ -317,20 +319,10 @@ impl Element for TerminalElement {
                 let text: SharedString = cell.c.to_string().into();
                 let font_size = px(14.0);
 
-                // 创建文本样式
-                let font = Font {
-                    weight: if cell.flags.contains(Flags::BOLD) {
-                        gpui::FontWeight::BOLD
-                    } else {
-                        gpui::FontWeight::NORMAL
-                    },
-                    style: if cell.flags.contains(Flags::ITALIC) {
-                        gpui::FontStyle::Italic
-                    } else {
-                        gpui::FontStyle::Normal
-                    },
-                    ..Default::default()
-                };
+                // 创建文本样式（使用等宽字体）
+                let is_bold = cell.flags.contains(Flags::BOLD);
+                let is_italic = cell.flags.contains(Flags::ITALIC);
+                let font = fonts::terminal_font_with_style(is_bold, is_italic);
 
                 // 下划线样式
                 let underline = if cell.flags.intersects(

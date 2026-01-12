@@ -28,6 +28,7 @@ use crate::app::session::SessionCoordinator;
 
 mod colors;
 mod font_metrics;
+mod fonts;
 mod key_mapping;
 mod terminal_element;
 mod theme;
