@@ -52,7 +52,7 @@ pub use auth::{
     AuthState, AuthStrategy, DEFAULT_MAX_RETRIES, DEFAULT_RETRY_DELAY_MS, LoggingAuthCallback,
     PasswordRetrier, convert_auth_error,
 };
-pub use config::{AuthMethod, ConfigError, HostKeyVerification, SshConfig};
+pub use config::{AuthMethod, HostKeyVerification, SshConfig, SshConfigError};
 pub use connection::SshConnection;
 pub use handler::{DataReceiver, DataSender, HandlerState, SshHandler, create_data_channel};
 pub use reconnect::{
@@ -62,9 +62,9 @@ pub use reconnect::{
 };
 
 pub use keepalive::{
-    DEFAULT_KEEPALIVE_INTERVAL_SECS as KEEPALIVE_INTERVAL_SECS, DEFAULT_KEEPALIVE_TIMEOUT_SECS,
-    DEFAULT_MAX_MISSED_KEEPALIVES, KeepaliveCallback, KeepaliveConfig, KeepaliveEvent,
-    KeepaliveManager, KeepaliveState, KeepaliveStats, LoggingKeepaliveCallback,
+    DEFAULT_KEEPALIVE_TIMEOUT_SECS, DEFAULT_MAX_MISSED_KEEPALIVES, KeepaliveCallback,
+    KeepaliveConfig, KeepaliveEvent, KeepaliveManager, KeepaliveState, KeepaliveStats,
+    LoggingKeepaliveCallback,
 };
 
 pub use known_hosts::{

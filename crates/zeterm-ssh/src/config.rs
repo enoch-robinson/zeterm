@@ -109,7 +109,7 @@ impl SshConfig {
         self
     }
 
-    /// 添加回退认证方法///
+    /// 添加回退认证方法
     /// 当主认证方法失败时，会按顺序尝试回退方法
     pub fn with_fallback(mut self, method: AuthMethod) -> Self {
         self.fallback_auth_methods.push(method);
@@ -185,19 +185,19 @@ impl SshConfig {
     }
 
     /// 验证配置是否有效
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub fn validate(&self) -> Result<(), SshConfigError> {
         if self.host.is_empty() {
-            return Err(ConfigError::MissingHost);
+            return Err(SshConfigError::MissingHost);
         }
         if self.username.is_empty() {
-            return Err(ConfigError::MissingUsername);
+            return Err(SshConfigError::MissingUsername);
         }
         if matches!(self.auth_method, AuthMethod::None) {
-            return Err(ConfigError::MissingAuthMethod);
+            return Err(SshConfigError::MissingAuthMethod);
         }
         if let AuthMethod::PublicKey { ref key_path, .. } = self.auth_method {
             if !key_path.exists() {
-                return Err(ConfigError::KeyFileNotFound(key_path.clone()));
+                return Err(SshConfigError::KeyFileNotFound(key_path.clone()));
             }
         }
         Ok(())
@@ -249,9 +249,9 @@ impl Default for HostKeyVerification {
     }
 }
 
-/// 配置错误
+/// SSH 配置错误
 #[derive(Debug, Clone, thiserror::Error)]
-pub enum ConfigError {
+pub enum SshConfigError {
     #[error("Missing host address")]
     MissingHost,
     #[error("Missing username")]
@@ -300,7 +300,7 @@ mod tests {
     fn test_ssh_config_validate_missing_host() {
         let config = SshConfig::default();
         let result = config.validate();
-        assert!(matches!(result, Err(ConfigError::MissingHost)));
+        assert!(matches!(result, Err(SshConfigError::MissingHost)));
     }
 
     #[test]
@@ -310,14 +310,14 @@ mod tests {
             ..Default::default()
         };
         let result = config.validate();
-        assert!(matches!(result, Err(ConfigError::MissingUsername)));
+        assert!(matches!(result, Err(SshConfigError::MissingUsername)));
     }
 
     #[test]
     fn test_ssh_config_validate_missing_auth() {
         let config = SshConfig::new("example.com", "user");
         let result = config.validate();
-        assert!(matches!(result, Err(ConfigError::MissingAuthMethod)));
+        assert!(matches!(result, Err(SshConfigError::MissingAuthMethod)));
     }
 
     #[test]
