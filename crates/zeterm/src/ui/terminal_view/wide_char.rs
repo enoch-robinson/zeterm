@@ -107,6 +107,89 @@ pub fn is_wide_char(c: char) -> bool {
         return true;
     }
 
+    // Emoji 字符（大部分 Emoji 占用 2 列）
+    if is_emoji(c) {
+        return true;
+    }
+
+    false
+}
+
+/// 判断字符是否为 Emoji
+///
+/// Emoji 字符包括：
+/// - 基本 Emoji (表情符号)
+/// - Emoji 修饰符
+/// - Emoji 组件
+/// - 各种符号 Emoji
+pub fn is_emoji(c: char) -> bool {
+    let cp = c as u32;
+
+    // Miscellaneous Symbols (☀ ☁ ☂等)
+    if (0x2600..=0x26FF).contains(&cp) {
+        return true;
+    }
+
+    // Dingbats (✂ ✈ ✉ 等)
+    if (0x2700..=0x27BF).contains(&cp) {
+        return true;
+    }
+
+    // Emoticons (😀 😁 😂 等)
+    if (0x1F600..=0x1F64F).contains(&cp) {
+        return true;
+    }
+
+    // Miscellaneous Symbols and Pictographs (🌀 🌁 🌂 等)
+    if (0x1F300..=0x1F5FF).contains(&cp) {
+        return true;
+    }
+
+    // Transport and Map Symbols (🚀 🚁 🚂 等)
+    if (0x1F680..=0x1F6FF).contains(&cp) {
+        return true;
+    }
+
+    // Supplemental Symbols and Pictographs (🤐 🤑 🤒 等)
+    if (0x1F900..=0x1F9FF).contains(&cp) {
+        return true;
+    }
+
+    // Symbols and Pictographs Extended-A (🥰 🥱 等)
+    if (0x1FA00..=0x1FA6F).contains(&cp) {
+        return true;
+    }
+
+    // Symbols and Pictographs Extended-B
+    if (0x1FA70..=0x1FAFF).contains(&cp) {
+        return true;
+    }
+
+    // Regional Indicator Symbols (🇦🇧 等，用于国旗)
+    if (0x1F1E0..=0x1F1FF).contains(&cp) {
+        return true;
+    }
+
+    // Mahjong Tiles (🀀 🀁 等)
+    if (0x1F000..=0x1F02F).contains(&cp) {
+        return true;
+    }
+
+    // Domino Tiles (🁠 🁡 等)
+    if (0x1F030..=0x1F09F).contains(&cp) {
+        return true;
+    }
+
+    // Playing Cards (🂠 🂡 等)
+    if (0x1F0A0..=0x1F0FF).contains(&cp) {
+        return true;
+    }
+
+    // Chess Symbols
+    if (0x1FA00..=0x1FA0F).contains(&cp) {
+        return true;
+    }
+
     false
 }
 

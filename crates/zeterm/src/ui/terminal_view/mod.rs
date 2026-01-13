@@ -170,8 +170,10 @@ pub struct TerminalView {
     coordinator: Arc<SessionCoordinator>,
     /// 焦点句柄
     focus_handle: FocusHandle,
-    /// 光标是否可见
+    /// 光标是否可见（用于闪烁状态）
     cursor_visible: bool,
+    /// 是否启用光标闪烁
+    cursor_blink_enabled: bool,
     /// 渲染配置
     render_config: RenderConfig,
 }
@@ -197,6 +199,7 @@ impl TerminalView {
             coordinator,
             focus_handle: cx.focus_handle(),
             cursor_visible: true,
+            cursor_blink_enabled: true,
             render_config,
         }
     }
@@ -219,6 +222,48 @@ impl TerminalView {
     /// 获取当前主题
     pub fn theme(&self) -> &TerminalTheme {
         &self.render_config.theme
+    }
+
+    /// 切换亮色/暗色主题
+    pub fn toggle_theme(&mut self) {
+        if self.render_config.theme.is_dark {
+            self.render_config.theme = TerminalTheme::light();
+        } else {
+            self.render_config.theme = TerminalTheme::dark();
+        }
+    }
+    /// 检查当前是否为暗色主题
+    pub fn is_dark_theme(&self) -> bool {
+        self.render_config.theme.is_dark
+    }
+
+    /// 切换光标闪烁
+    pub fn toggle_cursor_blink(&mut self) {
+        self.cursor_blink_enabled = !self.cursor_blink_enabled;
+        if !self.cursor_blink_enabled {
+            //禁用闪烁时，确保光标可见
+            self.cursor_visible = true;
+        }
+    }
+
+    /// 设置光标闪烁状态
+    pub fn set_cursor_blink(&mut self, enabled: bool) {
+        self.cursor_blink_enabled = enabled;
+        if !enabled {
+            self.cursor_visible = true;
+        }
+    }
+
+    /// 检查光标闪烁是否启用
+    pub fn is_cursor_blink_enabled(&self) -> bool {
+        self.cursor_blink_enabled
+    }
+
+    /// 切换光标可见性（用于闪烁动画）
+    pub fn toggle_cursor_visibility(&mut self) {
+        if self.cursor_blink_enabled {
+            self.cursor_visible = !self.cursor_visible;
+        }
     }
 
     /// 构建终端视图实体

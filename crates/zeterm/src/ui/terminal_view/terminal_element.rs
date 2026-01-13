@@ -34,6 +34,14 @@ use crate::app::session::SessionCoordinator;
 pub const TERMINAL_FONT_SIZE: f32 = 14.0;
 /// 终端行高倍数
 pub const TERMINAL_LINE_HEIGHT: f32 = 1.2;
+/// 最小字体大小
+pub const MIN_FONT_SIZE: f32 = 8.0;
+/// 最大字体大小
+pub const MAX_FONT_SIZE: f32 = 72.0;
+/// 字体缩放步长
+pub const FONT_SCALE_STEP: f32 = 2.0;
+/// 光标闪烁间隔（毫秒）
+pub const CURSOR_BLINK_INTERVAL_MS: u64 = 500;
 
 // ============================================================================
 // 核心数据结构
@@ -47,6 +55,8 @@ pub struct TerminalElement {
     focused: bool,
     /// 光标是否可见
     cursor_visible: bool,
+    /// 是否启用光标闪烁
+    cursor_blink_enabled: bool,
     /// 字体大小
     font_size: f32,
     /// 行高倍数
@@ -389,6 +399,7 @@ impl TerminalElement {
             coordinator,
             focused: true,
             cursor_visible: true,
+            cursor_blink_enabled: true,
             font_size: TERMINAL_FONT_SIZE,
             line_height: TERMINAL_LINE_HEIGHT,
             cursor_color: None,
@@ -408,6 +419,7 @@ impl TerminalElement {
             coordinator,
             focused,
             cursor_visible,
+            cursor_blink_enabled: true,
             font_size,
             line_height,
             cursor_color,
@@ -430,6 +442,64 @@ impl TerminalElement {
     pub fn with_cursor_color(mut self, color: Hsla) -> Self {
         self.cursor_color = Some(color);
         self
+    }
+
+    /// 设置焦点状态
+    pub fn with_focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
+        self
+    }
+
+    /// 设置光标可见性
+    pub fn with_cursor_visible(mut self, visible: bool) -> Self {
+        self.cursor_visible = visible;
+        self
+    }
+
+    /// 设置光标闪烁
+    pub fn with_cursor_blink(mut self, enabled: bool) -> Self {
+        self.cursor_blink_enabled = enabled;
+        self
+    }
+
+    /// 启用光标闪烁
+    pub fn enable_cursor_blink(&mut self) {
+        self.cursor_blink_enabled = true;
+    }
+
+    /// 禁用光标闪烁
+    pub fn disable_cursor_blink(&mut self) {
+        self.cursor_blink_enabled = false;
+    }
+
+    /// 检查光标闪烁是否启用
+    pub fn is_cursor_blink_enabled(&self) -> bool {
+        self.cursor_blink_enabled
+    }
+
+    /// 放大字体
+    pub fn zoom_in(&mut self) {
+        self.font_size = (self.font_size + FONT_SCALE_STEP).min(MAX_FONT_SIZE);
+    }
+
+    /// 缩小字体
+    pub fn zoom_out(&mut self) {
+        self.font_size = (self.font_size - FONT_SCALE_STEP).max(MIN_FONT_SIZE);
+    }
+
+    /// 重置字体大小
+    pub fn reset_zoom(&mut self) {
+        self.font_size = TERMINAL_FONT_SIZE;
+    }
+
+    /// 获取当前字体大小
+    pub fn font_size(&self) -> f32 {
+        self.font_size
+    }
+
+    /// 设置字体大小（带范围限制）
+    pub fn set_font_size(&mut self, size: f32) {
+        self.font_size = size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE);
     }
 
     /// 计算字体度量
@@ -573,6 +643,76 @@ impl TerminalElement {
             underline,
             strikethrough,
         }
+    }
+
+    /// 检测是否为装饰字符///
+    /// 装饰字符（如 Powerline 符号、Box Drawing 等）需要保持原色，
+    /// 不应用对比度调整，以保持视觉效果。
+    #[inline]
+    fn is_decorative_character(ch: char) -> bool {
+        matches!(
+            ch as u32,
+            // Box Drawing (└ ┐ ─ │等)
+            0x2500..=0x257F
+            // Block Elements (▀ ▄ █ ░ 等)
+            | 0x2580..=0x259F
+            // Geometric Shapes (■▶ ● 等)
+            | 0x25A0..=0x25FF
+            // Powerline symbols
+            | 0xE0B0..=0xE0D7
+            // Powerline Extra symbols
+            | 0xE0A0..=0xE0A3
+        )
+    }
+
+    /// 确保前景色和背景色有足够的对比度///
+    /// 使用 WCAG 2.0 的相对亮度公式计算对比度，
+    /// 如果对比度不足，则调整前景色的亮度。
+    fn ensure_minimum_contrast(fg: Hsla, bg: Hsla, minimum_contrast: f32) -> Hsla {
+        let fg_luminance = Self::relative_luminance(fg);
+        let bg_luminance = Self::relative_luminance(bg);
+
+        let contrast = Self::contrast_ratio(fg_luminance, bg_luminance);
+
+        if contrast >= minimum_contrast {
+            return fg;
+        }
+
+        // 需要调整前景色亮度
+        let mut adjusted = fg;
+
+        // 根据背景亮度决定调整方向
+        if bg_luminance > 0.5 {
+            // 深色背景，降低前景色亮度
+            adjusted.l = (adjusted.l - 0.1).max(0.0);
+        } else {
+            // 浅色背景，提高前景色亮度
+            adjusted.l = (adjusted.l + 0.1).min(1.0);
+        }
+
+        // 递归调整直到满足对比度要求（最多调整10次）
+        let new_contrast = Self::contrast_ratio(Self::relative_luminance(adjusted), bg_luminance);
+        if new_contrast < minimum_contrast && (adjusted.l > 0.05 && adjusted.l < 0.95) {
+            Self::ensure_minimum_contrast(adjusted, bg, minimum_contrast)
+        } else {
+            adjusted
+        }
+    }
+
+    /// 计算相对亮度(WCAG 2.0)
+    #[inline]
+    fn relative_luminance(color: Hsla) -> f32 {
+        // 将 HSL 转换为 RGB 来计算亮度
+        // 简化计算：使用亮度分量作为近似值
+        color.l
+    }
+
+    /// 计算对比度比率 (WCAG 2.0)
+    #[inline]
+    fn contrast_ratio(l1: f32, l2: f32) -> f32 {
+        let lighter = l1.max(l2);
+        let darker = l1.min(l2);
+        (lighter + 0.05) / (darker + 0.05)
     }
 }
 
@@ -722,6 +862,14 @@ impl Element for TerminalElement {
 
             // 构建文本样式
             let mut fg_color = self.convert_color(&fg, &theme);
+            let bg_color = self.convert_color(&bg, &theme);
+
+            // 对比度调整：确保文本可读（跳过装饰字符）
+            if !Self::is_decorative_character(cell.c) {
+                const MINIMUM_CONTRAST: f32 = 4.5; // WCAG AA 标准
+                fg_color = Self::ensure_minimum_contrast(fg_color, bg_color, MINIMUM_CONTRAST);
+            }
+
             if cell.flags.contains(Flags::DIM) {
                 fg_color.a *= 0.66;
             }
