@@ -21,7 +21,7 @@ use zeterm_core::traits::{ConnectionInfo, ConnectionType, TerminalConnection};
 
 use crate::agent::{get_agent_socket_path, is_agent_available};
 use crate::config::{AuthMethod, SshConfig};
-use crate::handler::{DataReceiver, SshHandler, create_data_channel};
+use crate::handler::{DataReceiver, HostKeyConfirmCallback, SshHandler, create_data_channel};
 
 /// SSH 连接内部状态
 struct SshConnectionInner {
@@ -47,6 +47,8 @@ pub struct SshConnection {
     inner: Arc<Mutex<SshConnectionInner>>,
     /// 连接状态
     connected: Arc<std::sync::atomic::AtomicBool>,
+    /// 主机密钥确认回调
+    host_key_confirm_callback: Option<HostKeyConfirmCallback>,
 }
 
 impl SshConnection {
@@ -64,7 +66,19 @@ impl SshConnection {
                 terminal_size,
             })),
             connected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            host_key_confirm_callback: None,
         }
+    }
+
+    /// 设置主机密钥确认回调
+    pub fn with_host_key_confirm_callback(mut self, callback: HostKeyConfirmCallback) -> Self {
+        self.host_key_confirm_callback = Some(callback);
+        self
+    }
+
+    /// 设置主机密钥确认回调（可变引用版本）
+    pub fn set_host_key_confirm_callback(&mut self, callback: HostKeyConfirmCallback) {
+        self.host_key_confirm_callback = Some(callback);
     }
 
     /// 建立 SSH 连接
@@ -80,12 +94,17 @@ impl SshConnection {
         let (data_sender, data_receiver) = create_data_channel();
 
         // 创建 SSH Handler
-        let handler = SshHandler::new(
+        let mut handler = SshHandler::new(
             data_sender,
             self.config.host_key_verification.clone(),
             self.config.host.clone(),
             self.config.port,
         );
+
+        // 设置主机密钥确认回调
+        if let Some(ref callback) = self.host_key_confirm_callback {
+            handler.set_host_key_confirm_callback(callback.clone());
+        }
 
         // 配置 SSH 客户端
         let ssh_config = client::Config {

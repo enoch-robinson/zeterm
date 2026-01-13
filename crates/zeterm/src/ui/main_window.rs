@@ -26,7 +26,7 @@ use crate::ui::dialogs::{
 use crate::ui::terminal_view::TerminalView;
 use zeterm_core::ConnectionState;
 use zeterm_mock::{MockConfig, MockConnection};
-use zeterm_ssh::{SshConfig, SshConnection};
+use zeterm_ssh::{HostKeyConfirmCallback, SshConfig, SshConnection};
 
 /// 主窗口视图
 ///
@@ -240,13 +240,42 @@ impl MainWindow {
 
                 info!("SSH config created with host key verification enabled");
 
-                // 注意：主机密钥确认通道已准备好
-                // 当SshHandler 需要确认时，可以通过 host_key_sender 发送请求
-                // UI 线程会通过 host_key_receiver 接收请求并显示对话框
-                let _sender = host_key_sender; // 保留引用，供后续集成使用
+                // 创建主机密钥确认回调
+                // 当 SshHandler 需要确认时，通过 channel 发送请求到UI 线程
+                let host_key_callback: HostKeyConfirmCallback = Arc::new(
+                    move |hostname: &str, port: u16, key_type: &str, fingerprint: &str| -> bool {
+                        use crate::ui::dialogs::HostKeyConfirmRequest;
+                        use std::time::Duration;
 
-                // 创建 SSH 连接
-                let ssh_conn = SshConnection::new(config);
+                        info!(
+                            "Host key confirmation requested for {}:{} ({}: {})",
+                            hostname, port, key_type, fingerprint
+                        );
+
+                        // 创建确认请求
+                        let request =
+                            HostKeyConfirmRequest::new(hostname, port, key_type, fingerprint);
+
+                        // 发送请求并等待响应（超时 60 秒）
+                        match host_key_sender.request_and_wait(request, Duration::from_secs(60)) {
+                            Some(response) => {
+                                info!(
+                                    "Host key confirmation response: accepted={}, remember={}",
+                                    response.accepted, response.remember
+                                );
+                                response.accepted
+                            },
+                            None => {
+                                warn!("Host key confirmation timed out or channel closed");
+                                false
+                            },
+                        }
+                    },
+                );
+
+                // 创建 SSH 连接并设置回调
+                let ssh_conn =
+                    SshConnection::new(config).with_host_key_confirm_callback(host_key_callback);
 
                 // 连接
                 info!("Connecting to SSH server...");
@@ -579,8 +608,18 @@ impl MainWindow {
 
     /// 检查是否有待确认的主机密钥对话框需要显示
     fn check_pending_host_key_dialog(&mut self, cx: &mut Context<Self>) {
-        // 如果已经有对话框显示，不再检查
-        if self.host_key_dialog.is_some() {
+        // 如果已经有对话框显示，检查是否需要关闭
+        if let Some(dialog) = &self.host_key_dialog {
+            let response = dialog.read(cx).response();
+            if response != HostKeyResponse::Pending {
+                info!(
+                    "Host key dialog response received: {:?}, dismissing dialog",
+                    response
+                );
+                self.dismiss_host_key_dialog(cx);
+                return;
+            }
+            // 对话框仍在等待用户响应，不检查新请求
             return;
         }
 
