@@ -258,6 +258,102 @@ pub struct CursorLayout {
 // 布局状态
 // ============================================================================
 
+/// 视口信息
+///
+/// 用于视口裁剪优化，只渲染可见区域
+#[derive(Debug, Clone, Copy)]
+pub struct ViewportInfo {
+    /// 可见的起始行（相对于终端内容）
+    pub first_visible_line: i32,
+    /// 可见的结束行（相对于终端内容）
+    pub last_visible_line: i32,
+    /// 可见的起始列
+    pub first_visible_col: i32,
+    /// 可见的结束列
+    pub last_visible_col: i32,
+}
+
+impl ViewportInfo {
+    /// 检查指定行是否在视口内
+    #[inline]
+    pub fn is_line_visible(&self, line: i32) -> bool {
+        line >= self.first_visible_line && line <= self.last_visible_line
+    }
+
+    /// 检查指定单元格是否在视口内
+    #[inline]
+    pub fn is_cell_visible(&self, line: i32, col: i32) -> bool {
+        self.is_line_visible(line) && col >= self.first_visible_col && col <= self.last_visible_col
+    }
+}
+
+//============================================================================
+// 高亮范围数据结构
+// ============================================================================
+
+/// 高亮类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HighlightType {
+    /// 文本选择
+    Selection,
+    /// 搜索匹配
+    SearchMatch,
+    /// 当前搜索匹配（焦点）
+    CurrentSearchMatch,
+}
+
+/// 高亮范围（单行）
+///
+/// 表示一行中需要高亮的区域
+#[derive(Debug, Clone)]
+pub struct HighlightedRangeLine {
+    /// 行号
+    pub line: i32,
+    /// 起始列
+    pub start_col: i32,
+    /// 结束列（包含）
+    pub end_col: i32,
+    /// 高亮类型
+    pub highlight_type: HighlightType,
+    /// 高亮颜色
+    pub color: Hsla,
+}
+
+impl HighlightedRangeLine {
+    /// 创建新的高亮范围行
+    pub fn new(
+        line: i32,
+        start_col: i32,
+        end_col: i32,
+        highlight_type: HighlightType,
+        color: Hsla,
+    ) -> Self {
+        Self {
+            line,
+            start_col,
+            end_col,
+            highlight_type,
+            color,
+        }
+    }
+
+    /// 绘制高亮背景
+    pub fn paint(&self, origin: Point<Pixels>, font_metrics: &FontMetrics, window: &mut Window) {
+        let x = origin.x + self.start_col as f32 * font_metrics.cell_width;
+        let y = origin.y + self.line as f32 * font_metrics.cell_height;
+        let width = (self.end_col - self.start_col + 1) as f32 * font_metrics.cell_width;
+
+        let bounds = Bounds::new(
+            Point::new(x, y),
+            Size {
+                width: px(width.into()),
+                height: font_metrics.cell_height,
+            },
+        );
+        window.paint_quad(fill(bounds, self.color));
+    }
+}
+
 /// 布局状态
 ///
 /// 在prepaint 阶段计算，在 paint 阶段使用
@@ -270,10 +366,14 @@ pub struct LayoutState {
     pub cols: usize,
     /// 终端行数
     pub rows: usize,
+    /// 视口信息（用于裁剪优化）
+    pub viewport: ViewportInfo,
     /// 批量文本运行列表（预处理后）
     pub batched_text_runs: Vec<BatchedTextRun>,
     /// 背景矩形列表（预处理后）
     pub background_rects: Vec<LayoutRect>,
+    /// 高亮范围列表（选择、搜索匹配等）
+    pub highlighted_ranges: Vec<HighlightedRangeLine>,
     /// 光标布局（预处理后）
     pub cursor_layout: Option<CursorLayout>,
 }
@@ -536,7 +636,23 @@ impl Element for TerminalElement {
         let cols = (bounds.size.width / font_metrics.cell_width).floor() as usize;
         let rows = (bounds.size.height / font_metrics.cell_height).floor() as usize;
 
-        debug!("Terminal prepaint: {}x{} cells", cols, rows);
+        // 创建视口信息（用于裁剪优化）
+        let viewport = ViewportInfo {
+            first_visible_line: 0,
+            last_visible_line: rows as i32 - 1,
+            first_visible_col: 0,
+            last_visible_col: cols as i32 - 1,
+        };
+
+        debug!(
+            "Terminal prepaint: {}x{} cells, viewport: lines {}-{}, cols {}-{}",
+            cols,
+            rows,
+            viewport.first_visible_line,
+            viewport.last_visible_line,
+            viewport.first_visible_col,
+            viewport.last_visible_col
+        );
 
         // 获取终端内容
         let term = self.coordinator.terminal().term();
@@ -547,6 +663,9 @@ impl Element for TerminalElement {
         let mut batched_text_runs: Vec<BatchedTextRun> = Vec::new();
         let mut background_rects: Vec<LayoutRect> = Vec::new();
 
+        // 统计跳过的单元格数（用于调试）
+        let mut skipped_cells = 0usize;
+
         for cell in content.display_iter {
             let point = cell.point;
             let line = point.line.0;
@@ -554,6 +673,12 @@ impl Element for TerminalElement {
 
             // 跳过宽字符占位符
             if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                continue;
+            }
+
+            // 视口裁剪：跳过不可见的单元格
+            if !viewport.is_line_visible(line) {
+                skipped_cells += 1;
                 continue;
             }
 
@@ -632,10 +757,69 @@ impl Element for TerminalElement {
             None
         };
 
+        // 处理选择高亮
+        let mut highlighted_ranges: Vec<HighlightedRangeLine> = Vec::new();
+        let selection_color = Hsla {
+            h: 210.0 / 360.0,
+            s: 0.5,
+            l: 0.5,
+            a: 0.3,
+        };
+
+        // 从终端内容获取选择范围
+        if let Some(selection) = &content.selection {
+            let start = selection.start;
+            let end = selection.end;
+
+            // 确保 start <= end
+            let (start_line, start_col, end_line, end_col) = if start.line <= end.line {
+                (
+                    start.line.0,
+                    start.column.0 as i32,
+                    end.line.0,
+                    end.column.0 as i32,
+                )
+            } else {
+                (
+                    end.line.0,
+                    end.column.0 as i32,
+                    start.line.0,
+                    start.column.0 as i32,
+                )
+            };
+
+            // 为每一行创建高亮范围
+            for line in start_line..=end_line {
+                // 视口裁剪：跳过不可见的行
+                if !viewport.is_line_visible(line) {
+                    continue;
+                }
+
+                let line_start_col = if line == start_line { start_col } else { 0 };
+                let line_end_col = if line == end_line {
+                    end_col
+                } else {
+                    cols as i32 - 1
+                };
+
+                if line_start_col <= line_end_col {
+                    highlighted_ranges.push(HighlightedRangeLine::new(
+                        line,
+                        line_start_col,
+                        line_end_col,
+                        HighlightType::Selection,
+                        selection_color,
+                    ));
+                }
+            }
+        }
+
         debug!(
-            "Prepaint complete: {} text runs, {} background rects",
+            "Prepaint complete: {} text runs, {} background rects, {} highlights, {} cells skipped",
             batched_text_runs.len(),
-            background_rects.len()
+            background_rects.len(),
+            highlighted_ranges.len(),
+            skipped_cells
         );
 
         LayoutState {
@@ -643,8 +827,10 @@ impl Element for TerminalElement {
             font_metrics,
             cols,
             rows,
+            viewport,
             batched_text_runs,
             background_rects,
+            highlighted_ranges,
             cursor_layout,
         }
     }
@@ -669,12 +855,17 @@ impl Element for TerminalElement {
             rect.paint(origin, &prepaint.font_metrics, window);
         }
 
-        // 3. 绘制批量文本
+        // 3. 绘制高亮（选择、搜索匹配等）
+        for highlight in &prepaint.highlighted_ranges {
+            highlight.paint(origin, &prepaint.font_metrics, window);
+        }
+
+        // 4. 绘制批量文本
         for text_run in &prepaint.batched_text_runs {
             text_run.paint(origin, &prepaint.font_metrics, window, cx);
         }
 
-        // 4. 绘制光标
+        // 5. 绘制光标
         if let Some(cursor) = &prepaint.cursor_layout {
             self.paint_cursor(cursor, origin, &prepaint.font_metrics, window);
         }
