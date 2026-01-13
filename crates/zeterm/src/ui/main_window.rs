@@ -6,6 +6,7 @@
 
 use std::env;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
@@ -20,6 +21,7 @@ use parking_lot::RwLock;
 use tracing::{debug, info, warn};
 
 use crate::app::session::SessionCoordinator;
+use crate::ui::dialogs::{HostKeyDialog, HostKeyInfo, HostKeyResponse};
 use crate::ui::terminal_view::TerminalView;
 use zeterm_core::ConnectionState;
 use zeterm_mock::{MockConfig, MockConnection};
@@ -51,6 +53,14 @@ pub struct MainWindow {
     ssh_password: Arc<RwLock<String>>,
     /// SSH 端口
     ssh_port: Arc<RwLock<u16>>,
+    /// 主机密钥对话框
+    host_key_dialog: Option<Entity<HostKeyDialog>>,
+    /// 待确认的主机密钥信息
+    pending_host_key: Arc<RwLock<Option<HostKeyInfo>>>,
+    /// 主机密钥确认结果
+    host_key_accepted: Arc<AtomicBool>,
+    /// 是否正在等待主机密钥确认
+    waiting_host_key_confirm: Arc<AtomicBool>,
 }
 
 impl MainWindow {
@@ -94,6 +104,10 @@ impl MainWindow {
             ssh_username: Arc::new(RwLock::new(ssh_username)),
             ssh_password: Arc::new(RwLock::new(ssh_password)),
             ssh_port: Arc::new(RwLock::new(ssh_port)),
+            host_key_dialog: None,
+            pending_host_key: Arc::new(RwLock::new(None)),
+            host_key_accepted: Arc::new(AtomicBool::new(false)),
+            waiting_host_key_confirm: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -203,17 +217,26 @@ impl MainWindow {
         let coordinator = self.coordinator.clone();
         let status_text = self.status_text.clone();
         let data_pump_started = self.data_pump_started.clone();
+        let pending_host_key = self.pending_host_key.clone();
+        let waiting_host_key_confirm = self.waiting_host_key_confirm.clone();
+        let host_key_accepted = self.host_key_accepted.clone();
 
         // 使用 std::thread::spawn 启动独立线程
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
 
             rt.block_on(async move {
-                // 创建 SSH 配置
+                // 创建 SSH 配置，使用 AskOnFirstConnect 模式进行主机密钥验证
                 let config = SshConfig::new(&host, &username)
                     .with_port(port)
                     .with_password(&password)
-                    .with_terminal_size(80, 24);
+                    .with_terminal_size(80, 24)
+                    .with_host_key_verification(zeterm_ssh::HostKeyVerification::AskOnFirstConnect);
+
+                // 设置主机密钥确认回调
+                // 注意：由于 russh 的限制，这里使用简化的实现
+                // 实际的主机密钥验证在 SshHandler 中处理
+                info!("SSH config created with host key verification enabled");
 
                 // 创建 SSH 连接
                 let ssh_conn = SshConnection::new(config);
@@ -280,6 +303,9 @@ impl Focusable for MainWindow {
 
 impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 先检查是否需要显示主机密钥对话框（需要可变借用）
+        self.check_pending_host_key_dialog(cx);
+
         let theme = cx.theme();
         let status = self.get_status_text();
         let connection_state = self.get_connection_state();
@@ -294,7 +320,7 @@ impl Render for MainWindow {
         };
 
         // 主窗口容器，使用 gpui-component 主题颜色
-        div()
+        let mut container = div()
             .id("main-window")
             .track_focus(&self.focus_handle)
             .size_full()
@@ -304,7 +330,14 @@ impl Render for MainWindow {
             .text_color(theme.foreground)
             .child(self.render_header(window, cx))
             .child(self.render_content(window, cx))
-            .child(self.render_status_bar(window, cx, status, status_color))
+            .child(self.render_status_bar(window, cx, status, status_color));
+
+        // 如果有对话框，添加对话框覆盖层
+        if let Some(dialog) = &self.host_key_dialog {
+            container = container.child(dialog.clone());
+        }
+
+        container
     }
 }
 
@@ -535,5 +568,86 @@ impl MainWindow {
                     .text_color(theme.muted_foreground)
                     .child("Theme: Dark"),
             )
+    }
+
+    /// 检查是否有待确认的主机密钥对话框需要显示
+    fn check_pending_host_key_dialog(&mut self, cx: &mut Context<Self>) {
+        // 如果正在等待确认且还没有对话框，创建对话框
+        let should_show =
+            self.waiting_host_key_confirm.load(Ordering::SeqCst) && self.host_key_dialog.is_none();
+
+        if should_show {
+            let info = self.pending_host_key.read().clone();
+            if let Some(info) = info {
+                self.show_host_key_dialog(info, cx);
+            }
+        }
+    }
+
+    /// 显示主机密钥确认对话框
+    fn show_host_key_dialog(&mut self, info: HostKeyInfo, cx: &mut Context<Self>) {
+        info!(
+            "Showing host key dialog for {}:{}",
+            info.hostname, info.port
+        );
+
+        let host_key_accepted = self.host_key_accepted.clone();
+        let waiting_confirm = self.waiting_host_key_confirm.clone();
+
+        let dialog = cx.new(|cx| {
+            HostKeyDialog::new(info, cx).with_on_response(move |response, _remember| {
+                match response {
+                    HostKeyResponse::Accept => {
+                        host_key_accepted.store(true, Ordering::SeqCst);
+                    },
+                    HostKeyResponse::Reject => {
+                        host_key_accepted.store(false, Ordering::SeqCst);
+                    },
+                    HostKeyResponse::Pending => {},
+                }
+                waiting_confirm.store(false, Ordering::SeqCst);
+            })
+        });
+
+        self.host_key_dialog = Some(dialog);
+        cx.notify();
+    }
+
+    /// 关闭主机密钥对话框
+    fn dismiss_host_key_dialog(&mut self, cx: &mut Context<Self>) {
+        self.host_key_dialog = None;
+        *self.pending_host_key.write() = None;
+        cx.notify();
+    }
+
+    /// 请求主机密钥确认（供SSH 连接流程调用）
+    pub fn request_host_key_confirmation(
+        pending_host_key: &Arc<RwLock<Option<HostKeyInfo>>>,
+        waiting_confirm: &Arc<AtomicBool>,
+        host_key_accepted: &Arc<AtomicBool>,
+        hostname: &str,
+        port: u16,
+        key_type: &str,
+        fingerprint: &str,
+    ) -> bool {
+        // 设置待确认的主机密钥信息
+        *pending_host_key.write() = Some(HostKeyInfo::new(hostname, port, key_type, fingerprint));
+        host_key_accepted.store(false, Ordering::SeqCst);
+        waiting_confirm.store(true, Ordering::SeqCst);
+
+        // 等待用户响应（简单的轮询，实际应用中可以使用更好的同步机制）
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(60);
+
+        while waiting_confirm.load(Ordering::SeqCst) {
+            if start.elapsed() > timeout {
+                warn!("Host key confirmation timed out");
+                waiting_confirm.store(false, Ordering::SeqCst);
+                return false;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+
+        host_key_accepted.load(Ordering::SeqCst)
     }
 }
