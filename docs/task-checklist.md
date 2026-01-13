@@ -319,7 +319,7 @@
 | ✅ | 阅读 `terminal_element.rs` 源码 | P0 | 4h |
 | ✅ | 理解 prepaint/paint 流程 | P0 | 2h |
 | ✅ | 分析字体度量计算方式 | P0 | 2h |
-| ⬜ | 分析字符绘制逻辑 | P0 | 2h |
+| ✅ | 分析字符绘制逻辑 | P0 | 2h |
 | ✅ | 分析光标绘制逻辑 | P1 | 1h |
 
 #### 3.1.3 按键映射分析
@@ -424,6 +424,23 @@
 | ✅ | 支持下划线 (Underline) | P1 | 1h |
 | ✅ | 支持删除线 (Strikethrough) | P2 | 1h |
 | ✅ | 支持反色 (Inverse) | P1 | 1h |
+
+#### 3.4.4 字符绘制性能优化
+
+| 状态 | 任务 | 优先级 | 预估时间 | 备注 |
+|------|------|--------|----------|------|
+| ✅ | 实现文本批处理 (BatchedTextRun) | P0 | 5h | 合并相同样式字符，减少 shape_line调用 (2026-01-13) |
+| ✅ | 实现背景区域合并 (BackgroundRegion) | P0 | 4h | 合并相邻背景，减少 paint_quad 调用 (2026-01-13) |
+| ✅ | 重构 prepaint/paint 分离 | P0 | 3h | 预处理与绘制分离，扩展 LayoutState (2026-01-13) |
+| ⬜ | 实现视口裁剪优化 | P1 | 3h | 只渲染可见区域单元格 |
+| ⬜ | 添加选择高亮支持 | P1 | 4h | 文本选择的高亮显示 |
+| ⬜ | 添加搜索匹配高亮 | P1 | 3h | 搜索结果高亮 |
+| ⬜ | 添加对比度调整 | P2 | 2h | ensure_minimum_contrast |
+| ⬜ | 添加超链接支持 | P2 | 4h | URL 检测和悬停提示 |
+| ⬜ | 添加 IME 输入支持 | P2 | 5h | 输入法预编辑文本 |
+
+>📖 详细任务分析见: [paint-improvement-tasks.md](./research/paint-improvement-tasks.md)
+> 📖 Zed 实现分析见: [zed-terminal-paint-analysis.md](./research/zed-terminal-paint-analysis.md)
 
 ---
 

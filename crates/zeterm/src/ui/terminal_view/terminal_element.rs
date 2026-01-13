@@ -2,6 +2,13 @@
 //!
 //! 基于 GPUI Element trait 的终端渲染实现。
 //! 参考 Zed 编辑器的 terminal_element.rs 实现。
+//!
+//! ## 性能优化
+//!
+//! 本模块实现了以下性能优化：
+//! - **BatchedTextRun**: 将相邻的、样式相同的字符合并成批次，减少 shape_line 调用
+//! - **LayoutRect**: 合并相邻的背景区域，减少 paint_quad 调用
+//! - **prepaint/paint 分离**: 预处理与绘制分离，提高代码可维护性
 
 use std::sync::Arc;
 
@@ -10,13 +17,27 @@ use super::fonts;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor};
 use gpui::{
-    App, Bounds, Element, ElementId, GlobalElementId, Hsla, IntoElement, LayoutId, Pixels, Point,
-    SharedString, Size, StrikethroughStyle, Style, TextRun, UnderlineStyle, Window, fill, px,
+    App, Bounds, Element, ElementId, Font, GlobalElementId, Hsla, IntoElement, LayoutId, Pixels,
+    Point, SharedString, Size, StrikethroughStyle, Style, TextRun, UnderlineStyle, Window, fill,
+    px,
 };
-use gpui_component::{ActiveTheme, PixelsExt};
+use gpui_component::ActiveTheme;
 use tracing::debug;
 
 use crate::app::session::SessionCoordinator;
+
+//============================================================================
+// 常量定义
+// ============================================================================
+
+/// 终端字体大小
+pub const TERMINAL_FONT_SIZE: f32 = 14.0;
+/// 终端行高倍数
+pub const TERMINAL_LINE_HEIGHT: f32 = 1.2;
+
+// ============================================================================
+// 核心数据结构
+// ============================================================================
 
 /// 终端渲染元素
 pub struct TerminalElement {
@@ -35,11 +56,6 @@ pub struct TerminalElement {
 }
 
 /// 字体度量信息
-/// 终端字体大小
-pub const TERMINAL_FONT_SIZE: f32 = 14.0;
-/// 终端行高倍数
-pub const TERMINAL_LINE_HEIGHT: f32 = 1.2;
-
 #[derive(Debug, Clone, Copy)]
 pub struct FontMetrics {
     /// 单元格宽度
@@ -61,7 +77,190 @@ impl Default for FontMetrics {
     }
 }
 
+// ============================================================================
+// 批处理优化数据结构
+// ============================================================================
+
+/// 批量文本运行
+///
+/// 将相邻的、样式相同的字符合并成一个批次，大幅减少绘制调用。
+/// 例如 "hello" 这5个字符如果样式相同，会合并成一个 BatchedTextRun。
+#[derive(Debug, Clone)]
+pub struct BatchedTextRun {
+    /// 起始位置 (行, 列)
+    pub start_line: i32,
+    pub start_col: i32,
+    /// 合并后的文本
+    pub text: String,
+    /// 占用的单元格数（考虑宽字符）
+    pub cell_count: usize,
+    /// 文本样式
+    pub style: TextRunStyle,
+}
+
+/// 文本运行样式
+///
+/// 用于比较两个字符是否可以合并到同一批次
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextRunStyle {
+    /// 字体
+    pub font: Font,
+    /// 前景色
+    pub color: Hsla,
+    /// 下划线样式
+    pub underline: Option<UnderlineStyle>,
+    /// 删除线样式
+    pub strikethrough: Option<StrikethroughStyle>,
+}
+
+impl BatchedTextRun {
+    /// 创建新的批量文本运行
+    pub fn new(line: i32, col: i32, c: char, cell_width: usize, style: TextRunStyle) -> Self {
+        Self {
+            start_line: line,
+            start_col: col,
+            text: c.to_string(),
+            cell_count: cell_width,
+            style,
+        }
+    }
+
+    /// 检查是否可以追加新字符（样式必须相同且位置相邻）
+    pub fn can_append(&self, line: i32, col: i32, style: &TextRunStyle) -> bool {
+        // 必须在同一行
+        if self.start_line != line {
+            return false;
+        }
+        // 必须紧邻当前批次的末尾
+        let expected_col = self.start_col + self.cell_count as i32;
+        if col != expected_col {
+            return false;
+        }
+        // 样式必须相同
+        self.style == *style
+    }
+
+    /// 追加字符到批次
+    pub fn append_char(&mut self, c: char, cell_width: usize) {
+        self.text.push(c);
+        self.cell_count += cell_width;
+    }
+
+    /// 绘制批量文本
+    pub fn paint(
+        &self,
+        origin: Point<Pixels>,
+        font_metrics: &FontMetrics,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let pos = Point::new(
+            origin.x + self.start_col as f32 * font_metrics.cell_width,
+            origin.y + self.start_line as f32 * font_metrics.cell_height,
+        );
+
+        let text: SharedString = self.text.clone().into();
+        let text_run = TextRun {
+            len: text.len(),
+            font: self.style.font.clone(),
+            color: self.style.color,
+            background_color: None,
+            underline: self.style.underline.clone(),
+            strikethrough: self.style.strikethrough.clone(),
+        };
+
+        let text_system = window.text_system();
+        let shaped = text_system.shape_line(text, font_metrics.font_size, &[text_run], None);
+        let _ = shaped.paint(
+            pos,
+            font_metrics.cell_height,
+            gpui::TextAlign::Left,
+            None,
+            window,
+            cx,
+        );
+    }
+}
+
+/// 背景矩形
+///
+/// 表示一个需要绘制背景色的矩形区域
+#[derive(Debug, Clone)]
+pub struct LayoutRect {
+    /// 起始位置 (行, 列)
+    pub line: i32,
+    pub col: i32,
+    /// 占用的单元格数（水平方向）
+    pub num_of_cells: usize,
+    /// 背景颜色
+    pub color: Hsla,
+}
+
+impl LayoutRect {
+    /// 创建新的背景矩形
+    pub fn new(line: i32, col: i32, num_of_cells: usize, color: Hsla) -> Self {
+        Self {
+            line,
+            col,
+            num_of_cells,
+            color,
+        }
+    }
+
+    /// 检查是否可以与另一个矩形合并（同一行、相邻、同色）
+    pub fn can_merge_with(&self, other: &Self) -> bool {
+        // 必须在同一行
+        if self.line != other.line {
+            return false;
+        }
+        // 必须颜色相同
+        if self.color != other.color {
+            return false;
+        }
+        // 必须相邻
+        let self_end = self.col + self.num_of_cells as i32;
+        self_end == other.col
+    }
+
+    /// 合并另一个矩形
+    pub fn merge_with(&mut self, other: &Self) {
+        self.num_of_cells += other.num_of_cells;
+    }
+
+    /// 绘制背景矩形
+    pub fn paint(&self, origin: Point<Pixels>, font_metrics: &FontMetrics, window: &mut Window) {
+        let position = Point::new(
+            (origin.x + self.col as f32 * font_metrics.cell_width).floor(),
+            origin.y + self.line as f32 * font_metrics.cell_height,
+        );
+        let size = Size {
+            width: (font_metrics.cell_width * self.num_of_cells as f32).ceil(),
+            height: font_metrics.cell_height,
+        };
+
+        window.paint_quad(fill(Bounds::new(position, size), self.color));
+    }
+}
+
+/// 光标布局信息
+#[derive(Debug, Clone)]
+pub struct CursorLayout {
+    /// 光标位置 (行, 列)
+    pub line: i32,
+    pub col: i32,
+    /// 光标形状
+    pub shape: CursorShape,
+    /// 光标颜色
+    pub color: Hsla,
+}
+
+// ============================================================================
+// 布局状态
+// ============================================================================
+
 /// 布局状态
+///
+/// 在prepaint 阶段计算，在 paint 阶段使用
 pub struct LayoutState {
     /// 背景色
     pub background_color: Hsla,
@@ -71,22 +270,32 @@ pub struct LayoutState {
     pub cols: usize,
     /// 终端行数
     pub rows: usize,
+    /// 批量文本运行列表（预处理后）
+    pub batched_text_runs: Vec<BatchedTextRun>,
+    /// 背景矩形列表（预处理后）
+    pub background_rects: Vec<LayoutRect>,
+    /// 光标布局（预处理后）
+    pub cursor_layout: Option<CursorLayout>,
 }
+
+// ============================================================================
+// TerminalElement 实现
+// ============================================================================
 
 impl TerminalElement {
     /// 创建新的终端元素
-    pub fn new(coordinator: Arc<SessionCoordinator>, focused: bool, cursor_visible: bool) -> Self {
+    pub fn new(coordinator: Arc<SessionCoordinator>) -> Self {
         Self {
             coordinator,
-            focused,
-            cursor_visible,
+            focused: true,
+            cursor_visible: true,
             font_size: TERMINAL_FONT_SIZE,
             line_height: TERMINAL_LINE_HEIGHT,
             cursor_color: None,
         }
     }
 
-    /// 使用自定义配置创建终端元素
+    /// 使用配置创建终端元素
     pub fn with_config(
         coordinator: Arc<SessionCoordinator>,
         focused: bool,
@@ -99,21 +308,21 @@ impl TerminalElement {
             coordinator,
             focused,
             cursor_visible,
-            font_size: font_size.clamp(8.0, 72.0),
-            line_height: line_height.clamp(1.0, 2.0),
+            font_size,
+            line_height,
             cursor_color,
         }
     }
 
     /// 设置字体大小
-    pub fn with_font_size(mut self, size: f32) -> Self {
-        self.font_size = size.clamp(8.0, 72.0);
+    pub fn with_font_size(mut self, font_size: f32) -> Self {
+        self.font_size = font_size;
         self
     }
 
-    /// 设置行高
-    pub fn with_line_height(mut self, height: f32) -> Self {
-        self.line_height = height.clamp(1.0, 2.0);
+    /// 设置行高倍数
+    pub fn with_line_height(mut self, line_height: f32) -> Self {
+        self.line_height = line_height;
         self
     }
 
@@ -126,52 +335,23 @@ impl TerminalElement {
     /// 计算字体度量
     fn calculate_font_metrics(&self, window: &mut Window, _cx: &mut App) -> FontMetrics {
         let font_size = px(self.font_size);
-        let text_system = window.text_system();
-
-        // 获取等宽字体的字符宽度
         let font = fonts::terminal_font();
-        let font_id = text_system.resolve_font(&font);
 
-        // 方法1: 使用 advance 获取宽度
-        let advance_width = text_system
-            .advance(font_id, font_size, 'M')
-            .map(|advance| advance.width)
-            .unwrap_or(font_size * 0.6);
-
-        // 方法2: 使用 shape_line 测量实际渲染宽度
-        let test_text: SharedString = "M".into();
+        // 使用 'M' 字符测量等宽字体宽度
+        let text: SharedString = "M".into();
         let text_run = TextRun {
-            len: test_text.len(),
+            len: 1,
             font: font.clone(),
             color: gpui::black(),
             background_color: None,
             underline: None,
             strikethrough: None,
         };
-        let shaped = text_system.shape_line(test_text, font_size, &[text_run], None);
-        let shaped_width = shaped.width;
 
-        // 方法3: 固定比例
-        let fixed_ratio_width = font_size * 0.6;
-
-        // 调试日志
-        debug!(
-            "Font metrics debug: font_size={:.1}px, advance_width={:.2}px, shaped_width={:.2}px, fixed_ratio={:.2}px",
-            font_size.as_f32(),
-            advance_width.as_f32(),
-            shaped_width.as_f32(),
-            fixed_ratio_width.as_f32()
-        );
-
-        // 当前使用 advance 宽度
-        let cell_width = advance_width;
+        let text_system = window.text_system();
+        let shaped = text_system.shape_line(text, font_size, &[text_run], None);
+        let cell_width = shaped.width;
         let cell_height = font_size * self.line_height;
-
-        debug!(
-            "Using cell_width={:.2}px, cell_height={:.2}px",
-            cell_width.as_f32(),
-            cell_height.as_f32()
-        );
 
         FontMetrics {
             cell_width,
@@ -180,24 +360,19 @@ impl TerminalElement {
         }
     }
 
-    /// 将Alacritty 颜色转换为 GPUI 颜色
-    fn convert_color(&self, color: &AnsiColor, theme: &gpui_component::theme::Theme) -> Hsla {
+    /// 转换 Alacritty 颜色到 GPUI 颜色
+    fn convert_color(&self, color: &AnsiColor, theme: &gpui_component::Theme) -> Hsla {
         match color {
             AnsiColor::Named(named) => self.convert_named_color(named, theme),
-            AnsiColor::Spec(rgb) => gpui::rgba(
-                ((rgb.r as u32) << 24) | ((rgb.g as u32) << 16) | ((rgb.b as u32) << 8) | 0xff,
-            )
-            .into(),
-            AnsiColor::Indexed(idx) => self.convert_indexed_color(*idx, theme),
+            AnsiColor::Spec(rgb) => {
+                gpui::rgb(((rgb.r as u32) << 16) | ((rgb.g as u32) << 8) | (rgb.b as u32)).into()
+            },
+            AnsiColor::Indexed(index) => self.convert_indexed_color(*index, theme),
         }
     }
 
     /// 转换命名颜色
-    fn convert_named_color(
-        &self,
-        named: &NamedColor,
-        theme: &gpui_component::theme::Theme,
-    ) -> Hsla {
+    fn convert_named_color(&self, named: &NamedColor, theme: &gpui_component::Theme) -> Hsla {
         match named {
             NamedColor::Black => gpui::rgb(0x000000).into(),
             NamedColor::Red => gpui::rgb(0xcc0000).into(),
@@ -222,42 +397,88 @@ impl TerminalElement {
     }
 
     /// 转换索引颜色 (256色)
-    fn convert_indexed_color(&self, idx: u8, theme: &gpui_component::theme::Theme) -> Hsla {
-        if idx < 16 {
-            let named = match idx {
-                0 => NamedColor::Black,
-                1 => NamedColor::Red,
-                2 => NamedColor::Green,
-                3 => NamedColor::Yellow,
-                4 => NamedColor::Blue,
-                5 => NamedColor::Magenta,
-                6 => NamedColor::Cyan,
-                7 => NamedColor::White,
-                8 => NamedColor::BrightBlack,
-                9 => NamedColor::BrightRed,
-                10 => NamedColor::BrightGreen,
-                11 => NamedColor::BrightYellow,
-                12 => NamedColor::BrightBlue,
-                13 => NamedColor::BrightMagenta,
-                14 => NamedColor::BrightCyan,
-                15 => NamedColor::BrightWhite,
-                _ => NamedColor::Foreground,
-            };
-            self.convert_named_color(&named, theme)
-        } else if idx < 232 {
-            // 216色立方体 (6x6x6)
-            let idx = idx - 16;
-            let r = (idx / 36) * 51;
-            let g = ((idx / 6) % 6) * 51;
-            let b = (idx % 6) * 51;
-            gpui::rgb((r as u32) << 16 | (g as u32) << 8 | b as u32).into()
+    fn convert_indexed_color(&self, index: u8, _theme: &gpui_component::Theme) -> Hsla {
+        match index {
+            0 => gpui::rgb(0x000000).into(),
+            1 => gpui::rgb(0xcc0000).into(),
+            2 => gpui::rgb(0x00cc00).into(),
+            3 => gpui::rgb(0xcccc00).into(),
+            4 => gpui::rgb(0x0000cc).into(),
+            5 => gpui::rgb(0xcc00cc).into(),
+            6 => gpui::rgb(0x00cccc).into(),
+            7 => gpui::rgb(0xcccccc).into(),
+            8 => gpui::rgb(0x666666).into(),
+            9 => gpui::rgb(0xff0000).into(),
+            10 => gpui::rgb(0x00ff00).into(),
+            11 => gpui::rgb(0xffff00).into(),
+            12 => gpui::rgb(0x0000ff).into(),
+            13 => gpui::rgb(0xff00ff).into(),
+            14 => gpui::rgb(0x00ffff).into(),
+            15 => gpui::rgb(0xffffff).into(),
+            // 216色立方体 (16-231)
+            16..=231 => {
+                let idx = index - 16;
+                let r = (idx / 36) % 6;
+                let g = (idx / 6) % 6;
+                let b = idx % 6;
+                let r = if r > 0 { r * 40 + 55 } else { 0 };
+                let g = if g > 0 { g * 40 + 55 } else { 0 };
+                let b = if b > 0 { b * 40 + 55 } else { 0 };
+                gpui::rgb(((r as u32) << 16) | ((g as u32) << 8) | (b as u32)).into()
+            },
+            // 灰度 (232-255)
+            232..=255 => {
+                let gray = (index - 232) * 10 + 8;
+                gpui::rgb(((gray as u32) << 16) | ((gray as u32) << 8) | (gray as u32)).into()
+            },
+        }
+    }
+
+    /// 构建单元格的文本样式
+    fn build_text_style(&self, flags: Flags, fg_color: Hsla) -> TextRunStyle {
+        let is_bold = flags.contains(Flags::BOLD);
+        let is_italic = flags.contains(Flags::ITALIC);
+        let font = fonts::terminal_font_with_style(is_bold, is_italic);
+
+        // 下划线样式
+        let underline = if flags.intersects(
+            Flags::UNDERLINE
+                | Flags::DOUBLE_UNDERLINE
+                | Flags::UNDERCURL
+                | Flags::DOTTED_UNDERLINE
+                | Flags::DASHED_UNDERLINE,
+        ) {
+            Some(UnderlineStyle {
+                thickness: px(1.0),
+                color: Some(fg_color),
+                wavy: flags.contains(Flags::UNDERCURL),
+            })
         } else {
-            // 24级灰度
-            let gray = (idx - 232) * 10 + 8;
-            gpui::rgb((gray as u32) << 16 | (gray as u32) << 8 | gray as u32).into()
+            None
+        };
+
+        // 删除线样式
+        let strikethrough = if flags.contains(Flags::STRIKEOUT) {
+            Some(StrikethroughStyle {
+                thickness: px(1.0),
+                color: Some(fg_color),
+            })
+        } else {
+            None
+        };
+
+        TextRunStyle {
+            font,
+            color: fg_color,
+            underline,
+            strikethrough,
         }
     }
 }
+
+// ============================================================================
+// IntoElement 实现
+// ============================================================================
 
 impl IntoElement for TerminalElement {
     type Element = Self;
@@ -266,6 +487,10 @@ impl IntoElement for TerminalElement {
         self
     }
 }
+
+// ============================================================================
+// Element 实现
+// ============================================================================
 
 impl Element for TerminalElement {
     type RequestLayoutState = ();
@@ -303,9 +528,8 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        // 动态计算字体度量 (先调用，避免借用冲突)
+        // 动态计算字体度量
         let font_metrics = self.calculate_font_metrics(window, cx);
-
         let theme = cx.theme();
 
         // 计算终端尺寸
@@ -314,11 +538,114 @@ impl Element for TerminalElement {
 
         debug!("Terminal prepaint: {}x{} cells", cols, rows);
 
+        // 获取终端内容
+        let term = self.coordinator.terminal().term();
+        let term_guard = term.lock();
+        let content = term_guard.renderable_content();
+
+        // 预处理：构建批量文本运行和背景矩形
+        let mut batched_text_runs: Vec<BatchedTextRun> = Vec::new();
+        let mut background_rects: Vec<LayoutRect> = Vec::new();
+
+        for cell in content.display_iter {
+            let point = cell.point;
+            let line = point.line.0;
+            let col = point.column.0 as i32;
+
+            // 跳过宽字符占位符
+            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                continue;
+            }
+
+            // 判断是否为宽字符
+            let is_wide = cell.flags.contains(Flags::WIDE_CHAR);
+            let cell_width = if is_wide { 2 } else { 1 };
+
+            // 处理反色显示
+            let (fg, bg) = if cell.flags.contains(Flags::INVERSE) {
+                (cell.bg, cell.fg)
+            } else {
+                (cell.fg, cell.bg)
+            };
+
+            // 收集背景矩形（如果不是默认背景）
+            if !matches!(bg, AnsiColor::Named(NamedColor::Background)) {
+                let bg_color = self.convert_color(&bg, &theme);
+                let new_rect = LayoutRect::new(line, col, cell_width, bg_color);
+
+                //尝试与上一个矩形合并
+                if let Some(last_rect) = background_rects.last_mut() {
+                    if last_rect.can_merge_with(&new_rect) {
+                        last_rect.merge_with(&new_rect);
+                    } else {
+                        background_rects.push(new_rect);
+                    }
+                } else {
+                    background_rects.push(new_rect);
+                }
+            }
+
+            // 跳过隐藏字符
+            if cell.flags.contains(Flags::HIDDEN) {
+                continue;
+            }
+
+            // 跳过空格和空字符
+            if cell.c == ' ' || cell.c == '\0' {
+                continue;
+            }
+
+            // 构建文本样式
+            let mut fg_color = self.convert_color(&fg, &theme);
+            if cell.flags.contains(Flags::DIM) {
+                fg_color.a *= 0.66;
+            }
+            let style = self.build_text_style(cell.flags, fg_color);
+
+            // 尝试追加到现有批次或创建新批次
+            if let Some(last_run) = batched_text_runs.last_mut() {
+                if last_run.can_append(line, col, &style) {
+                    last_run.append_char(cell.c, cell_width);
+                } else {
+                    batched_text_runs
+                        .push(BatchedTextRun::new(line, col, cell.c, cell_width, style));
+                }
+            } else {
+                batched_text_runs.push(BatchedTextRun::new(line, col, cell.c, cell_width, style));
+            }
+        }
+
+        // 预处理光标
+        let cursor_layout = if self.cursor_visible {
+            let cursor = content.cursor;
+            let cursor_color = self
+                .cursor_color
+                .unwrap_or_else(|| gpui::rgb(0x00ff00).into());
+
+            Some(CursorLayout {
+                line: cursor.point.line.0,
+                col: cursor.point.column.0 as i32,
+                shape: cursor.shape,
+                color: cursor_color,
+            })
+        } else {
+            None
+        };
+
+        debug!(
+            "Prepaint complete: {} text runs, {} background rects",
+            batched_text_runs.len(),
+            background_rects.len()
+        );
+
         LayoutState {
             background_color: theme.background,
             font_metrics,
             cols,
             rows,
+            batched_text_runs,
+            background_rects,
+            cursor_layout,
         }
     }
 
@@ -332,293 +659,143 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let theme = cx.theme().clone();
-
-        // 1. 绘制背景
-        window.paint_quad(fill(bounds, prepaint.background_color));
-
-        // 2. 获取终端内容并绘制
-        let term = self.coordinator.terminal().term();
-        let term_guard = term.lock();
-        let content = term_guard.renderable_content();
         let origin = bounds.origin;
 
-        // 3. 绘制单元格
-        for cell in content.display_iter {
-            let point = cell.point;
-            let cell_x = origin.x + (point.column.0 as f32) * prepaint.font_metrics.cell_width;
-            let cell_y = origin.y + (point.line.0 as f32) * prepaint.font_metrics.cell_height;
+        // 1. 绘制整体背景
+        window.paint_quad(fill(bounds, prepaint.background_color));
 
-            // 跳过宽字符占位符 (CJK字符的第二列)
-            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                continue;
-            }
+        // 2. 绘制单元格背景
+        for rect in &prepaint.background_rects {
+            rect.paint(origin, &prepaint.font_metrics, window);
+        }
 
-            // 判断是否为宽字符
-            let is_wide = cell.flags.contains(Flags::WIDE_CHAR);
-
-            // 处理反色显示 (INVERSE)
-            let (fg, bg) = if cell.flags.contains(Flags::INVERSE) {
-                (cell.bg, cell.fg)
-            } else {
-                (cell.fg, cell.bg)
-            };
-
-            // 绘制背景色(如果不是默认背景)
-            if !matches!(bg, AnsiColor::Named(NamedColor::Background)) {
-                let bg_color = self.convert_color(&bg, &theme);
-                //宽字符背景占用2列
-                let bg_width = if is_wide {
-                    prepaint.font_metrics.cell_width * 2.0
-                } else {
-                    prepaint.font_metrics.cell_width
-                };
-                let cell_bounds = Bounds::new(
-                    Point::new(cell_x, cell_y),
-                    Size {
-                        width: bg_width,
-                        height: prepaint.font_metrics.cell_height,
-                    },
-                );
-                window.paint_quad(fill(cell_bounds, bg_color));
-            }
-
-            // 跳过隐藏字符
-            if cell.flags.contains(Flags::HIDDEN) {
-                continue;
-            }
-
-            // 绘制字符 (如果不是空格或空字符)
-            if cell.c != ' ' && cell.c != '\0' {
-                let mut fg_color = self.convert_color(&fg, &theme);
-
-                // 处理暗淡显示 (DIM)
-                if cell.flags.contains(Flags::DIM) {
-                    fg_color.a *= 0.66;
-                }
-                // 创建字符串
-                let text: SharedString = cell.c.to_string().into();
-                let font_size = px(14.0);
-
-                // 创建文本样式（使用等宽字体）
-                let is_bold = cell.flags.contains(Flags::BOLD);
-                let is_italic = cell.flags.contains(Flags::ITALIC);
-                let font = fonts::terminal_font_with_style(is_bold, is_italic);
-
-                // 下划线样式
-                let underline = if cell.flags.intersects(
-                    Flags::UNDERLINE
-                        | Flags::DOUBLE_UNDERLINE
-                        | Flags::UNDERCURL
-                        | Flags::DOTTED_UNDERLINE
-                        | Flags::DASHED_UNDERLINE,
-                ) {
-                    Some(UnderlineStyle {
-                        thickness: px(1.0),
-                        color: Some(fg_color),
-                        wavy: cell.flags.contains(Flags::UNDERCURL),
-                    })
-                } else {
-                    None
-                };
-
-                // 删除线样式
-                let strikethrough = if cell.flags.contains(Flags::STRIKEOUT) {
-                    Some(StrikethroughStyle {
-                        thickness: px(1.0),
-                        color: Some(fg_color),
-                    })
-                } else {
-                    None
-                };
-
-                let text_run = TextRun {
-                    len: text.len(),
-                    font,
-                    color: fg_color,
-                    background_color: None,
-                    underline,
-                    strikethrough,
-                };
-
-                // 使用 text_system 绘制字符
-                let text_system = window.text_system();
-                let shaped = text_system.shape_line(text, font_size, &[text_run], None);
-                let text_pos = Point::new(cell_x, cell_y);
-                let _ = shaped.paint(
-                    text_pos,
-                    prepaint.font_metrics.cell_height,
-                    gpui::TextAlign::Left,
-                    None,
-                    window,
-                    cx,
-                );
-            }
+        // 3. 绘制批量文本
+        for text_run in &prepaint.batched_text_runs {
+            text_run.paint(origin, &prepaint.font_metrics, window, cx);
         }
 
         // 4. 绘制光标
-        if self.cursor_visible {
-            let cursor = content.cursor;
-            let cursor_x =
-                origin.x + (cursor.point.column.0 as f32) * prepaint.font_metrics.cell_width;
-            let cursor_y =
-                origin.y + (cursor.point.line.0 as f32) * prepaint.font_metrics.cell_height;
-
-            // 使用配置的光标颜色，如果未设置则使用默认绿色
-            let cursor_color: Hsla = self
-                .cursor_color
-                .unwrap_or_else(|| gpui::rgb(0x00ff00).into());
-
-            match cursor.shape {
-                CursorShape::Block => {
-                    // 实心方块光标
-                    let cursor_bounds = Bounds::new(
-                        Point::new(cursor_x, cursor_y),
-                        Size {
-                            width: prepaint.font_metrics.cell_width,
-                            height: prepaint.font_metrics.cell_height,
-                        },
-                    );
-                    if self.focused {
-                        window.paint_quad(fill(cursor_bounds, cursor_color));
-                    } else {
-                        // 失焦时显示空心方块
-                        let border = px(1.5);
-                        // 上边
-                        window.paint_quad(fill(
-                            Bounds::new(
-                                Point::new(cursor_x, cursor_y),
-                                Size {
-                                    width: prepaint.font_metrics.cell_width,
-                                    height: border,
-                                },
-                            ),
-                            cursor_color,
-                        ));
-                        // 下边
-                        window.paint_quad(fill(
-                            Bounds::new(
-                                Point::new(
-                                    cursor_x,
-                                    cursor_y + prepaint.font_metrics.cell_height - border,
-                                ),
-                                Size {
-                                    width: prepaint.font_metrics.cell_width,
-                                    height: border,
-                                },
-                            ),
-                            cursor_color,
-                        ));
-                        // 左边
-                        window.paint_quad(fill(
-                            Bounds::new(
-                                Point::new(cursor_x, cursor_y),
-                                Size {
-                                    width: border,
-                                    height: prepaint.font_metrics.cell_height,
-                                },
-                            ),
-                            cursor_color,
-                        ));
-                        // 右边
-                        window.paint_quad(fill(
-                            Bounds::new(
-                                Point::new(
-                                    cursor_x + prepaint.font_metrics.cell_width - border,
-                                    cursor_y,
-                                ),
-                                Size {
-                                    width: border,
-                                    height: prepaint.font_metrics.cell_height,
-                                },
-                            ),
-                            cursor_color,
-                        ));
-                    }
-                },
-                CursorShape::Beam => {
-                    // 竖线光标
-                    let cursor_bounds = Bounds::new(
-                        Point::new(cursor_x, cursor_y),
-                        Size {
-                            width: px(2.0),
-                            height: prepaint.font_metrics.cell_height,
-                        },
-                    );
-                    window.paint_quad(fill(cursor_bounds, cursor_color));
-                },
-                CursorShape::Underline => {
-                    // 下划线光标
-                    let cursor_bounds = Bounds::new(
-                        Point::new(
-                            cursor_x,
-                            cursor_y + prepaint.font_metrics.cell_height - px(2.0),
-                        ),
-                        Size {
-                            width: prepaint.font_metrics.cell_width,
-                            height: px(2.0),
-                        },
-                    );
-                    window.paint_quad(fill(cursor_bounds, cursor_color));
-                },
-                CursorShape::HollowBlock => {
-                    // 空心方块光标
-                    let border = px(1.5);
-                    // 上边
-                    window.paint_quad(fill(
-                        Bounds::new(
-                            Point::new(cursor_x, cursor_y),
-                            Size {
-                                width: prepaint.font_metrics.cell_width,
-                                height: border,
-                            },
-                        ),
-                        cursor_color,
-                    ));
-                    // 下边
-                    window.paint_quad(fill(
-                        Bounds::new(
-                            Point::new(
-                                cursor_x,
-                                cursor_y + prepaint.font_metrics.cell_height - border,
-                            ),
-                            Size {
-                                width: prepaint.font_metrics.cell_width,
-                                height: border,
-                            },
-                        ),
-                        cursor_color,
-                    ));
-                    // 左边
-                    window.paint_quad(fill(
-                        Bounds::new(
-                            Point::new(cursor_x, cursor_y),
-                            Size {
-                                width: border,
-                                height: prepaint.font_metrics.cell_height,
-                            },
-                        ),
-                        cursor_color,
-                    ));
-                    // 右边
-                    window.paint_quad(fill(
-                        Bounds::new(
-                            Point::new(
-                                cursor_x + prepaint.font_metrics.cell_width - border,
-                                cursor_y,
-                            ),
-                            Size {
-                                width: border,
-                                height: prepaint.font_metrics.cell_height,
-                            },
-                        ),
-                        cursor_color,
-                    ));
-                },
-                CursorShape::Hidden => {
-                    // 隐藏光标，不绘制
-                },
-            }
+        if let Some(cursor) = &prepaint.cursor_layout {
+            self.paint_cursor(cursor, origin, &prepaint.font_metrics, window);
         }
+    }
+}
+
+// ============================================================================
+//光标绘制
+// ============================================================================
+
+impl TerminalElement {
+    /// 绘制光标
+    fn paint_cursor(
+        &self,
+        cursor: &CursorLayout,
+        origin: Point<Pixels>,
+        font_metrics: &FontMetrics,
+        window: &mut Window,
+    ) {
+        let cursor_x = origin.x + (cursor.col as f32) * font_metrics.cell_width;
+        let cursor_y = origin.y + (cursor.line as f32) * font_metrics.cell_height;
+
+        match cursor.shape {
+            CursorShape::Block => {
+                let cursor_bounds = Bounds::new(
+                    Point::new(cursor_x, cursor_y),
+                    Size {
+                        width: font_metrics.cell_width,
+                        height: font_metrics.cell_height,
+                    },
+                );
+                if self.focused {
+                    window.paint_quad(fill(cursor_bounds, cursor.color));
+                } else {
+                    // 失焦时显示空心方块
+                    self.paint_hollow_block(cursor_x, cursor_y, font_metrics, cursor.color, window);
+                }
+            },
+            CursorShape::Beam => {
+                let cursor_bounds = Bounds::new(
+                    Point::new(cursor_x, cursor_y),
+                    Size {
+                        width: px(2.0),
+                        height: font_metrics.cell_height,
+                    },
+                );
+                window.paint_quad(fill(cursor_bounds, cursor.color));
+            },
+            CursorShape::Underline => {
+                let cursor_bounds = Bounds::new(
+                    Point::new(cursor_x, cursor_y + font_metrics.cell_height - px(2.0)),
+                    Size {
+                        width: font_metrics.cell_width,
+                        height: px(2.0),
+                    },
+                );
+                window.paint_quad(fill(cursor_bounds, cursor.color));
+            },
+            CursorShape::HollowBlock => {
+                self.paint_hollow_block(cursor_x, cursor_y, font_metrics, cursor.color, window);
+            },
+            CursorShape::Hidden => {
+                // 隐藏光标，不绘制
+            },
+        }
+    }
+
+    /// 绘制空心方块光标
+    fn paint_hollow_block(
+        &self,
+        x: Pixels,
+        y: Pixels,
+        font_metrics: &FontMetrics,
+        color: Hsla,
+        window: &mut Window,
+    ) {
+        let border = px(1.5);
+
+        // 上边
+        window.paint_quad(fill(
+            Bounds::new(
+                Point::new(x, y),
+                Size {
+                    width: font_metrics.cell_width,
+                    height: border,
+                },
+            ),
+            color,
+        ));
+        // 下边
+        window.paint_quad(fill(
+            Bounds::new(
+                Point::new(x, y + font_metrics.cell_height - border),
+                Size {
+                    width: font_metrics.cell_width,
+                    height: border,
+                },
+            ),
+            color,
+        ));
+        // 左边
+        window.paint_quad(fill(
+            Bounds::new(
+                Point::new(x, y),
+                Size {
+                    width: border,
+                    height: font_metrics.cell_height,
+                },
+            ),
+            color,
+        ));
+        // 右边
+        window.paint_quad(fill(
+            Bounds::new(
+                Point::new(x + font_metrics.cell_width - border, y),
+                Size {
+                    width: border,
+                    height: font_metrics.cell_height,
+                },
+            ),
+            color,
+        ));
     }
 }
