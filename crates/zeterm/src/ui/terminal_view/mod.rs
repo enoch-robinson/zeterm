@@ -34,13 +34,18 @@ mod terminal_element;
 mod theme;
 mod wide_char;
 
+#[allow(unused_imports)]
 pub use colors::{ColorPalette, NamedColor, Rgb, TerminalColor, terminal_color_to_hsla};
+#[allow(unused_imports)]
 pub use font_metrics::FontMetrics;
+#[allow(unused_imports)]
 pub use key_mapping::{KeyMapping, Modifiers, keystroke_to_bytes};
 pub use terminal_element::TerminalElement;
+#[allow(unused_imports)]
 pub use theme::{
     CursorColors, SelectionColors, TerminalTheme, ThemeManager, UiColors, rgb_to_hsla,
 };
+#[allow(unused_imports)]
 pub use wide_char::{CellContent, CharWidth, char_width, is_wide_char, string_width};
 
 /// 渲染配置

@@ -10,11 +10,10 @@ use super::fonts;
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor};
 use gpui::{
-    App, Bounds, Element, ElementId, Font, GlobalElementId, Hsla, IntoElement, LayoutId, Pixels,
-    Point, SharedString, Size, StrikethroughStyle, Style, TextRun, UnderlineStyle, Window, fill,
-    px,
+    App, Bounds, Element, ElementId, GlobalElementId, Hsla, IntoElement, LayoutId, Pixels, Point,
+    SharedString, Size, StrikethroughStyle, Style, TextRun, UnderlineStyle, Window, fill, px,
 };
-use gpui_component::ActiveTheme;
+use gpui_component::{ActiveTheme, PixelsExt};
 use tracing::debug;
 
 use crate::app::session::SessionCoordinator;
@@ -84,13 +83,49 @@ impl TerminalElement {
         let text_system = window.text_system();
 
         // 获取等宽字体的字符宽度
-        let font_id = text_system.resolve_font(&fonts::terminal_font());
-        let cell_width = text_system
+        let font = fonts::terminal_font();
+        let font_id = text_system.resolve_font(&font);
+
+        // 方法1: 使用 advance 获取宽度
+        let advance_width = text_system
             .advance(font_id, font_size, 'M')
             .map(|advance| advance.width)
             .unwrap_or(font_size * 0.6);
 
+        // 方法2: 使用 shape_line 测量实际渲染宽度
+        let test_text: SharedString = "M".into();
+        let text_run = TextRun {
+            len: test_text.len(),
+            font: font.clone(),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let shaped = text_system.shape_line(test_text, font_size, &[text_run], None);
+        let shaped_width = shaped.width;
+
+        // 方法3: 固定比例
+        let fixed_ratio_width = font_size * 0.6;
+
+        // 调试日志
+        debug!(
+            "Font metrics debug: font_size={:.1}px, advance_width={:.2}px, shaped_width={:.2}px, fixed_ratio={:.2}px",
+            font_size.as_f32(),
+            advance_width.as_f32(),
+            shaped_width.as_f32(),
+            fixed_ratio_width.as_f32()
+        );
+
+        // 当前使用 advance 宽度
+        let cell_width = advance_width;
         let cell_height = font_size * TERMINAL_LINE_HEIGHT;
+
+        debug!(
+            "Using cell_width={:.2}px, cell_height={:.2}px",
+            cell_width.as_f32(),
+            cell_height.as_f32()
+        );
 
         FontMetrics {
             cell_width,

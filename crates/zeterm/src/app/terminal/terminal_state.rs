@@ -5,14 +5,14 @@
 use std::sync::Arc;
 
 use alacritty_terminal::{
-    event::{Event, EventListener, WindowSize},
+    event::{Event, EventListener},
     sync::FairMutex,
     term::{Config as TermConfig, Term, test::TermSize},
     vte::ansi::{Processor, StdSyncHandler},
 };
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 use zeterm_core::TerminalSize;
 
 /// 默认终端列数
