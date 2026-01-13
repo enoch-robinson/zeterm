@@ -436,8 +436,8 @@
 | ✅ | 添加选择高亮支持 | P1 | 4h | 文本选择的高亮显示 (2026-01-13) |
 | ✅ | 添加搜索匹配高亮 | P1 | 3h | 搜索结果高亮 + 搜索功能实现 (2026-01-14) |
 | ✅ | 添加对比度调整 | P2 | 2h | ensure_minimum_contrast (2026-01-13) |
-| ⬜ | 添加超链接支持 | P2 | 4h | URL 检测和悬停提示 |
-| ⬜ | 添加 IME 输入支持 | P2 | 5h | 输入法预编辑文本 |
+| ✅ | 添加超链接支持 | P2 | 4h | URL 检测和悬停提示 (2026-01-14) |
+| ✅ | 添加 IME 输入支持 | P2 | 5h | 输入法预编辑文本 (2026-01-14) |
 
 >📖 详细任务分析见: [paint-improvement-tasks.md](./research/paint-improvement-tasks.md)
 > 📖 Zed 实现分析见: [zed-terminal-paint-analysis.md](./research/zed-terminal-paint-analysis.md)

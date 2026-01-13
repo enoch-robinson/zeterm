@@ -29,6 +29,8 @@ use crate::app::session::SessionCoordinator;
 mod colors;
 mod font_metrics;
 mod fonts;
+mod hyperlink;
+mod ime;
 mod key_mapping;
 mod search;
 mod terminal_element;
@@ -39,6 +41,10 @@ mod wide_char;
 pub use colors::{ColorPalette, NamedColor, Rgb, TerminalColor, terminal_color_to_hsla};
 #[allow(unused_imports)]
 pub use font_metrics::FontMetrics;
+#[allow(unused_imports)]
+pub use hyperlink::{Hyperlink, HyperlinkConfig, HyperlinkType, detect_urls_simple};
+#[allow(unused_imports)]
+pub use ime::{ImeConfig, ImeContext, ImePreeditLayout, ImeState, PreeditText};
 #[allow(unused_imports)]
 pub use key_mapping::{KeyMapping, Modifiers, keystroke_to_bytes};
 #[allow(unused_imports)]
