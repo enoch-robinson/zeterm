@@ -273,15 +273,12 @@ impl Render for TerminalView {
             .on_key_down(cx.listener(Self::handle_key_down))
             .child(
                 // 终端渲染区域
-                div()
-                    .id("terminal-content")
-                    .size_full()
-                    .p_2()
-                    .child(TerminalElement::new(
-                        self.coordinator.clone(),
-                        focused,
-                        self.cursor_visible,
-                    )),
+                div().id("terminal-content").size_full().p_2().child(
+                    TerminalElement::new(self.coordinator.clone(), focused, self.cursor_visible)
+                        .with_font_size(self.render_config.font_size)
+                        .with_line_height(self.render_config.line_height)
+                        .with_cursor_color(rgb_to_hsla(self.render_config.theme.cursor.color)),
+                ),
             )
     }
 }

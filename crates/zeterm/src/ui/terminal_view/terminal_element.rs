@@ -26,6 +26,12 @@ pub struct TerminalElement {
     focused: bool,
     /// 光标是否可见
     cursor_visible: bool,
+    /// 字体大小
+    font_size: f32,
+    /// 行高倍数
+    line_height: f32,
+    /// 光标颜色（可选，None时使用默认绿色）
+    cursor_color: Option<Hsla>,
 }
 
 /// 字体度量信息
@@ -74,12 +80,52 @@ impl TerminalElement {
             coordinator,
             focused,
             cursor_visible,
+            font_size: TERMINAL_FONT_SIZE,
+            line_height: TERMINAL_LINE_HEIGHT,
+            cursor_color: None,
         }
+    }
+
+    /// 使用自定义配置创建终端元素
+    pub fn with_config(
+        coordinator: Arc<SessionCoordinator>,
+        focused: bool,
+        cursor_visible: bool,
+        font_size: f32,
+        line_height: f32,
+        cursor_color: Option<Hsla>,
+    ) -> Self {
+        Self {
+            coordinator,
+            focused,
+            cursor_visible,
+            font_size: font_size.clamp(8.0, 72.0),
+            line_height: line_height.clamp(1.0, 2.0),
+            cursor_color,
+        }
+    }
+
+    /// 设置字体大小
+    pub fn with_font_size(mut self, size: f32) -> Self {
+        self.font_size = size.clamp(8.0, 72.0);
+        self
+    }
+
+    /// 设置行高
+    pub fn with_line_height(mut self, height: f32) -> Self {
+        self.line_height = height.clamp(1.0, 2.0);
+        self
+    }
+
+    /// 设置光标颜色
+    pub fn with_cursor_color(mut self, color: Hsla) -> Self {
+        self.cursor_color = Some(color);
+        self
     }
 
     /// 计算字体度量
     fn calculate_font_metrics(&self, window: &mut Window, _cx: &mut App) -> FontMetrics {
-        let font_size = px(TERMINAL_FONT_SIZE);
+        let font_size = px(self.font_size);
         let text_system = window.text_system();
 
         // 获取等宽字体的字符宽度
@@ -119,7 +165,7 @@ impl TerminalElement {
 
         // 当前使用 advance 宽度
         let cell_width = advance_width;
-        let cell_height = font_size * TERMINAL_LINE_HEIGHT;
+        let cell_height = font_size * self.line_height;
 
         debug!(
             "Using cell_width={:.2}px, cell_height={:.2}px",
@@ -418,7 +464,10 @@ impl Element for TerminalElement {
             let cursor_y =
                 origin.y + (cursor.point.line.0 as f32) * prepaint.font_metrics.cell_height;
 
-            let cursor_color: Hsla = gpui::rgb(0x00ff00).into(); // 绿色光标
+            // 使用配置的光标颜色，如果未设置则使用默认绿色
+            let cursor_color: Hsla = self
+                .cursor_color
+                .unwrap_or_else(|| gpui::rgb(0x00ff00).into());
 
             match cursor.shape {
                 CursorShape::Block => {

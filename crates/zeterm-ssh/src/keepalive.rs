@@ -5,11 +5,13 @@
 //! - 检测连接超时
 //! - 自动触发重连
 
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
+use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 /// 默认心跳间隔（秒）
@@ -277,6 +279,181 @@ impl KeepaliveManager {
         }
         self.running.store(false, Ordering::SeqCst);
         info!("Keepalive manager stopped");
+    }
+
+    /// 启动心跳任务
+    ///
+    /// #参数
+    /// - `send_keepalive`: 发送心跳的异步函数，返回 Ok(()) 表示成功
+    /// - `on_event`: 事件回调（可选）
+    ///
+    /// # 返回
+    /// 返回任务句柄，可用于等待任务完成
+    pub fn start<F, Fut>(
+        &mut self,
+        send_keepalive: F,
+        on_event: Option<Arc<dyn KeepaliveCallback>>,
+    ) -> Option<JoinHandle<()>>
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static,
+    {
+        if !self.config.enabled {
+            info!("Keepalive is disabled, not starting");
+            return None;
+        }
+
+        if self.is_running() {
+            warn!("Keepalive manager is already running");
+            return None;
+        }
+
+        let (stop_tx, stop_rx) = watch::channel(false);
+        self.stop_tx = Some(stop_tx);
+        self.running.store(true, Ordering::SeqCst);
+
+        let config = self.config.clone();
+        let running = self.running.clone();
+
+        info!(
+            "Starting keepalive manager: interval={:?}, timeout={:?}, max_missed={}",
+            config.interval, config.timeout, config.max_missed
+        );
+
+        if let Some(ref callback) = on_event {
+            callback.on_event(KeepaliveEvent::Started);
+        }
+
+        let handle = tokio::spawn(Self::keepalive_loop(
+            config,
+            running,
+            stop_rx,
+            send_keepalive,
+            on_event,
+        ));
+
+        Some(handle)
+    }
+
+    /// 心跳循环任务
+    async fn keepalive_loop<F, Fut>(
+        config: KeepaliveConfig,
+        running: Arc<AtomicBool>,
+        mut stop_rx: watch::Receiver<bool>,
+        send_keepalive: F,
+        on_event: Option<Arc<dyn KeepaliveCallback>>,
+    ) where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>> + Send + 'static,
+    {
+        let mut stats = KeepaliveStats::new();
+        let mut interval = tokio::time::interval(config.interval);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        //跳过第一个立即触发的 tick
+        interval.tick().await;
+
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    if !running.load(Ordering::SeqCst) {
+                        break;
+                    }
+
+                    stats.record_sent();
+                    let seq = stats.sent_count;
+
+                    if let Some(ref callback) = on_event {
+                        callback.on_event(KeepaliveEvent::Sent { seq });
+                    }
+
+                    debug!("Sending keepalive #{}", seq);
+
+                    // 使用超时包装心跳发送
+                    let send_result = tokio::time::timeout(
+                        config.timeout,
+                        send_keepalive()
+                    ).await;
+
+                    match send_result {
+                        Ok(Ok(())) => {
+                            // 心跳成功
+                            let rtt = stats.last_sent
+                                .map(|t| t.elapsed())
+                                .unwrap_or(Duration::ZERO);
+                            stats.record_received();
+
+                            if let Some(ref callback) = on_event {
+                                callback.on_event(KeepaliveEvent::Received { seq, rtt });
+                            }
+
+                            debug!("Keepalive #{} successful, RTT: {:?}", seq, rtt);
+                        }
+                        Ok(Err(e)) => {
+                            // 发送失败
+                            stats.record_timeout();
+                            warn!("Keepalive #{} failed: {}", seq, e);
+
+                            if let Some(ref callback) = on_event {
+                                callback.on_event(KeepaliveEvent::Timeout {
+                                    missed_count: stats.missed_count,
+                                });
+                            }
+
+                            if stats.missed_count >= config.max_missed {
+                                warn!(
+                                    "Connection lost: {} consecutive keepalive failures",
+                                    stats.missed_count
+                                );
+                                if let Some(ref callback) = on_event {
+                                    callback.on_event(KeepaliveEvent::ConnectionLost);
+                                }
+                                break;
+                            }
+                        }
+                        Err(_) => {
+                            // 超时
+                            stats.record_timeout();
+                            warn!(
+                                "Keepalive #{} timed out after {:?}",
+                                seq, config.timeout
+                            );
+
+                            if let Some(ref callback) = on_event {
+                                callback.on_event(KeepaliveEvent::Timeout {
+                                    missed_count: stats.missed_count,
+                                });
+                            }
+
+                            if stats.missed_count >= config.max_missed {
+                                warn!(
+                                    "Connection lost: {} consecutive keepalive timeouts",
+                                    stats.missed_count
+                                );
+                                if let Some(ref callback) = on_event {
+                                    callback.on_event(KeepaliveEvent::ConnectionLost);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                _ = stop_rx.changed() => {
+                    if *stop_rx.borrow() {
+                        info!("Keepalive loop received stop signal");
+                        break;
+                    }
+                }
+            }
+        }
+
+        running.store(false, Ordering::SeqCst);
+
+        if let Some(ref callback) = on_event {
+            callback.on_event(KeepaliveEvent::Stopped);
+        }
+
+        info!("Keepalive loop ended");
     }
 }
 
