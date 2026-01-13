@@ -1288,3 +1288,4 @@
 | v1.1 | 2026-01-11 | 更新 Phase 1 项目初始化任务状态，标记已完成的Cargo Workspace 设置和依赖配置任务 |
 | v1.2 | 2026-01-12 | 架构重构：MainWindow 改用 TerminalView 组件，统一键盘处理使用 key_mapping 模块 |
 | v1.3 | 2026-01-13 | 补充实现：等宽字体加载，新建 fonts.rs 模块支持字体回退列表 |
+| v1.4 | 2026-01-13 | 完成主机密钥确认对话框跨线程集成：HostKeyConfirmChannel 连接到 SshHandler，实现 SSH 线程与UI 线程的双向通信 |
