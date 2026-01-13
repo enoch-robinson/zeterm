@@ -54,7 +54,9 @@ pub use auth::{
 };
 pub use config::{AuthMethod, HostKeyVerification, SshConfig, SshConfigError};
 pub use connection::SshConnection;
-pub use handler::{DataReceiver, DataSender, HandlerState, SshHandler, create_data_channel};
+pub use handler::{
+    DataReceiver, DataSender, HandlerState, HostKeyConfirmCallback, SshHandler, create_data_channel,
+};
 pub use reconnect::{
     DEFAULT_BACKOFF_MULTIPLIER, DEFAULT_INITIAL_DELAY_MS, DEFAULT_MAX_DELAY_MS,
     DEFAULT_MAX_RECONNECT_ATTEMPTS, ExponentialBackoff, LoggingReconnectCallback,
