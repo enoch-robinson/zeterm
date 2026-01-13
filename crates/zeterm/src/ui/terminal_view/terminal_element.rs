@@ -63,6 +63,14 @@ pub struct TerminalElement {
     line_height: f32,
     /// 光标颜色（可选，None时使用默认绿色）
     cursor_color: Option<Hsla>,
+    /// 搜索匹配列表
+    search_matches: Vec<super::search::SearchMatch>,
+    /// 当前搜索匹配索引
+    current_search_index: Option<usize>,
+    /// 搜索匹配高亮颜色
+    search_match_color: Hsla,
+    /// 当前搜索匹配高亮颜色
+    current_search_match_color: Hsla,
 }
 
 /// 字体度量信息
@@ -403,6 +411,20 @@ impl TerminalElement {
             font_size: TERMINAL_FONT_SIZE,
             line_height: TERMINAL_LINE_HEIGHT,
             cursor_color: None,
+            search_matches: Vec::new(),
+            current_search_index: None,
+            search_match_color: Hsla {
+                h: 60.0 / 360.0,
+                s: 0.8,
+                l: 0.5,
+                a: 0.3,
+            },
+            current_search_match_color: Hsla {
+                h: 30.0 / 360.0,
+                s: 0.9,
+                l: 0.5,
+                a: 0.5,
+            },
         }
     }
 
@@ -423,6 +445,20 @@ impl TerminalElement {
             font_size,
             line_height,
             cursor_color,
+            search_matches: Vec::new(),
+            current_search_index: None,
+            search_match_color: Hsla {
+                h: 60.0 / 360.0,
+                s: 0.8,
+                l: 0.5,
+                a: 0.3,
+            },
+            current_search_match_color: Hsla {
+                h: 30.0 / 360.0,
+                s: 0.9,
+                l: 0.5,
+                a: 0.5,
+            },
         }
     }
 
@@ -475,6 +511,30 @@ impl TerminalElement {
     /// 检查光标闪烁是否启用
     pub fn is_cursor_blink_enabled(&self) -> bool {
         self.cursor_blink_enabled
+    }
+
+    /// 设置搜索匹配
+    pub fn with_search_matches(
+        mut self,
+        matches: Vec<super::search::SearchMatch>,
+        current_index: Option<usize>,
+    ) -> Self {
+        self.search_matches = matches;
+        self.current_search_index = current_index;
+        self
+    }
+
+    /// 设置搜索匹配颜色
+    pub fn with_search_colors(mut self, match_color: Hsla, current_match_color: Hsla) -> Self {
+        self.search_match_color = match_color;
+        self.current_search_match_color = current_match_color;
+        self
+    }
+
+    /// 清除搜索匹配
+    pub fn clear_search_matches(&mut self) {
+        self.search_matches.clear();
+        self.current_search_index = None;
     }
 
     /// 放大字体
@@ -957,6 +1017,51 @@ impl Element for TerminalElement {
                         line_end_col,
                         HighlightType::Selection,
                         selection_color,
+                    ));
+                }
+            }
+        }
+
+        // 处理搜索匹配高亮
+        for (match_idx, search_match) in self.search_matches.iter().enumerate() {
+            let is_current = self.current_search_index == Some(match_idx);
+            let color = if is_current {
+                self.current_search_match_color
+            } else {
+                self.search_match_color
+            };
+
+            // 为每一行创建高亮范围
+            for line in search_match.start_line..=search_match.end_line {
+                // 视口裁剪：跳过不可见的行
+                if !viewport.is_line_visible(line) {
+                    continue;
+                }
+
+                let line_start_col = if line == search_match.start_line {
+                    search_match.start_col
+                } else {
+                    0
+                };
+                let line_end_col = if line == search_match.end_line {
+                    search_match.end_col
+                } else {
+                    cols as i32 - 1
+                };
+
+                if line_start_col <= line_end_col {
+                    let highlight_type = if is_current {
+                        HighlightType::CurrentSearchMatch
+                    } else {
+                        HighlightType::SearchMatch
+                    };
+
+                    highlighted_ranges.push(HighlightedRangeLine::new(
+                        line,
+                        line_start_col,
+                        line_end_col,
+                        highlight_type,
+                        color,
                     ));
                 }
             }

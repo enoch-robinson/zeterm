@@ -30,6 +30,7 @@ mod colors;
 mod font_metrics;
 mod fonts;
 mod key_mapping;
+mod search;
 mod terminal_element;
 mod theme;
 mod wide_char;
@@ -40,6 +41,11 @@ pub use colors::{ColorPalette, NamedColor, Rgb, TerminalColor, terminal_color_to
 pub use font_metrics::FontMetrics;
 #[allow(unused_imports)]
 pub use key_mapping::{KeyMapping, Modifiers, keystroke_to_bytes};
+#[allow(unused_imports)]
+pub use search::{
+    CellData, SearchConfig, SearchDirection, SearchMatch, SearchState, extract_lines_from_cells,
+    search_in_lines,
+};
 pub use terminal_element::TerminalElement;
 #[allow(unused_imports)]
 pub use theme::{
@@ -176,6 +182,8 @@ pub struct TerminalView {
     cursor_blink_enabled: bool,
     /// 渲染配置
     render_config: RenderConfig,
+    /// 搜索状态
+    search_state: SearchState,
 }
 
 impl TerminalView {
@@ -201,6 +209,7 @@ impl TerminalView {
             cursor_visible: true,
             cursor_blink_enabled: true,
             render_config,
+            search_state: SearchState::new(),
         }
     }
 
@@ -235,6 +244,84 @@ impl TerminalView {
     /// 检查当前是否为暗色主题
     pub fn is_dark_theme(&self) -> bool {
         self.render_config.theme.is_dark
+    }
+
+    //========================================================================
+    // 搜索功能
+    // ========================================================================
+
+    /// 获取搜索状态
+    pub fn search_state(&self) -> &SearchState {
+        &self.search_state
+    }
+
+    /// 获取可变搜索状态
+    pub fn search_state_mut(&mut self) -> &mut SearchState {
+        &mut self.search_state
+    }
+
+    /// 开始搜索
+    pub fn start_search(&mut self) {
+        self.search_state.activate();
+    }
+
+    /// 结束搜索
+    pub fn end_search(&mut self) {
+        self.search_state.deactivate();
+        self.search_state.clear();
+    }
+
+    /// 执行搜索
+    pub fn search(&mut self, query: &str) {
+        self.search_state.set_query(query);
+
+        if query.is_empty() {
+            self.search_state.set_matches(Vec::new());
+            return;
+        }
+
+        // 从终端内容提取文本行
+        let term = self.coordinator.terminal().term();
+        let term_guard = term.lock();
+        let content = term_guard.renderable_content();
+
+        // 收集单元格数据
+        let mut cells: Vec<search::CellData> = Vec::new();
+        let mut max_col = 0i32;
+
+        for cell in content.display_iter {
+            let col = cell.point.column.0 as i32;
+            if col > max_col {
+                max_col = col;
+            }
+            cells.push(search::CellData {
+                line: cell.point.line.0,
+                col,
+                c: cell.c,
+            });
+        }
+
+        let cols = (max_col + 1) as usize;
+        let lines = search::extract_lines_from_cells(&cells, cols);
+
+        // 执行搜索
+        let matches = search::search_in_lines(&lines, query, self.search_state.config());
+        self.search_state.set_matches(matches);
+    }
+
+    /// 跳转到下一个匹配
+    pub fn search_next(&mut self) {
+        self.search_state.next_match();
+    }
+
+    /// 跳转到上一个匹配
+    pub fn search_prev(&mut self) {
+        self.search_state.prev_match();
+    }
+
+    /// 检查搜索是否激活
+    pub fn is_search_active(&self) -> bool {
+        self.search_state.is_active()
     }
 
     /// 切换光标闪烁
@@ -318,18 +405,20 @@ impl Render for TerminalView {
             .on_key_down(cx.listener(Self::handle_key_down))
             .child(
                 // 终端渲染区域
-                div()
-                    .id("terminal-content")
-                    .size_full()
-                    .p_2()
-                    .child(TerminalElement::with_config(
+                div().id("terminal-content").size_full().p_2().child(
+                    TerminalElement::with_config(
                         self.coordinator.clone(),
                         focused,
                         self.cursor_visible,
                         self.render_config.font_size,
                         self.render_config.line_height,
                         Some(rgb_to_hsla(self.render_config.theme.cursor.color)),
-                    )),
+                    )
+                    .with_search_matches(
+                        self.search_state.matches().to_vec(),
+                        self.search_state.current_index(),
+                    ),
+                ),
             )
     }
 }
