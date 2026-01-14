@@ -19,8 +19,11 @@ use crate::known_hosts::{KeyType, KnownHostsStore, VerificationResult};
 pub type DataSender = mpsc::UnboundedSender<Vec<u8>>;
 pub type DataReceiver = mpsc::UnboundedReceiver<Vec<u8>>;
 
-/// 主机密钥确认回调
-pub type HostKeyConfirmCallback = Arc<dyn Fn(&str, u16, &str, &str) -> bool + Send + Sync>;
+/// 主机密钥确认回调结果
+/// - `None`: 用户拒绝，中止连接
+/// - `Some(true)`: 用户接受，保存到 known_hosts
+/// - `Some(false)`: 用户接受，但不保存（临时信任）
+pub type HostKeyConfirmCallback = Arc<dyn Fn(&str, u16, &str, &str) -> Option<bool> + Send + Sync>;
 
 /// SSH Handler 状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -270,7 +273,7 @@ impl SshHandler {
                     drop(store_guard); // 释放锁，因为回调可能需要时间
 
                     // 调用用户确认回调
-                    let accepted = if let Some(ref callback) = self.host_key_confirm_callback {
+                    let result = if let Some(ref callback) = self.host_key_confirm_callback {
                         info!(
                             "Unknown host {}:{}, asking user for confirmation",
                             self.server_host, self.server_port
@@ -282,28 +285,35 @@ impl SshHandler {
                             fingerprint,
                         )
                     } else {
-                        // 没有回调时，默认接受（与之前行为一致，但会记录警告）
+                        // 没有回调时，默认接受并保存（与之前行为一致，但会记录警告）
                         warn!(
                             "No host key confirmation callback set, auto-accepting unknown host {}:{}",
                             self.server_host, self.server_port
                         );
                         warn!("This is insecure! Set a confirmation callback for production use.");
-                        true
+                        Some(true)
                     };
 
-                    if accepted {
-                        info!(
-                            "User accepted host key for {}:{}",
-                            self.server_host, self.server_port
-                        );
-                        self.save_host_key(key_type, key_data);
-                        true
-                    } else {
-                        info!(
-                            "User rejected host key for {}:{}",
-                            self.server_host, self.server_port
-                        );
-                        false
+                    match result {
+                        Some(save_to_known_hosts) => {
+                            info!(
+                                "User accepted host key for {}:{}",
+                                self.server_host, self.server_port
+                            );
+                            if save_to_known_hosts {
+                                self.save_host_key(key_type, key_data);
+                            } else {
+                                info!("User chose not to save host key to known_hosts");
+                            }
+                            true
+                        },
+                        None => {
+                            info!(
+                                "User rejected host key for {}:{}",
+                                self.server_host, self.server_port
+                            );
+                            false
+                        },
                     }
                 },
                 VerificationResult::Changed {
@@ -333,12 +343,23 @@ impl SshHandler {
         } else {
             // 没有存储时，询问用户
             if let Some(ref callback) = self.host_key_confirm_callback {
-                callback(
+                let result = callback(
                     &self.server_host,
                     self.server_port,
                     key_type.as_str(),
                     fingerprint,
-                )
+                );
+                // 没有 store，无法保存，只关心是否接受
+                match result {
+                    Some(_) => {
+                        info!("User accepted host key (no known_hosts store available)");
+                        true
+                    },
+                    None => {
+                        info!("User rejected host key");
+                        false
+                    },
+                }
             } else {
                 warn!("No known_hosts store and no confirmation callback, auto-accepting");
                 true
@@ -365,7 +386,7 @@ impl SshHandler {
                     drop(store_guard);
 
                     // 首次连接，询问用户
-                    let accepted = if let Some(ref callback) = self.host_key_confirm_callback {
+                    let result = if let Some(ref callback) = self.host_key_confirm_callback {
                         info!(
                             "Host {}:{} not in known_hosts, asking user",
                             self.server_host, self.server_port
@@ -381,13 +402,20 @@ impl SshHandler {
                             "Host {}:{} not in known_hosts, no callback set, rejecting",
                             self.server_host, self.server_port
                         );
-                        false
+                        None
                     };
 
-                    if accepted {
-                        self.save_host_key(key_type, key_data);
+                    match result {
+                        Some(save_to_known_hosts) => {
+                            if save_to_known_hosts {
+                                self.save_host_key(key_type, key_data);
+                            } else {
+                                info!("User chose not to save host key to known_hosts");
+                            }
+                            true
+                        },
+                        None => false,
                     }
-                    accepted
                 },
                 VerificationResult::Changed {
                     expected_type,
@@ -651,7 +679,7 @@ mod tests {
     fn test_handler_with_callback() {
         let (sender, _receiver) = create_data_channel();
         let callback: HostKeyConfirmCallback = Arc::new(|_host, _port, _key_type, _fingerprint| {
-            true // 总是接受
+            Some(true) // 总是接受并保存
         });
 
         let handler = SshHandler::new(

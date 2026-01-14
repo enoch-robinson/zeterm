@@ -243,7 +243,11 @@ impl MainWindow {
                 // 创建主机密钥确认回调
                 // 当 SshHandler 需要确认时，通过 channel 发送请求到UI 线程
                 let host_key_callback: HostKeyConfirmCallback = Arc::new(
-                    move |hostname: &str, port: u16, key_type: &str, fingerprint: &str| -> bool {
+                    move |hostname: &str,
+                          port: u16,
+                          key_type: &str,
+                          fingerprint: &str|
+                          -> Option<bool> {
                         use crate::ui::dialogs::HostKeyConfirmRequest;
                         use std::time::Duration;
 
@@ -257,17 +261,22 @@ impl MainWindow {
                             HostKeyConfirmRequest::new(hostname, port, key_type, fingerprint);
 
                         // 发送请求并等待响应（超时 60 秒）
+                        // 返回值: None=拒绝, Some(true)=接受并保存, Some(false)=接受但不保存
                         match host_key_sender.request_and_wait(request, Duration::from_secs(60)) {
                             Some(response) => {
                                 info!(
                                     "Host key confirmation response: accepted={}, remember={}",
                                     response.accepted, response.remember
                                 );
-                                response.accepted
+                                if response.accepted {
+                                    Some(response.remember)
+                                } else {
+                                    None
+                                }
                             },
                             None => {
                                 warn!("Host key confirmation timed out or channel closed");
-                                false
+                                None
                             },
                         }
                     },

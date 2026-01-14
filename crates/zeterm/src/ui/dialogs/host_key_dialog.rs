@@ -298,10 +298,14 @@ impl HostKeyDialog {
         let check_mark = if checked { "✓" } else { "" };
 
         div()
+            .id("remember-checkbox")
             .flex()
             .items_center()
             .gap_2()
             .cursor_pointer()
+            .on_click(cx.listener(|this, _event, _window, cx| {
+                this.toggle_remember(cx);
+            }))
             .child(
                 div()
                     .w(px(16.0))
