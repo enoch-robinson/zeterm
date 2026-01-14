@@ -50,7 +50,7 @@ impl Default for SshConfig {
             auth_method: AuthMethod::None,
             connect_timeout: Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS),
             keepalive_interval: Some(Duration::from_secs(DEFAULT_KEEPALIVE_INTERVAL_SECS)),
-            host_key_verification: HostKeyVerification::AutoAccept,
+            host_key_verification: HostKeyVerification::AskOnFirstConnect,
             terminal_type: "xterm-256color".to_string(),
             terminal_cols: 80,
             terminal_rows: 24,
