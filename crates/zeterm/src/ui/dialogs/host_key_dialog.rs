@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ParentElement, Render, Styled, Window, div, px,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use gpui_component::{ActiveTheme, Sizable, Size, button::Button};
 use parking_lot::Mutex;
