@@ -7,7 +7,7 @@
 //! - **基础测试**: 不需要真实服务器，直接运行
 //! - **集成测试**: 需要真实 SSH 服务器，默认被`#[ignore]` 标记
 //!
-//! ## 运行集成测试
+//! ## 运行密码认证测试
 //!
 //! 设置环境变量后运行被忽略的测试：
 //!
@@ -19,7 +19,38 @@
 //! cargo test -p zeterm-ssh --test ssh_integration_test -- --ignored
 //! ```
 //!
-//! 或者运行所有测试（包括被忽略的）：
+//! ## 运行公钥认证测试
+//!
+//! ```bash
+//! SSH_TEST_HOST=your-server \
+//! SSH_TEST_PORT=22 \
+//! SSH_TEST_USER=your-user \
+//! SSH_TEST_KEY_PATH=~/.ssh/id_rsa \
+//! cargo test -p zeterm-ssh --test ssh_integration_test test_ssh_pubkey -- --ignored
+//! ```
+//!
+//! 如果私钥有密码保护：
+//!
+//! ```bash
+//! SSH_TEST_HOST=your-server \
+//! SSH_TEST_USER=your-user \
+//! SSH_TEST_KEY_PATH=~/.ssh/id_rsa \
+//! SSH_TEST_KEY_PASSPHRASE=your-key-passphrase \
+//! cargo test -p zeterm-ssh --test ssh_integration_test test_ssh_pubkey -- --ignored
+//! ```
+//!
+//! ## 环境变量说明
+//!
+//! | 变量 | 说明 | 默认值 |
+//! |------|------|--------|
+//! | `SSH_TEST_HOST` | SSH 服务器地址 | localhost |
+//! | `SSH_TEST_PORT` | SSH 端口 | 22 |
+//! | `SSH_TEST_USER` | 用户名 | testuser |
+//! | `SSH_TEST_PASSWORD` | 密码（密码认证） | testpass |
+//! | `SSH_TEST_KEY_PATH` |私钥文件路径（公钥认证） | ~/.ssh/id_rsa |
+//! | `SSH_TEST_KEY_PASSPHRASE` | 私钥密码（可选） | 无 |
+//!
+//! ## 运行所有测试
 //!
 //! ```bash
 //! cargo test -p zeterm-ssh --test ssh_integration_test -- --include-ignored
@@ -51,6 +82,35 @@ fn get_test_config() -> SshConfig {
         .with_password(password)
         .with_host_key_verification(HostKeyVerification::AutoAccept)
         .with_terminal_size(80, 24)
+}
+
+/// 获取公钥认证测试配置
+///
+/// 从环境变量读取 SSH 公钥认证配置
+fn get_pubkey_test_config() -> SshConfig {
+    let host = env::var("SSH_TEST_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port: u16 = env::var("SSH_TEST_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(22);
+    let username = env::var("SSH_TEST_USER").unwrap_or_else(|_| "testuser".to_string());
+    let key_path = env::var("SSH_TEST_KEY_PATH")
+        .unwrap_or_else(|_| format!("{}/.ssh/id_rsa", env::var("HOME").unwrap_or_default()));
+    let key_passphrase = env::var("SSH_TEST_KEY_PASSPHRASE").ok();
+
+    let mut config = SshConfig::new(host, username)
+        .with_port(port)
+        .with_host_key_verification(HostKeyVerification::AutoAccept)
+        .with_terminal_size(80, 24);
+
+    // 根据是否有密码短语选择配置方法
+    if let Some(passphrase) = key_passphrase {
+        config = config.with_key_file_and_passphrase(&key_path, passphrase);
+    } else {
+        config = config.with_key_file(&key_path);
+    }
+
+    config
 }
 
 //==================== 基础测试 (不需要真实服务器) ====================
@@ -266,6 +326,94 @@ async fn test_ssh_interactive_session() {
     // 关闭连接
     conn.close().await.expect("Failed to close connection");
     println!("✅ Interactive session test completed");
+}
+
+// ==================== 公钥认证测试 ====================
+
+#[tokio::test]
+#[ignore = "需要真实 SSH 服务器和公钥配置，设置 SSH_TEST_* 环境变量后用 --ignored 运行"]
+async fn test_ssh_pubkey_authentication() {
+    let config = get_pubkey_test_config();
+    let host = config.host.clone();
+    let port = config.port;
+
+    println!("Testing SSH public key authentication to {}:{}", host, port);
+    println!(
+        "Key path: {:?}",
+        match &config.auth_method {
+            AuthMethod::PublicKey { key_path, .. } => key_path.display().to_string(),
+            _ => "N/A".to_string(),
+        }
+    );
+
+    let conn = SshConnection::new(config);
+
+    match timeout(Duration::from_secs(15), conn.connect()).await {
+        Ok(Ok(())) => {
+            println!("✅ Public key authentication successful!");
+            assert!(conn.is_connected());
+            assert!(conn.remote_address().is_some());
+
+            // 发送测试命令验证连接正常
+            conn.write(b"echo 'pubkey auth works'\n")
+                .await
+                .expect("Failed to send command");
+
+            // 等待响应
+            let mut stream = conn.receive_stream();
+            let response = timeout(Duration::from_secs(3), stream.next()).await;
+            if let Ok(Some(Ok(data))) = response {
+                let text = String::from_utf8_lossy(&data);
+                println!("Response: {}", text);
+            }
+
+            conn.close().await.expect("Failed to close");
+            println!("✅ Public key authentication test passed!");
+        },
+        Ok(Err(e)) => {
+            panic!("❌ Public key authentication failed: {}", e);
+        },
+        Err(_) => {
+            panic!("❌ Connection timed out");
+        },
+    }
+}
+
+#[tokio::test]
+#[ignore = "需要真实 SSH 服务器和公钥配置，设置 SSH_TEST_* 环境变量后用 --ignored 运行"]
+async fn test_ssh_pubkey_interactive_session() {
+    let config = get_pubkey_test_config();
+    let conn = SshConnection::new(config);
+
+    // 连接
+    conn.connect()
+        .await
+        .expect("Failed to connect with public key");
+
+    println!("✅ Connected with public key authentication");
+
+    // 获取数据流
+    let mut stream = conn.receive_stream();
+
+    // 等待初始输出
+    let _ = timeout(Duration::from_secs(2), stream.next()).await;
+
+    // 测试 htop (如果安装了)
+    println!("Testing: echo test");
+    conn.write(b"echo 'Hello from pubkey auth'\n")
+        .await
+        .expect("Failed to send echo");
+
+    let response = timeout(Duration::from_secs(3), stream.next()).await;
+    if let Ok(Some(Ok(data))) = response {
+        let text = String::from_utf8_lossy(&data);
+        println!("Echo output: {}", text);
+        assert!(text.contains("Hello") || text.contains("pubkey"));
+    }
+
+    // 关闭连接
+    conn.close().await.expect("Failed to close connection");
+    println!("✅ Public key interactive session test completed");
 }
 
 // ==================== 错误处理测试 ====================
