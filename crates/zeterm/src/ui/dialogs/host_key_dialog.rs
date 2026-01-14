@@ -108,11 +108,6 @@ impl HostKeyDialog {
         self
     }
 
-    /// 构建对话框实体
-    pub fn build(host_key_info: HostKeyInfo, cx: &mut App) -> Entity<Self> {
-        cx.new(|cx| Self::new(host_key_info, cx))
-    }
-
     /// 获取用户响应
     pub fn response(&self) -> HostKeyResponse {
         *self.response.lock()
