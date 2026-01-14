@@ -118,11 +118,6 @@ impl HostKeyDialog {
         *self.response.lock()
     }
 
-    /// 是否记住选择
-    pub fn remember_choice(&self) -> bool {
-        *self.remember_choice.lock()
-    }
-
     /// 处理接受
     fn do_accept(&mut self, cx: &mut Context<Self>) {
         info!(
