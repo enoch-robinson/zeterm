@@ -351,6 +351,12 @@ impl Render for MainWindow {
         // 先检查是否需要显示主机密钥对话框（需要可变借用）
         self.check_pending_host_key_dialog(cx);
 
+        // 检查是否有新数据需要重绘（脏标记机制）
+        // 如果数据泵接收到新数据，会设置脏标记，这里检查并触发重绘循环
+        if self.coordinator.check_and_clear_dirty() {
+            cx.notify();
+        }
+
         let theme = cx.theme();
         let status = self.get_status_text();
         let connection_state = self.get_connection_state();

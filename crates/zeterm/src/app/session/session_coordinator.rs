@@ -4,6 +4,7 @@
 //! 这是连接后端数据流与UI渲染的关键桥梁。
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Term;
@@ -53,6 +54,8 @@ pub struct SessionCoordinator {
     data_pump_running: RwLock<bool>,
     /// 数据泵取消标志
     data_pump_cancel: RwLock<bool>,
+    /// 数据更新脏标记，用于通知 UI 需要重绘
+    dirty: AtomicBool,
 }
 
 impl SessionCoordinator {
@@ -66,6 +69,7 @@ impl SessionCoordinator {
             event_rx: RwLock::new(Some(event_rx)),
             data_pump_running: RwLock::new(false),
             data_pump_cancel: RwLock::new(false),
+            dirty: AtomicBool::new(false),
         }
     }
 
@@ -172,38 +176,41 @@ impl SessionCoordinator {
             // 使用 select! 实现超时检查
             tokio::select! {
                 result = stream.next() => {
-                        match result {
-                            Some(Ok(data)) => {
-                                if data.is_empty() {
-                                    continue;
-                                }
-
-                                debug!("Data pump received {} bytes", data.len());
-
-                                // 送入终端状态机
-                                terminal.advance_bytes(&data);
-
-                                // 触发 UI 重绘
-                                notify_callback();
+                    match result {
+                        Some(Ok(data)) => {
+                            if data.is_empty() {
+                                continue;
                             }
-                            Some(Err(e)) => {
-                                error!("Data pump error: {}", e);
-                                // 根据错误类型决定是否继续
-                                if !e.is_retryable() {
-                                    // 标记连接已断开
-                                    self.connection_manager.mark_disconnected(
-                                        zeterm_core::DisconnectReason::NetworkError,
-                                    );
-                                    break;
-                                }
-                            }
-                            None => {
-                                info!("Data stream ended");
-                                // 流结束，标记连接已断开（服务器关闭）
-                                self.connection_manager.mark_disconnected_by_server();
+
+                            debug!("Data pump received {} bytes", data.len());
+
+                            // 送入终端状态机
+                            terminal.advance_bytes(&data);
+
+                            // 标记有新数据需要重绘
+                            self.mark_dirty();
+
+                            // 触发 UI 重绘
+                            notify_callback();
+                        }
+                        Some(Err(e)) => {
+                            error!("Data pump error: {}", e);
+                            // 根据错误类型决定是否继续
+                            if !e.is_retryable() {
+                                // 标记连接已断开
+                                self.connection_manager.mark_disconnected(
+                                    zeterm_core::DisconnectReason::NetworkError,
+                                );
                                 break;
                             }
                         }
+                        None => {
+                            info!("Data stream ended");
+                            // 流结束，标记连接已断开（服务器关闭）
+                            self.connection_manager.mark_disconnected_by_server();
+                            break;
+                        }
+                    }
                 }
                 _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
                     // 定期检查取消标志
@@ -395,6 +402,31 @@ impl SessionCoordinator {
     /// 重置滚动位置
     pub fn reset_scroll(&self) {
         self.terminal.reset_scroll();
+    }
+
+    /// 标记有新数据需要重绘///
+    /// 当数据泵接收到新数据时调用此方法，
+    /// UI 层可以通过 `check_and_clear_dirty()` 检查是否需要重绘。
+    pub fn mark_dirty(&self) {
+        self.dirty.store(true, Ordering::SeqCst);
+    }
+
+    /// 检查并清除脏标记
+    ///
+    /// 如果有新数据需要重绘，返回 `true` 并清除标记；
+    /// 否则返回 `false`。
+    ///
+    /// # Returns
+    ///
+    /// * `true` - 有新数据，需要重绘
+    /// * `false` - 无新数据
+    pub fn check_and_clear_dirty(&self) -> bool {
+        self.dirty.swap(false, Ordering::SeqCst)
+    }
+
+    /// 检查是否有新数据（不清除标记）
+    pub fn is_dirty(&self) -> bool {
+        self.dirty.load(Ordering::SeqCst)
     }
 }
 
