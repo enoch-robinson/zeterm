@@ -19,20 +19,26 @@ use std::sync::Arc;
 
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, Styled, Window, div,
+    KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render,
+    ScrollWheelEvent, Styled, Window, div, px,
 };
 use gpui_component::ActiveTheme;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::app::session::SessionCoordinator;
 
+mod clipboard;
 mod colors;
 mod font_metrics;
 mod fonts;
 mod hyperlink;
 mod ime;
 mod key_mapping;
+mod mouse;
+mod resize;
 mod search;
+mod selection;
+mod shortcuts;
 mod terminal_element;
 mod theme;
 mod wide_char;
@@ -59,6 +65,23 @@ pub use theme::{
 };
 #[allow(unused_imports)]
 pub use wide_char::{CellContent, CharWidth, char_width, is_wide_char, string_width};
+
+// Phase 4 模块导出
+#[allow(unused_imports)]
+pub use clipboard::{ClipboardManager, PasteProcessor, TextExtractor};
+#[allow(unused_imports)]
+pub use mouse::{
+    CellPosition, ClickDetector, ClickType, CoordinateConverter, MouseButton, MouseEventType,
+    MousePosition,
+};
+#[allow(unused_imports)]
+pub use resize::{PixelSize, ResizeHandler, TerminalDimensions};
+#[allow(unused_imports)]
+pub use selection::{
+    Selection, SelectionPoint, SelectionRange, SelectionState, SelectionType, WordBoundaryDetector,
+};
+#[allow(unused_imports)]
+pub use shortcuts::{Shortcut, ShortcutAction, ShortcutManager};
 
 /// 渲染配置
 ///
@@ -190,6 +213,19 @@ pub struct TerminalView {
     render_config: RenderConfig,
     /// 搜索状态
     search_state: SearchState,
+    //========== Phase 4 新增字段 ==========
+    /// 文本选择状态
+    selection: Selection,
+    /// 快捷键管理器
+    shortcut_manager: ShortcutManager,
+    /// 点击检测器（用于双击、三击检测）
+    click_detector: ClickDetector,
+    /// 窗口 resize 处理器
+    resize_handler: ResizeHandler,
+    /// 当前终端区域边界（用于坐标转换）
+    terminal_bounds: Option<gpui::Bounds<gpui::Pixels>>,
+    /// 滚动偏移量（行数）
+    scroll_offset: i32,
 }
 
 impl TerminalView {
@@ -216,6 +252,13 @@ impl TerminalView {
             cursor_blink_enabled: true,
             render_config,
             search_state: SearchState::new(),
+            // Phase 4 字段初始化
+            selection: Selection::new(),
+            shortcut_manager: ShortcutManager::new(),
+            click_detector: ClickDetector::new(),
+            resize_handler: ResizeHandler::new(8.0, 16.0), // 默认单元格尺寸
+            terminal_bounds: None,
+            scroll_offset: 0,
         }
     }
 
@@ -368,10 +411,22 @@ impl TerminalView {
     fn handle_key_down(
         &mut self,
         event: &KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let key = event.keystroke.key.as_str();
+
+        // 首先检查是否是快捷键
+        if let Some(action) = self
+            .shortcut_manager
+            .find_action_from_key(key, &event.keystroke.modifiers)
+        {
+            if self.handle_shortcut(action, window, cx) {
+                return; // 快捷键已处理
+            }
+        }
+
+        // 不是快捷键，转换为终端输入
         let modifiers = key_mapping::Modifiers::new(
             event.keystroke.modifiers.control,
             event.keystroke.modifiers.alt,
@@ -390,6 +445,317 @@ impl TerminalView {
     pub fn coordinator(&self) -> &Arc<SessionCoordinator> {
         &self.coordinator
     }
+
+    //========== Phase 4:鼠标事件处理 ==========
+
+    /// 处理鼠标按下事件
+    fn handle_mouse_down(
+        &mut self,
+        event: &MouseDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // 获取鼠标位置
+        let mouse_pos = MousePosition::from_point(event.position);
+
+        // 转换为单元格坐标
+        if let Some(cell_pos) = self.screen_to_cell(mouse_pos) {
+            // 检测点击类型（单击、双击、三击）
+            let click_type = self.click_detector.record_click(mouse_pos);
+
+            match click_type {
+                ClickType::Single => {
+                    // 单击：开始字符级选择
+                    self.selection.clear();
+                    self.selection.start(cell_pos.to_selection_point());
+                    debug!("Selection started at ({}, {})", cell_pos.line, cell_pos.col);
+                },
+                ClickType::Double => {
+                    // 双击：选择单词
+                    self.select_word_at(cell_pos);
+                    debug!("Word selection at ({}, {})", cell_pos.line, cell_pos.col);
+                },
+                ClickType::Triple => {
+                    // 三击：选择整行
+                    self.selection.start_line(cell_pos.line);
+                    self.selection.finish();
+                    debug!("Line selection at line {}", cell_pos.line);
+                },
+            }
+
+            cx.notify();
+        }
+    }
+
+    /// 处理鼠标移动事件
+    fn handle_mouse_move(
+        &mut self,
+        event: &MouseMoveEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // 只在选择状态下处理
+        if !self.selection.is_selecting() {
+            return;
+        }
+
+        let mouse_pos = MousePosition::from_point(event.position);
+
+        if let Some(cell_pos) = self.screen_to_cell(mouse_pos) {
+            self.selection.update(cell_pos.to_selection_point());
+            cx.notify();
+        }
+    }
+
+    /// 处理鼠标释放事件
+    fn handle_mouse_up(
+        &mut self,
+        _event: &MouseUpEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.selection.is_selecting() {
+            self.selection.finish();
+            debug!("Selection finished");
+            cx.notify();
+        }
+    }
+
+    /// 处理滚轮事件
+    fn handle_scroll_wheel(
+        &mut self,
+        event: &ScrollWheelEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // 计算滚动行数
+        let delta_y = event.delta.pixel_delta(px(16.0)).y;
+        let lines = (f32::from(delta_y) / 16.0).round() as i32;
+
+        if lines != 0 {
+            self.scroll(-lines); // 负号：向上滚动时delta 为正
+            cx.notify();
+        }
+    }
+
+    //========== Phase 4:辅助方法 ==========
+
+    /// 将屏幕坐标转换为单元格坐标
+    fn screen_to_cell(&self, pos: MousePosition) -> Option<CellPosition> {
+        let bounds = self.terminal_bounds?;
+        let cell_width = self.resize_handler.cell_width();
+        let cell_height = self.resize_handler.cell_height();
+
+        if cell_width <= 0.0 || cell_height <= 0.0 {
+            return None;
+        }
+
+        let dims = self.resize_handler.current_dimensions();
+        let converter = CoordinateConverter::new(
+            f32::from(bounds.origin.x),
+            f32::from(bounds.origin.y),
+            cell_width,
+            cell_height,
+            dims.cols as i32,
+            dims.rows as i32,
+        )
+        .with_scroll_offset(self.scroll_offset);
+
+        if converter.is_in_bounds(pos) {
+            Some(converter.screen_to_cell(pos))
+        } else {
+            None
+        }
+    }
+
+    /// 在指定位置选择单词
+    fn select_word_at(&mut self, cell_pos: CellPosition) {
+        // 简化实现：选择当前位置的单词
+        // TODO: 从终端内容中提取单词边界
+        let point = cell_pos.to_selection_point();
+        self.selection.start_word(point, None);
+        self.selection.finish();
+    }
+
+    /// 滚动终端
+    pub fn scroll(&mut self, delta: i32) {
+        self.scroll_offset += delta;
+        // 限制滚动范围
+        self.scroll_offset = self.scroll_offset.max(0);
+        self.coordinator.scroll(delta);
+    }
+
+    /// 滚动到顶部
+    pub fn scroll_to_top(&mut self) {
+        self.scroll_offset = 0;
+        self.coordinator.reset_scroll();
+    }
+
+    /// 滚动到底部
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll_offset = 0;
+        self.coordinator.reset_scroll();
+    }
+
+    /// 获取选择状态
+    pub fn selection(&self) -> &Selection {
+        &self.selection
+    }
+
+    /// 清除选择
+    pub fn clear_selection(&mut self) {
+        self.selection.clear();
+    }
+
+    /// 检查是否有选择
+    pub fn has_selection(&self) -> bool {
+        self.selection.has_selection()
+    }
+
+    //========== Phase 4: 快捷键和剪贴板操作 ==========
+
+    /// 处理快捷键
+    fn handle_shortcut(
+        &mut self,
+        action: ShortcutAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match action {
+            ShortcutAction::Copy => {
+                self.copy_selection(cx);
+                true
+            },
+            ShortcutAction::Paste => {
+                self.paste_from_clipboard(cx);
+                true
+            },
+            ShortcutAction::ZoomIn => {
+                self.render_config.increase_font_size();
+                cx.notify();
+                true
+            },
+            ShortcutAction::ZoomOut => {
+                self.render_config.decrease_font_size();
+                cx.notify();
+                true
+            },
+            ShortcutAction::ZoomReset => {
+                self.render_config.reset_font_size();
+                cx.notify();
+                true
+            },
+            ShortcutAction::ScrollToTop => {
+                self.scroll_to_top();
+                cx.notify();
+                true
+            },
+            ShortcutAction::ScrollToBottom => {
+                self.scroll_to_bottom();
+                cx.notify();
+                true
+            },
+            ShortcutAction::ScrollPageUp => {
+                self.scroll(-24); // 约一页
+                cx.notify();
+                true
+            },
+            ShortcutAction::ScrollPageDown => {
+                self.scroll(24);
+                cx.notify();
+                true
+            },
+            ShortcutAction::ClearSelection => {
+                self.clear_selection();
+                cx.notify();
+                true
+            },
+            ShortcutAction::Search => {
+                self.start_search();
+                cx.notify();
+                true
+            },
+            ShortcutAction::Clear => {
+                self.coordinator.reset_scroll();
+                cx.notify();
+                true
+            },
+            // 其他快捷键暂不处理
+            _ => false,
+        }
+    }
+
+    /// 复制选中内容到剪贴板
+    pub fn copy_selection(&mut self, cx: &mut Context<Self>) {
+        if !self.selection.has_selection() {
+            debug!("Copy: no selection");
+            return;
+        }
+
+        // 从终端内容中提取选中的文本
+        if let Some(text) = self.extract_selected_text() {
+            if ClipboardManager::copy_text(cx, &text) {
+                debug!("Copied {} characters", text.len());
+            }
+        }
+    }
+
+    /// 从剪贴板粘贴
+    pub fn paste_from_clipboard(&mut self, cx: &mut Context<Self>) {
+        if let Some(text) = ClipboardManager::paste_text(cx) {
+            // 处理粘贴文本
+            let processed = clipboard::PasteProcessor::process(&text, false);
+            self.coordinator.send_input_sync(&processed);
+            debug!("Pasted {} characters", text.len());
+        }
+    }
+
+    /// 提取选中的文本
+    fn extract_selected_text(&self) -> Option<String> {
+        let range = self.selection.range()?;
+
+        // 从终端内容中提取文本
+        let term = self.coordinator.terminal().term();
+        let term_guard = term.lock();
+        let content = term_guard.renderable_content();
+
+        let mut lines: Vec<String> = Vec::new();
+        let mut current_line = i32::MIN;
+        let mut current_line_chars: Vec<char> = Vec::new();
+
+        for cell in content.display_iter {
+            let line = cell.point.line.0;
+            let col = cell.point.column.0 as i32;
+
+            // 检查是否在选择范围内
+            let point = SelectionPoint::new(line, col);
+            if !range.contains(&point) {
+                continue;
+            }
+
+            // 新行
+            if line != current_line {
+                if current_line != i32::MIN && !current_line_chars.is_empty() {
+                    lines.push(current_line_chars.iter().collect());
+                    current_line_chars.clear();
+                }
+                current_line = line;
+            }
+
+            current_line_chars.push(cell.c);
+        }
+
+        // 添加最后一行
+        if !current_line_chars.is_empty() {
+            lines.push(current_line_chars.iter().collect());
+        }
+
+        if lines.is_empty() {
+            None
+        } else {
+            Some(lines.join("\n").trim_end().to_string())
+        }
+    }
 }
 
 impl Focusable for TerminalView {
@@ -403,16 +769,28 @@ impl Render for TerminalView {
         let theme = cx.theme();
         let focused = self.focus_handle.is_focused(_window);
 
+        // 获取选择范围用于渲染
+        let selection_range = self.selection.range();
+
         div()
             .id("terminal-view")
             .size_full()
             .bg(theme.background)
             .track_focus(&self.focus_handle)
+            // 键盘事件
             .on_key_down(cx.listener(Self::handle_key_down))
+            // 鼠标事件
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(Self::handle_mouse_down),
+            )
+            .on_mouse_move(cx.listener(Self::handle_mouse_move))
+            .on_mouse_up(gpui::MouseButton::Left, cx.listener(Self::handle_mouse_up))
+            .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
             .child(
                 // 终端渲染区域
-                div().id("terminal-content").size_full().p_2().child(
-                    TerminalElement::with_config(
+                div().id("terminal-content").size_full().p_2().child({
+                    let mut element = TerminalElement::with_config(
                         self.coordinator.clone(),
                         focused,
                         self.cursor_visible,
@@ -423,8 +801,15 @@ impl Render for TerminalView {
                     .with_search_matches(
                         self.search_state.matches().to_vec(),
                         self.search_state.current_index(),
-                    ),
-                ),
+                    );
+
+                    // 添加选择范围
+                    if let Some(range) = selection_range {
+                        element = element.with_selection(range);
+                    }
+
+                    element
+                }),
             )
     }
 }

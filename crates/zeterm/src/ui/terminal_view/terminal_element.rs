@@ -71,6 +71,10 @@ pub struct TerminalElement {
     search_match_color: Hsla,
     /// 当前搜索匹配高亮颜色
     current_search_match_color: Hsla,
+    /// 选择范围（Phase 4）
+    selection_range: Option<super::selection::SelectionRange>,
+    /// 选择高亮颜色
+    selection_color: Hsla,
 }
 
 /// 字体度量信息
@@ -425,6 +429,13 @@ impl TerminalElement {
                 l: 0.5,
                 a: 0.5,
             },
+            selection_range: None,
+            selection_color: Hsla {
+                h: 210.0 / 360.0,
+                s: 0.6,
+                l: 0.5,
+                a: 0.3,
+            },
         }
     }
 
@@ -459,7 +470,32 @@ impl TerminalElement {
                 l: 0.5,
                 a: 0.5,
             },
+            selection_range: None,
+            selection_color: Hsla {
+                h: 210.0 / 360.0,
+                s: 0.6,
+                l: 0.5,
+                a: 0.3,
+            },
         }
+    }
+
+    /// 设置选择范围
+    pub fn with_selection(mut self, range: super::selection::SelectionRange) -> Self {
+        self.selection_range = Some(range);
+        self
+    }
+
+    /// 设置选择高亮颜色
+    pub fn with_selection_color(mut self, color: Hsla) -> Self {
+        self.selection_color = color;
+        self
+    }
+
+    /// 清除选择
+    pub fn clear_selection(mut self) -> Self {
+        self.selection_range = None;
+        self
     }
 
     /// 设置字体大小
@@ -967,15 +1003,42 @@ impl Element for TerminalElement {
 
         // 处理选择高亮
         let mut highlighted_ranges: Vec<HighlightedRangeLine> = Vec::new();
-        let selection_color = Hsla {
-            h: 210.0 / 360.0,
-            s: 0.5,
-            l: 0.5,
-            a: 0.3,
-        };
+        let selection_color = self.selection_color;
 
-        // 从终端内容获取选择范围
-        if let Some(selection) = &content.selection {
+        // 优先使用 self.selection_range（来自 TerminalView 的选择）
+        if let Some(range) = &self.selection_range {
+            let start_line = range.start.line;
+            let start_col = range.start.col;
+            let end_line = range.end.line;
+            let end_col = range.end.col;
+
+            // 为每一行创建高亮范围
+            for line in start_line..=end_line {
+                // 视口裁剪：跳过不可见的行
+                if !viewport.is_line_visible(line) {
+                    continue;
+                }
+
+                let line_start_col = if line == start_line { start_col } else { 0 };
+                let line_end_col = if line == end_line {
+                    end_col
+                } else {
+                    cols as i32 - 1
+                };
+
+                if line_start_col <= line_end_col {
+                    highlighted_ranges.push(HighlightedRangeLine::new(
+                        line,
+                        line_start_col,
+                        line_end_col,
+                        HighlightType::Selection,
+                        selection_color,
+                    ));
+                }
+            }
+        }
+        // 否则从终端内容获取选择范围
+        else if let Some(selection) = &content.selection {
             let start = selection.start;
             let end = selection.end;
 
