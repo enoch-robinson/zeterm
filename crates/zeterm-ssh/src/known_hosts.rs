@@ -108,20 +108,32 @@ impl HostKeyEntry {
     }
 
     /// 检查是否匹配指定主机
+    ///
+    /// 匹配规则：
+    /// - 纯主机名条目（如 "example.com"）只匹配标准端口 22
+    /// - 带端口条目（如 "[example.com]:2222"）只匹配指定端口
     pub fn matches_host(&self, hostname: &str, port: u16) -> bool {
-        let host_with_port = if port != 22 {
-            format!("[{}]:{}", hostname, port)
-        } else {
-            hostname.to_string()
-        };
+        let host_with_port = format!("[{}]:{}", hostname, port);
 
         for h in &self.hostnames {
-            if h == hostname || h == &host_with_port {
+            // 检查是否匹配带端口格式
+            if h == &host_with_port {
                 return true;
             }
+
+            // 只有标准端口 22 才匹配纯主机名格式的条目
+            if port == 22 && h == hostname {
+                return true;
+            }
+
             // 支持通配符匹配
             if h.contains('*') || h.contains('?') {
-                if Self::wildcard_match(h, hostname) || Self::wildcard_match(h, &host_with_port) {
+                // 带端口格式的通配符匹配
+                if Self::wildcard_match(h, &host_with_port) {
+                    return true;
+                }
+                // 只有标准端口 22 才匹配纯主机名格式的通配符
+                if port == 22 && Self::wildcard_match(h, hostname) {
                     return true;
                 }
             }

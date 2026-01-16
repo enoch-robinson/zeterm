@@ -44,8 +44,8 @@ pub enum HandlerState {
 ///
 /// 实现 russh 的 Handler trait，处理 SSH 连接的各种事件。
 pub struct SshHandler {
-    /// 数据发送通道
-    data_sender: DataSender,
+    /// 数据发送通道（Option 允许在断开时关闭）
+    data_sender: Option<DataSender>,
     /// 主机密钥验证策略
     pub host_key_verification: HostKeyVerification,
     /// 当前状态
@@ -89,7 +89,7 @@ impl SshHandler {
         };
 
         Self {
-            data_sender,
+            data_sender: Some(data_sender),
             host_key_verification,
             state: Arc::new(Mutex::new(HandlerState::Initial)),
             server_host,
@@ -120,6 +120,16 @@ impl SshHandler {
         let mut state = self.state.lock();
         debug!("SSH handler state: {:?} -> {:?}", *state, new_state);
         *state = new_state;
+    }
+
+    /// 关闭数据发送通道///
+    /// 当连接断开时调用此方法，关闭 data_sender，
+    /// 使receive_stream() 返回的流能够正常结束。
+    fn close_data_sender(&mut self) {
+        if let Some(sender) = self.data_sender.take() {
+            drop(sender);
+            info!("Data sender closed, receive stream will end");
+        }
     }
 
     /// 从 PublicKey 提取密钥类型
@@ -512,8 +522,10 @@ impl Handler for SshHandler {
     ) -> Result<(), Self::Error> {
         debug!("Received {} bytes on channel {:?}", data.len(), channel);
 
-        if let Err(e) = self.data_sender.send(data.to_vec()) {
-            error!("Failed to send data to receiver: {}", e);
+        if let Some(ref sender) = self.data_sender {
+            if let Err(e) = sender.send(data.to_vec()) {
+                error!("Failed to send data to receiver: {}", e);
+            }
         }
 
         Ok(())
@@ -535,8 +547,10 @@ impl Handler for SshHandler {
         );
 
         // 将stderr 数据也发送到主数据流
-        if let Err(e) = self.data_sender.send(data.to_vec()) {
-            error!("Failed to send extended data to receiver: {}", e);
+        if let Some(ref sender) = self.data_sender {
+            if let Err(e) = sender.send(data.to_vec()) {
+                error!("Failed to send extended data to receiver: {}", e);
+            }
         }
 
         Ok(())
@@ -549,6 +563,8 @@ impl Handler for SshHandler {
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
         info!("Channel {:?} received EOF", channel);
+        // 关闭数据发送通道，使 receive_stream 能够正常结束
+        self.close_data_sender();
         Ok(())
     }
 
@@ -560,6 +576,8 @@ impl Handler for SshHandler {
     ) -> Result<(), Self::Error> {
         info!("Channel {:?} closed", channel);
         self.set_state(HandlerState::Disconnected);
+        // 确保数据发送通道关闭
+        self.close_data_sender();
         Ok(())
     }
 

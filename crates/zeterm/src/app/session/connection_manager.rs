@@ -110,11 +110,11 @@ impl ConnectionManager {
             Some(conn) => {
                 debug!("Writing {} bytes to connection", data.len());
                 conn.write(data).await
-            }
+            },
             None => {
                 warn!("Attempted to write to disconnected connection");
                 Err(ConnectionError::Disconnected)
-            }
+            },
         }
     }
 
@@ -135,11 +135,11 @@ impl ConnectionManager {
             Some(conn) => {
                 debug!("Resizing connection to {}x{}", cols, rows);
                 conn.resize(rows, cols).await
-            }
+            },
             None => {
                 warn!("Attempted to resize disconnected connection");
                 Err(ConnectionError::Disconnected)
-            }
+            },
         }
     }
 
@@ -157,6 +157,29 @@ impl ConnectionManager {
             reason: DisconnectReason::UserInitiated,
         };
         info!("Connection closed");
+    }
+
+    /// 标记连接已断开（由数据流结束触发）
+    ///
+    /// 当receive_stream 返回的流结束时调用此方法，
+    /// 用于更新连接状态，通知上层连接已断开。///
+    /// # Arguments
+    ///
+    /// * `reason` - 断开原因
+    pub fn mark_disconnected(&self, reason: DisconnectReason) {
+        let current_state = self.state.read().clone();
+
+        // 只有在已连接状态才更新为断开
+        if current_state.is_active() {
+            *self.state.write() = ConnectionState::Disconnected { reason };
+            info!("Connection marked as disconnected");
+        }
+    }
+    /// 标记连接已断开（服务器关闭）
+    ///
+    /// 简化版本，使用 ServerClosed 作为断开原因。
+    pub fn mark_disconnected_by_server(&self) {
+        self.mark_disconnected(DisconnectReason::ServerClosed);
     }
 }
 
@@ -181,13 +204,15 @@ mod tests {
     fn test_connection_manager_new() {
         let manager = ConnectionManager::new();
         assert!(!manager.is_connected());
-        assert!(!manager.is_cancelled());assert!(matches!(manager.state(), ConnectionState::Idle));
+        assert!(!manager.is_cancelled());
+        assert!(matches!(manager.state(), ConnectionState::Idle));
     }
 
     #[test]
     fn test_connection_manager_default() {
         let manager = ConnectionManager::default();
-        assert!(!manager.is_connected());}
+        assert!(!manager.is_connected());
+    }
 
     #[test]
     fn test_connection_manager_cancel() {

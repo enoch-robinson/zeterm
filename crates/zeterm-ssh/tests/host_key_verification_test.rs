@@ -499,7 +499,7 @@ fn test_ssh_handler_with_callback() {
         assert!(port > 0);
         assert!(!key_type.is_empty());
         assert!(!fingerprint.is_empty());
-        true // 接受
+        Some(true) // 接受并保存到 known_hosts
     });
 
     let handler = SshHandler::new(

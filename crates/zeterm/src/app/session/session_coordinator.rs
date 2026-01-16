@@ -172,32 +172,38 @@ impl SessionCoordinator {
             // 使用 select! 实现超时检查
             tokio::select! {
                 result = stream.next() => {
-                    match result {
-                        Some(Ok(data)) => {
-                            if data.is_empty() {
-                                continue;
+                        match result {
+                            Some(Ok(data)) => {
+                                if data.is_empty() {
+                                    continue;
+                                }
+
+                                debug!("Data pump received {} bytes", data.len());
+
+                                // 送入终端状态机
+                                terminal.advance_bytes(&data);
+
+                                // 触发 UI 重绘
+                                notify_callback();
                             }
-
-                            debug!("Data pump received {} bytes", data.len());
-
-                            // 送入终端状态机
-                            terminal.advance_bytes(&data);
-
-                            // 触发 UI 重绘
-                            notify_callback();
-                        }
-                        Some(Err(e)) => {
-                            error!("Data pump error: {}", e);
-                            // 根据错误类型决定是否继续
-                            if !e.is_retryable() {
+                            Some(Err(e)) => {
+                                error!("Data pump error: {}", e);
+                                // 根据错误类型决定是否继续
+                                if !e.is_retryable() {
+                                    // 标记连接已断开
+                                    self.connection_manager.mark_disconnected(
+                                        zeterm_core::DisconnectReason::NetworkError,
+                                    );
+                                    break;
+                                }
+                            }
+                            None => {
+                                info!("Data stream ended");
+                                // 流结束，标记连接已断开（服务器关闭）
+                                self.connection_manager.mark_disconnected_by_server();
                                 break;
                             }
                         }
-                        None => {
-                            info!("Data stream ended");
-                            break;
-                        }
-                    }
                 }
                 _ = tokio::time::sleep(tokio::time::Duration::from_millis(100)) => {
                     // 定期检查取消标志
