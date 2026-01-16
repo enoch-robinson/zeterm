@@ -4,7 +4,8 @@
 //! 这是连接后端数据流与UI渲染的关键桥梁。
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Instant;
 
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Term;
@@ -56,7 +57,14 @@ pub struct SessionCoordinator {
     data_pump_cancel: RwLock<bool>,
     /// 数据更新脏标记，用于通知 UI 需要重绘
     dirty: AtomicBool,
+    /// 上次重绘时间戳（用于帧率限制）
+    last_render_time: AtomicU64,
+    /// 程序启动时间（用于计算相对时间戳）
+    start_instant: Instant,
 }
+
+/// 最小重绘间隔（毫秒），约60fps
+const MIN_RENDER_INTERVAL_MS: u64 = 16;
 
 impl SessionCoordinator {
     /// 创建新的会话协调器
@@ -70,6 +78,8 @@ impl SessionCoordinator {
             data_pump_running: RwLock::new(false),
             data_pump_cancel: RwLock::new(false),
             dirty: AtomicBool::new(false),
+            last_render_time: AtomicU64::new(0),
+            start_instant: Instant::now(),
         }
     }
 
@@ -411,16 +421,34 @@ impl SessionCoordinator {
         self.dirty.store(true, Ordering::SeqCst);
     }
 
-    /// 检查并清除脏标记
+    /// 检查并清除脏标记（带帧率限制）
     ///
-    /// 如果有新数据需要重绘，返回 `true` 并清除标记；
+    /// 如果有新数据需要重绘且距离上次重绘超过最小间隔，返回 `true` 并清除标记；
     /// 否则返回 `false`。
+    ///
+    /// 帧率限制约为 60fps（16ms 间隔），避免高频数据场景下 CPU 占用过高。
     ///
     /// # Returns
     ///
-    /// * `true` - 有新数据，需要重绘
-    /// * `false` - 无新数据
+    /// * `true` - 有新数据且可以重绘
+    /// * `false` - 无新数据或距离上次重绘时间太短
     pub fn check_and_clear_dirty(&self) -> bool {
+        // 如果没有脏标记，直接返回
+        if !self.dirty.load(Ordering::SeqCst) {
+            return false;
+        }
+
+        // 检查帧率限制
+        let now = self.start_instant.elapsed().as_millis() as u64;
+        let last = self.last_render_time.load(Ordering::SeqCst);
+
+        if now.saturating_sub(last) < MIN_RENDER_INTERVAL_MS {
+            // 距离上次重绘时间太短，保留脏标记，稍后再重绘
+            return false;
+        }
+
+        // 更新上次重绘时间并清除脏标记
+        self.last_render_time.store(now, Ordering::SeqCst);
         self.dirty.swap(false, Ordering::SeqCst)
     }
 
