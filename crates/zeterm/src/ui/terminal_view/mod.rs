@@ -222,8 +222,6 @@ pub struct TerminalView {
     click_detector: ClickDetector,
     /// 窗口 resize 处理器
     resize_handler: ResizeHandler,
-    /// 当前终端区域边界（用于坐标转换）
-    terminal_bounds: Option<gpui::Bounds<gpui::Pixels>>,
     /// 滚动偏移量（行数）
     scroll_offset: i32,
 }
@@ -257,7 +255,6 @@ impl TerminalView {
             shortcut_manager: ShortcutManager::new(),
             click_detector: ClickDetector::new(),
             resize_handler: ResizeHandler::new(8.0, 16.0), // 默认单元格尺寸
-            terminal_bounds: None,
             scroll_offset: 0,
         }
     }
@@ -540,9 +537,26 @@ impl TerminalView {
 
     //========== Phase 4:辅助方法 ==========
 
+    /// 更新单元格尺寸
+    ///
+    /// 当字体度量变化时调用此方法更新 resize_handler
+    pub fn update_cell_size(&mut self, cell_width: f32, cell_height: f32) {
+        self.resize_handler.set_cell_size(cell_width, cell_height);
+    }
+
+    /// 获取当前单元格尺寸
+    pub fn cell_size(&self) -> (f32, f32) {
+        (
+            self.resize_handler.cell_width(),
+            self.resize_handler.cell_height(),
+        )
+    }
+
     /// 将屏幕坐标转换为单元格坐标
+    ///
+    /// 注意：GPUI 的鼠标事件位置是相对于接收事件的元素的，
+    /// 所以我们直接使用位置坐标，原点为(0, 0)。
     fn screen_to_cell(&self, pos: MousePosition) -> Option<CellPosition> {
-        let bounds = self.terminal_bounds?;
         let cell_width = self.resize_handler.cell_width();
         let cell_height = self.resize_handler.cell_height();
 
@@ -551,9 +565,11 @@ impl TerminalView {
         }
 
         let dims = self.resize_handler.current_dimensions();
+
+        // GPUI 鼠标位置已经是相对于元素的，原点为 (0, 0)
         let converter = CoordinateConverter::new(
-            f32::from(bounds.origin.x),
-            f32::from(bounds.origin.y),
+            0.0, // 原点 x
+            0.0, // 原点 y
             cell_width,
             cell_height,
             dims.cols as i32,
@@ -561,7 +577,8 @@ impl TerminalView {
         )
         .with_scroll_offset(self.scroll_offset);
 
-        if converter.is_in_bounds(pos) {
+        // 检查是否在有效范围内
+        if pos.x >= 0.0 && pos.y >= 0.0 {
             Some(converter.screen_to_cell(pos))
         } else {
             None
@@ -768,6 +785,12 @@ impl Render for TerminalView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let focused = self.focus_handle.is_focused(_window);
+
+        // 动态计算并更新单元格尺寸
+        // 使用字体配置计算单元格尺寸（等宽字体近似值）
+        let cell_width = self.render_config.font_size * 0.6;
+        let cell_height = self.render_config.font_size * self.render_config.line_height;
+        self.update_cell_size(cell_width, cell_height);
 
         // 获取选择范围用于渲染
         let selection_range = self.selection.range();
