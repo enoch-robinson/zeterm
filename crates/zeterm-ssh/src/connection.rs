@@ -99,6 +99,7 @@ impl SshConnection {
             self.config.host_key_verification.clone(),
             self.config.host.clone(),
             self.config.port,
+            self.config.allow_insecure,
         );
 
         // 设置主机密钥确认回调
@@ -271,6 +272,26 @@ impl SshConnection {
     }
 
     /// 公钥认证
+    ///
+    /// 支持的密钥类型：
+    /// - RSA
+    /// - Ed25519
+    /// - ECDSA (NIST P-256, P-384, P-521) - 内置支持
+    ///
+    /// # 参数
+    /// - `session`: SSH 会话句柄
+    /// - `key_path`: 私钥文件路径
+    /// - `passphrase`: 私钥密码（如果有）
+    ///
+    /// # 示例
+    /// ```no_run
+    /// use std::path::Path;
+    /// # async fn example(conn: &SshConnection, session: &mut Handle<SshHandler>) -> Result<(), ConnectionError> {
+    /// conn.authenticate_publickey(session, Path::new("~/.ssh/id_rsa"), None).await?;
+    /// conn.authenticate_publickey(session, Path::new("~/.ssh/id_ecdsa"), Some("passphrase")).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     async fn authenticate_publickey(
         &self,
         session: &mut Handle<SshHandler>,
@@ -283,6 +304,8 @@ impl SshConnection {
         );
 
         // 加载私钥
+        // russh 的 load_secret_key 函数会自动识别密钥类型（RSA、Ed25519、ECDSA 等）
+        // ECDSA 支持是内置的（通过 p256/p384/p521 依赖）
         let key_pair = russh::keys::load_secret_key(key_path, passphrase)
             .map_err(|e| ConnectionError::Authentication(format!("Failed to load key: {}", e)))?;
 

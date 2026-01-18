@@ -32,6 +32,7 @@ gpui-component = { git = "https://github.com/longbridge/gpui-component", branch 
 alacritty_terminal = "0.25.1"
 
 # SSH
+# ECDSA key support (NIST P-256, P-384, P-521) is built-in via p256/p384/p521 dependencies
 russh = "0.56.0"
 russh-sftp = "2.1.1"
 

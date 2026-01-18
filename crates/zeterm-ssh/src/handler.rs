@@ -25,6 +25,10 @@ pub type DataReceiver = mpsc::UnboundedReceiver<Vec<u8>>;
 /// - `Some(false)`: 用户接受，但不保存（临时信任）
 pub type HostKeyConfirmCallback = Arc<dyn Fn(&str, u16, &str, &str) -> Option<bool> + Send + Sync>;
 
+/// 不安全模式标志
+/// 当设置为 true 时，跳过所有主机密钥验证（仅用于测试环境）
+type InsecureFlag = bool;
+
 /// SSH Handler 状态
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandlerState {
@@ -48,6 +52,8 @@ pub struct SshHandler {
     data_sender: Option<DataSender>,
     /// 主机密钥验证策略
     pub host_key_verification: HostKeyVerification,
+    /// 是否允许不安全连接（跳过验证）
+    allow_insecure: InsecureFlag,
     /// 当前状态
     state: Arc<Mutex<HandlerState>>,
     /// 服务器主机名（用于主机密钥验证）
@@ -58,15 +64,25 @@ pub struct SshHandler {
     known_hosts_store: Arc<Mutex<Option<KnownHostsStore>>>,
     /// 主机密钥确认回调（用于首次连接时询问用户）
     host_key_confirm_callback: Option<HostKeyConfirmCallback>,
+    /// 不安全模式警告（仅记录一次）
+    insecure_warning_logged: Arc<Mutex<bool>>,
 }
 
 impl SshHandler {
     /// 创建新的 SSH Handler
+    ///
+    /// # 参数
+    /// - `data_sender`: 数据发送通道
+    /// - `host_key_verification`: 主机密钥验证策略
+    /// - `server_host`: 服务器主机名
+    /// - `server_port`: 服务器端口
+    /// - `allow_insecure`: 是否允许不安全连接（跳过主机密钥验证，不推荐）
     pub fn new(
         data_sender: DataSender,
         host_key_verification: HostKeyVerification,
         server_host: String,
         server_port: u16,
+        allow_insecure: InsecureFlag,
     ) -> Self {
         // 根据验证策略初始化 KnownHostsStore
         let known_hosts_store = match &host_key_verification {
@@ -91,11 +107,13 @@ impl SshHandler {
         Self {
             data_sender: Some(data_sender),
             host_key_verification,
+            allow_insecure,
             state: Arc::new(Mutex::new(HandlerState::Initial)),
             server_host,
             server_port,
             known_hosts_store: Arc::new(Mutex::new(known_hosts_store)),
             host_key_confirm_callback: None,
+            insecure_warning_logged: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -182,6 +200,30 @@ impl SshHandler {
         let key_type = Self::extract_key_type(server_public_key);
         let key_data = Self::encode_public_key(server_public_key);
         let fingerprint = Self::get_key_fingerprint(server_public_key);
+
+        // 不安全模式：跳过所有验证
+        if self.allow_insecure {
+            let mut warning_logged = self.insecure_warning_logged.lock();
+            if !*warning_logged {
+                error!("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@");
+                error!("@       WARNING: INSECURE MODE ENABLED!       @");
+                error!("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@");
+                error!(
+                    "Host key verification is DISABLED for {}:{}",
+                    self.server_host, self.server_port
+                );
+                error!("This makes your connection vulnerable to");
+                error!("man-in-the-middle attacks!");
+                error!("Use this option ONLY in trusted test environments!");
+                *warning_logged = true;
+            }
+
+            warn!(
+                "Skipping host key verification for {}:{} (insecure mode)",
+                self.server_host, self.server_port
+            );
+            return true;
+        }
 
         info!(
             "Verifying host key for {}:{} - Type: {}, Fingerprint: {}",
@@ -631,6 +673,7 @@ mod tests {
             HostKeyVerification::AutoAccept,
             "localhost".to_string(),
             22,
+            false,
         );
         assert_eq!(handler.state(), HandlerState::Initial);
     }
@@ -643,6 +686,7 @@ mod tests {
             HostKeyVerification::AutoAccept,
             "localhost".to_string(),
             22,
+            false,
         );
 
         handler.set_state(HandlerState::HostKeyVerified);
@@ -672,6 +716,7 @@ mod tests {
             HostKeyVerification::AskOnFirstConnect,
             "example.com".to_string(),
             22,
+            false,
         );
         // 验证 known_hosts 存储已初始化
         let store_guard = handler.known_hosts_store.lock();
@@ -686,6 +731,7 @@ mod tests {
             HostKeyVerification::AutoAccept,
             "example.com".to_string(),
             22,
+            false,
         );
 
         // AutoAccept 模式不需要 known_hosts 存储
@@ -705,6 +751,7 @@ mod tests {
             HostKeyVerification::AskOnFirstConnect,
             "example.com".to_string(),
             22,
+            false,
         )
         .with_host_key_confirm_callback(callback);
 

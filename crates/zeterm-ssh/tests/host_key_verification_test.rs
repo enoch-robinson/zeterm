@@ -438,6 +438,7 @@ fn test_ssh_handler_auto_accept_mode() {
         HostKeyVerification::AutoAccept,
         "example.com".to_string(),
         22,
+        false,
     );
 
     // AutoAccept 模式不需要 known_hosts 存储
@@ -452,6 +453,7 @@ fn test_ssh_handler_strict_mode() {
         HostKeyVerification::Strict,
         "example.com".to_string(),
         22,
+        false,
     );
 
     // Strict 模式应该有 known_hosts 存储
@@ -466,6 +468,7 @@ fn test_ssh_handler_ask_on_first_connect_mode() {
         HostKeyVerification::AskOnFirstConnect,
         "example.com".to_string(),
         22,
+        false,
     );
 
     // AskOnFirstConnect 模式应该有 known_hosts 存储
@@ -483,6 +486,7 @@ fn test_ssh_handler_known_hosts_file_mode() {
         HostKeyVerification::KnownHostsFile(path.clone()),
         "example.com".to_string(),
         22,
+        false,
     );
 
     // 应该使用指定的路径
@@ -507,6 +511,7 @@ fn test_ssh_handler_with_callback() {
         HostKeyVerification::AskOnFirstConnect,
         "example.com".to_string(),
         22,
+        false,
     )
     .with_host_key_confirm_callback(callback);
 
@@ -524,6 +529,7 @@ fn test_ssh_handler_state_transitions() {
         HostKeyVerification::AutoAccept,
         "example.com".to_string(),
         22,
+        false,
     );
 
     // 初始状态

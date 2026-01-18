@@ -31,6 +31,8 @@ pub struct SshConfig {
     pub keepalive_interval: Option<Duration>,
     /// 主机密钥验证策略
     pub host_key_verification: HostKeyVerification,
+    /// 是否允许不安全的连接（跳过主机密钥验证，不推荐）
+    pub allow_insecure: bool,
     /// 终端类型
     pub terminal_type: String,
     /// 初始终端宽度（列数）
@@ -51,6 +53,7 @@ impl Default for SshConfig {
             connect_timeout: Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS),
             keepalive_interval: Some(Duration::from_secs(DEFAULT_KEEPALIVE_INTERVAL_SECS)),
             host_key_verification: HostKeyVerification::AskOnFirstConnect,
+            allow_insecure: false,
             terminal_type: "xterm-256color".to_string(),
             terminal_cols: 80,
             terminal_rows: 24,
@@ -163,6 +166,15 @@ impl SshConfig {
     /// 设置主机密钥验证策略
     pub fn with_host_key_verification(mut self, policy: HostKeyVerification) -> Self {
         self.host_key_verification = policy;
+        self
+    }
+
+    /// 允许不安全的连接（跳过主机密钥验证，不推荐）
+    ///
+    /// # Warning
+    /// 此选项会使连接容易受到中间人攻击，仅应在受信任的测试环境中使用。
+    pub fn allow_insecure(mut self) -> Self {
+        self.allow_insecure = true;
         self
     }
 
@@ -325,5 +337,40 @@ mod tests {
         let config = SshConfig::new("example.com", "user").with_password("secret");
         let result = config.validate();
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_ssh_config_default_allow_insecure() {
+        let config = SshConfig::default();
+        assert!(
+            !config.allow_insecure,
+            "allow_insecure should default to false"
+        );
+    }
+
+    #[test]
+    fn test_ssh_config_allow_insecure() {
+        let config = SshConfig::new("example.com", "user")
+            .with_password("secret")
+            .allow_insecure();
+
+        assert!(
+            config.allow_insecure,
+            "allow_insecure should be true after calling allow_insecure()"
+        );
+    }
+
+    #[test]
+    fn test_ssh_config_allow_insecure_doesnt_affect_validation() {
+        let config = SshConfig::new("example.com", "user")
+            .with_password("secret")
+            .allow_insecure();
+
+        // allow_insecure should not affect validation
+        let result = config.validate();
+        assert!(
+            result.is_ok(),
+            "Validation should succeed even with allow_insecure enabled"
+        );
     }
 }
