@@ -2,10 +2,12 @@
 //!
 //! 显示和管理 SSH 主机列表。
 
+use crate::ui::dialogs::HostConnectionDialog;
 use gpui::{
-    App, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
     ParentElement, Render, Styled, Window, div, prelude::*,
 };
+use parking_lot::Mutex;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -38,8 +40,11 @@ pub struct HostListView {
     /// 当前显示右键菜单的主机
     context_menu_host: Option<HostConfig>,
 
-    ///焦点句柄
+    /// 焦点句柄
     focus_handle: FocusHandle,
+
+    /// 连接对话框（新建或编辑主机）- 使用共享引用以便在回调中关闭
+    connection_dialog: Arc<Mutex<Option<Entity<HostConnectionDialog>>>>,
 }
 
 impl HostListView {
@@ -60,6 +65,7 @@ impl HostListView {
             expanded_groups,
             context_menu_host: None,
             focus_handle,
+            connection_dialog: Arc::new(Mutex::new(None)),
         };
 
         // 异步加载主机列表
@@ -178,14 +184,61 @@ impl HostListView {
 
     /// 处理新建主机
     fn handle_new_host(&mut self, cx: &mut Context<Self>) {
-        tracing::info!("新建主机");
-        cx.emit(HostListEvent::NewHostRequested);
+        tracing::info!("打开新建主机对话框");
+
+        let repository = self.repository.clone();
+        let hosts = self.hosts.clone();
+        let dialog_ref = self.connection_dialog.clone();
+        let dialog_ref_for_cancel = self.connection_dialog.clone();
+
+        let dialog = cx.new(|cx| {
+            HostConnectionDialog::new_create(cx)
+                .with_on_save(move |config| {
+                    Self::save_host_async(repository.clone(), hosts.clone(), config, true);
+                    // 关闭对话框
+                    *dialog_ref.lock() = None;
+                })
+                .with_on_cancel(move || {
+                    tracing::info!("取消新建主机");
+                    // 关闭对话框
+                    *dialog_ref_for_cancel.lock() = None;
+                })
+        });
+
+        // 存储对话框引用
+        *self.connection_dialog.lock() = Some(dialog);
+
+        cx.notify();
     }
 
     /// 处理编辑主机
     fn handle_edit_host(&mut self, host: &HostConfig, cx: &mut Context<Self>) {
-        tracing::info!("编辑主机: {}", host.name);
-        cx.emit(HostListEvent::EditHostRequested(host.clone()));
+        tracing::info!("打开编辑主机对话框: {}", host.name);
+
+        let repository = self.repository.clone();
+        let hosts = self.hosts.clone();
+        let host_clone = host.clone();
+        let dialog_ref = self.connection_dialog.clone();
+        let dialog_ref_for_cancel = self.connection_dialog.clone();
+
+        let dialog = cx.new(|cx| {
+            HostConnectionDialog::new_edit(host_clone, cx)
+                .with_on_save(move |config| {
+                    Self::save_host_async(repository.clone(), hosts.clone(), config, false);
+                    // 关闭对话框
+                    *dialog_ref.lock() = None;
+                })
+                .with_on_cancel(move || {
+                    tracing::info!("取消编辑主机");
+                    // 关闭对话框
+                    *dialog_ref_for_cancel.lock() = None;
+                })
+        });
+
+        // 存储对话框引用
+        *self.connection_dialog.lock() = Some(dialog);
+
+        cx.notify();
     }
 
     /// 处理删除主机
@@ -226,6 +279,69 @@ impl HostListView {
         });
 
         cx.notify();
+    }
+
+    /// 异步保存主机配置（静态方法）
+    fn save_host_async(
+        repository: Arc<SqliteHostRepository>,
+        hosts: Arc<RwLock<Vec<HostConfig>>>,
+        config: HostConfig,
+        is_new: bool,
+    ) {
+        let host_name = config.name.clone();
+
+        if is_new {
+            tracing::info!("保存新主机: {}", host_name);
+        } else {
+            tracing::info!("更新主机: {}", host_name);
+        }
+
+        // 在独立线程中执行异步保存
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+
+            rt.block_on(async move {
+                if is_new {
+                    // 新建主机
+                    match repository.create(&config).await {
+                        Ok(new_id) => {
+                            tracing::info!("成功创建主机: {} (ID: {})", host_name, new_id);
+
+                            // 创建包含新 ID 的配置
+                            let mut saved_config = config.clone();
+                            saved_config.id = Some(new_id);
+
+                            // 添加到内存列表
+                            if let Ok(mut hosts_guard) = hosts.write() {
+                                hosts_guard.push(saved_config);
+                            }
+                        },
+                        Err(e) => {
+                            tracing::error!("创建主机失败: {:?}", e);
+                        },
+                    }
+                } else {
+                    // 更新主机
+                    match repository.update(&config).await {
+                        Ok(_) => {
+                            tracing::info!("成功更新主机: {}", host_name);
+
+                            // 更新内存中的配置
+                            if let Ok(mut hosts_guard) = hosts.write() {
+                                if let Some(pos) =
+                                    hosts_guard.iter().position(|h| h.id == config.id)
+                                {
+                                    hosts_guard[pos] = config.clone();
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            tracing::error!("更新主机失败: {:?}", e);
+                        },
+                    }
+                }
+            });
+        });
     }
 
     /// 渲染分组标题
@@ -527,6 +643,11 @@ impl Render for HostListView {
         // 如果有右键菜单，添加到根元素
         if let Some(ref host) = self.context_menu_host {
             root = root.child(self.render_context_menu(host, cx));
+        }
+
+        // 如果有连接对话框，添加到根元素（作为覆盖层）
+        if let Some(ref dialog) = *self.connection_dialog.lock() {
+            root = root.child(dialog.clone());
         }
 
         root
