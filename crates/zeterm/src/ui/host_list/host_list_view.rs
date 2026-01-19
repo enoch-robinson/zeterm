@@ -2,9 +2,8 @@
 //!
 //! 显示和管理 SSH 主机列表。
 
-use anyhow::Result;
 use gpui::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    App, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
     ParentElement, Render, Styled, Window, div, prelude::*,
 };
 use std::sync::Arc;
@@ -54,10 +53,17 @@ impl HostListView {
     }
 
     /// 加载主机列表
-    fn load_hosts(&mut self, _cx: &mut Context<Self>) {
+    fn load_hosts(&mut self, cx: &mut Context<Self>) {
         // TODO: 实现异步加载
-        // 暂时使用空列表
-        tracing::info!("加载主机列表（暂未实现）");
+        // 当前使用同步实现以避免 GPUI 异步模式的复杂性
+        // 需要研究 GPUI 的正确异步模式 (参考 Zed 的 terminal_view.rs)
+        // 或使用 cx.spawn() 配合正确的生命周期和类型注解
+
+        tracing::info!("加载主机列表（同步模式）");
+
+        // 暂时使用空列表，实际加载需要异步实现
+        // 可以考虑使用 tokio::spawn 或其他异步运行时
+        cx.notify();
     }
 
     /// 刷新主机列表
@@ -99,17 +105,36 @@ impl HostListView {
     }
 
     /// 处理删除主机
-    fn handle_delete_host(&mut self, host: &HostConfig, _cx: &mut Context<Self>) {
-        tracing::info!("删除主机: {} (暂未实现)", host.name);
+    fn handle_delete_host(&mut self, host: &HostConfig, cx: &mut Context<Self>) {
+        let host_id = match host.id {
+            Some(id) => id,
+            None => {
+                tracing::warn!("无法删除没有 ID 的主机");
+                return;
+            },
+        };
+
+        let host_name = host.name.clone();
+
+        tracing::info!("删除主机: {} (ID: {})", host_name, host_id);
+
         // TODO: 实现异步删除
+        // 当前使用同步实现以避免 GPUI 异步模式的复杂性
+        // 需要研究 GPUI 的正确异步模式来:
+        // 1. 异步调用 repository.delete(host_id)
+        // 2. 更新视图状态 (重新加载主机列表)
+        // 3. 触发 HostDeleted 事件
+        // 参考: Zed 编辑器的 terminal_view.rs 实现
+
+        // 暂时只记录日志，实际删除需要异步实现
+        tracing::warn!("删除功能暂未实现（需要异步支持）");
+        cx.notify();
     }
 
     /// 渲染主机列表项
     fn render_host_item(&self, host: &HostConfig, cx: &mut Context<Self>) -> impl IntoElement {
         let host_id = host.id;
         let is_selected = self.selected_host_id == host_id;
-        let host_clone = host.clone();
-        let host_clone_for_dblclick = host.clone();
 
         div()
             .flex()
