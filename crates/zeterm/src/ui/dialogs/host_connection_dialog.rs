@@ -218,6 +218,20 @@ impl FormData {
     }
 }
 
+/// 当前正在编辑的字段
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditingField {
+    Name,
+    Host,
+    Port,
+    Username,
+    PasswordRef,
+    KeyPath,
+    PassphraseRef,
+    Group,
+    Description,
+}
+
 /// 主机连接对话框
 pub struct HostConnectionDialog {
     /// 焦点句柄
@@ -234,6 +248,8 @@ pub struct HostConnectionDialog {
     on_save: Option<Arc<dyn Fn(HostConfig) + Send + Sync>>,
     /// 取消回调
     on_cancel: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// 当前正在编辑的字段
+    editing_field: Option<EditingField>,
 }
 
 impl HostConnectionDialog {
@@ -249,6 +265,7 @@ impl HostConnectionDialog {
             validation_error: Arc::new(Mutex::new(None)),
             on_save: None,
             on_cancel: None,
+            editing_field: None,
         }
     }
 
@@ -269,6 +286,61 @@ impl HostConnectionDialog {
             validation_error: Arc::new(Mutex::new(None)),
             on_save: None,
             on_cancel: None,
+            editing_field: None,
+        }
+    }
+
+    /// 开始编辑指定字段
+    fn start_editing(&mut self, field: EditingField, cx: &mut Context<Self>) {
+        self.editing_field = Some(field);
+        cx.notify();
+    }
+
+    /// 停止编辑
+    fn stop_editing(&mut self, cx: &mut Context<Self>) {
+        self.editing_field = None;
+        cx.notify();
+    }
+
+    /// 处理键盘输入
+    fn handle_key_input(&mut self, input: &str, cx: &mut Context<Self>) {
+        if let Some(ref field) = self.editing_field {
+            let mut form_data = self.form_data.lock();
+            match field {
+                EditingField::Name => form_data.name.push_str(input),
+                EditingField::Host => form_data.host.push_str(input),
+                EditingField::Port => form_data.port.push_str(input),
+                EditingField::Username => form_data.username.push_str(input),
+                EditingField::PasswordRef => form_data.password_ref.push_str(input),
+                EditingField::KeyPath => form_data.key_path.push_str(input),
+                EditingField::PassphraseRef => form_data.passphrase_ref.push_str(input),
+                EditingField::Group => form_data.group.push_str(input),
+                EditingField::Description => form_data.description.push_str(input),
+            }
+            drop(form_data);
+            *self.validation_error.lock() = None;
+            cx.notify();
+        }
+    }
+
+    /// 处理退格键
+    fn handle_backspace(&mut self, cx: &mut Context<Self>) {
+        if let Some(ref field) = self.editing_field {
+            let mut form_data = self.form_data.lock();
+            let target = match field {
+                EditingField::Name => &mut form_data.name,
+                EditingField::Host => &mut form_data.host,
+                EditingField::Port => &mut form_data.port,
+                EditingField::Username => &mut form_data.username,
+                EditingField::PasswordRef => &mut form_data.password_ref,
+                EditingField::KeyPath => &mut form_data.key_path,
+                EditingField::PassphraseRef => &mut form_data.passphrase_ref,
+                EditingField::Group => &mut form_data.group,
+                EditingField::Description => &mut form_data.description,
+            };
+            target.pop();
+            drop(form_data);
+            cx.notify();
         }
     }
 
@@ -363,6 +435,7 @@ impl Render for HostConnectionDialog {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let validation_error = self.validation_error.lock().clone();
+        let has_focus = self.focus_handle.is_focused(_window);
 
         // 对话框容器
         div()
@@ -373,14 +446,59 @@ impl Render for HostConnectionDialog {
             .items_center()
             .justify_center()
             .bg(gpui::rgba(0x00000080))
+            .on_key_down(
+                cx.listener(|this, event: &gpui::KeyDownEvent, _window, cx| {
+                    match event.keystroke.key.as_str() {
+                        "escape" => {
+                            // ESC 键：取消编辑或关闭对话框
+                            if this.editing_field.is_some() {
+                                this.stop_editing(cx);
+                            } else {
+                                this.handle_cancel(cx);
+                            }
+                        },
+                        "enter" => {
+                            // Enter 键：保存表单
+                            if this.editing_field.is_none() {
+                                this.handle_save(cx);
+                            }
+                        },
+                        "backspace" => {
+                            // 退格键：删除字符
+                            if this.editing_field.is_some() {
+                                this.handle_backspace(cx);
+                            }
+                        },
+                        "tab" => {
+                            // Tab 键：切换焦点（暂不实现）
+                            cx.notify();
+                        },
+                        _ => {
+                            // 处理字符输入（非控制键）
+                            if this.editing_field.is_some() {
+                                let key = event.keystroke.key.as_str();
+                                // 只处理可打印字符（单字符，不是控制键）
+                                if key.len() == 1 && !matches!(key, "\u{1b}" | "\r" | "\n" | "\t") {
+                                    this.handle_key_input(key, cx);
+                                }
+                            }
+                        },
+                    }
+                }),
+            )
             .child(
                 div()
                     .id("host-connection-dialog")
+                    .track_focus(&self.focus_handle)
                     .w(px(600.0))
                     .max_h(px(700.0))
                     .bg(theme.background)
                     .border_1()
-                    .border_color(theme.border)
+                    .border_color(if has_focus {
+                        gpui::rgb(0x3b82f6).into()
+                    } else {
+                        theme.border
+                    })
                     .rounded_lg()
                     .shadow_lg()
                     .flex()
@@ -533,6 +651,34 @@ impl HostConnectionDialog {
         let field_id_str = field_id.to_string();
         let label_str = label.to_string();
 
+        // 确定当前字段是否正在编辑
+        let is_editing = match (self.editing_field, field_id) {
+            (Some(EditingField::Name), "name") => true,
+            (Some(EditingField::Host), "host") => true,
+            (Some(EditingField::Port), "port") => true,
+            (Some(EditingField::Username), "username") => true,
+            (Some(EditingField::PasswordRef), "password_ref") => true,
+            (Some(EditingField::KeyPath), "key_path") => true,
+            (Some(EditingField::PassphraseRef), "passphrase_ref") => true,
+            (Some(EditingField::Group), "group") => true,
+            (Some(EditingField::Description), "description") => true,
+            _ => false,
+        };
+
+        // 解析字段类型用于点击处理
+        let field_type = match field_id {
+            "name" => EditingField::Name,
+            "host" => EditingField::Host,
+            "port" => EditingField::Port,
+            "username" => EditingField::Username,
+            "password_ref" => EditingField::PasswordRef,
+            "key_path" => EditingField::KeyPath,
+            "passphrase_ref" => EditingField::PassphraseRef,
+            "group" => EditingField::Group,
+            "description" => EditingField::Description,
+            _ => EditingField::Name,
+        };
+
         div()
             .flex()
             .flex_col()
@@ -560,19 +706,33 @@ impl HostConnectionDialog {
                     .py_2()
                     .bg(theme.secondary)
                     .border_1()
-                    .border_color(theme.border)
+                    .border_color(if is_editing {
+                        gpui::rgb(0x3b82f6).into()
+                    } else {
+                        theme.border
+                    })
                     .rounded_md()
                     .text_sm()
                     .text_color(theme.foreground)
-                    .child(value_clone.clone())
+                    .child(if value_clone.is_empty() && !is_editing {
+                        format!("{}...", label)
+                    } else {
+                        // 密码字段显示星号
+                        if field_id == "password_ref" && !is_editing && !value_clone.is_empty() {
+                            "•".repeat(value_clone.len().min(20))
+                        } else {
+                            value_clone.clone()
+                        }
+                    })
                     .cursor_text()
                     .hover(|style| style.border_color(gpui::rgb(0x3b82f6)))
-                    .on_click(cx.listener(move |_this, _event, _window, cx| {
-                        // 这里应该实现输入框的编辑功能
-                        // 由于 GPUI 没有内置的文本输入组件，这里暂时只是占位
-                        // 实际实现需要使用 GPUI 的文本编辑功能或自定义输入组件
-                        info!("Text field clicked: {}", field_id_str);
-                        cx.notify();
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        // 点击开始编辑该字段
+                        this.start_editing(field_type, cx);
+                        info!(
+                            "Text field clicked: {} (editing: {:?})",
+                            field_id_str, field_type
+                        );
                     })),
             )
     }
@@ -589,6 +749,12 @@ impl HostConnectionDialog {
         let value_clone = value.to_string();
         let field_id_str = field_id.to_string();
         let label_str = label.to_string();
+
+        // 确定当前字段是否正在编辑
+        let is_editing = match (self.editing_field, field_id) {
+            (Some(EditingField::Description), "description") => true,
+            _ => false,
+        };
 
         div()
             .flex()
@@ -610,14 +776,24 @@ impl HostConnectionDialog {
                     .min_h(px(80.0))
                     .bg(theme.secondary)
                     .border_1()
-                    .border_color(theme.border)
+                    .border_color(if is_editing {
+                        gpui::rgb(0x3b82f6).into()
+                    } else {
+                        theme.border
+                    })
                     .rounded_md()
                     .text_sm()
                     .text_color(theme.foreground)
-                    .child(value_clone.clone())
+                    .child(if value_clone.is_empty() && !is_editing {
+                        format!("{}...", label)
+                    } else {
+                        value_clone.clone()
+                    })
                     .cursor_text()
                     .hover(|style| style.border_color(gpui::rgb(0x3b82f6)))
-                    .on_click(cx.listener(move |_this, _event, _window, cx| {
+                    .on_click(cx.listener(move |this, _event, _window, cx| {
+                        // 点击开始编辑该字段
+                        this.start_editing(EditingField::Description, cx);
                         info!("Textarea field clicked: {}", field_id_str);
                         cx.notify();
                     })),

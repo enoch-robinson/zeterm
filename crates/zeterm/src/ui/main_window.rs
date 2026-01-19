@@ -23,10 +23,13 @@ use crate::app::session::SessionCoordinator;
 use crate::ui::dialogs::{
     HostKeyConfirmChannel, HostKeyDialog, HostKeyInfo, HostKeyRequestReceiver, HostKeyResponse,
 };
+use crate::ui::host_list::{HostListEvent, HostListView};
 use crate::ui::terminal_view::TerminalView;
 use zeterm_core::ConnectionState;
+use zeterm_core::entities::HostConfig;
 use zeterm_mock::{MockConfig, MockConnection};
 use zeterm_ssh::{HostKeyConfirmCallback, SshConfig, SshConnection};
+use zeterm_storage::Database;
 
 /// 主窗口视图
 ///
@@ -62,6 +65,12 @@ pub struct MainWindow {
     host_key_receiver: HostKeyRequestReceiver,
     /// 当前待处理的请求 ID
     pending_request_id: Arc<Mutex<Option<u64>>>,
+    /// 数据库连接
+    database: Option<Arc<Database>>,
+    /// 主机列表视图
+    host_list_view: Option<Entity<HostListView>>,
+    /// 是否显示左侧面板（主机列表）
+    show_sidebar: bool,
 }
 
 impl MainWindow {
@@ -99,6 +108,9 @@ impl MainWindow {
         let host_key_channel = Arc::new(HostKeyConfirmChannel::new());
         let host_key_receiver = host_key_channel.request_receiver();
 
+        // 初始化数据库和主机列表视图
+        let (database, host_list_view) = Self::init_database_and_host_list(cx);
+
         Self {
             focus_handle: cx.focus_handle(),
             coordinator,
@@ -113,7 +125,112 @@ impl MainWindow {
             host_key_channel,
             host_key_receiver,
             pending_request_id: Arc::new(Mutex::new(None)),
+            database,
+            host_list_view,
+            show_sidebar: true,
         }
+    }
+
+    /// 初始化数据库和主机列表视图
+    fn init_database_and_host_list(
+        cx: &mut Context<Self>,
+    ) -> (Option<Arc<Database>>, Option<Entity<HostListView>>) {
+        // 在独立线程中初始化数据库
+        let db_result = std::thread::spawn(|| {
+            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+            rt.block_on(async {
+                // 创建数据库连接
+                match Database::with_default_path().await {
+                    Ok(db) => {
+                        // 运行迁移
+                        if let Err(e) = db.init().await {
+                            warn!("Failed to run database migrations: {:?}", e);
+                            return None;
+                        }
+                        info!("Database initialized successfully");
+                        Some(Arc::new(db))
+                    },
+                    Err(e) => {
+                        warn!("Failed to initialize database: {:?}", e);
+                        None
+                    },
+                }
+            })
+        })
+        .join()
+        .ok()
+        .flatten();
+
+        // 如果数据库初始化成功，创建主机列表视图
+        let host_list_view = if let Some(ref database) = db_result {
+            let db_clone = database.clone();
+            let view = cx.new(|cx| HostListView::new(db_clone, cx));
+
+            // 订阅主机列表事件
+            cx.subscribe(&view, |this, _host_list, event: &HostListEvent, cx| {
+                this.handle_host_list_event(event, cx);
+            })
+            .detach();
+
+            Some(view)
+        } else {
+            None
+        };
+
+        (db_result, host_list_view)
+    }
+
+    /// 处理主机列表事件
+    fn handle_host_list_event(&mut self, event: &HostListEvent, cx: &mut Context<Self>) {
+        match event {
+            HostListEvent::ConnectRequested(host_config) => {
+                info!("Connect requested for host: {}", host_config.name);
+                self.connect_to_host(host_config.clone(), cx);
+            },
+            HostListEvent::NewHostRequested => {
+                info!("New host requested");
+                // 对话框已在HostListView 中处理
+            },
+            HostListEvent::EditHostRequested(host_config) => {
+                info!("Edit host requested: {}", host_config.name);
+                // 对话框已在 HostListView 中处理
+            },
+            HostListEvent::HostDeleted(host_id) => {
+                info!("Host deleted: {}", host_id);
+            },
+        }
+    }
+
+    /// 连接到指定主机
+    fn connect_to_host(&mut self, host_config: HostConfig, cx: &mut Context<Self>) {
+        // 检查是否已连接
+        {
+            let started = self.data_pump_started.read();
+            if *started {
+                warn!("Session already started, disconnect first");
+                return;
+            }
+        }
+
+        info!(
+            "Connecting to host: {}@{}:{}",
+            host_config.username, host_config.host, host_config.port
+        );
+
+        // 更新 SSH 配置
+        *self.ssh_host.write() = host_config.host.clone();
+        *self.ssh_username.write() = host_config.username.clone();
+        *self.ssh_port.write() = host_config.port;
+
+        // 获取密码（从 AuthConfig）
+        let password = match &host_config.auth_config {
+            zeterm_core::entities::AuthConfig::Password { password_ref } => password_ref.clone(),
+            _ => String::new(),
+        };
+        *self.ssh_password.write() = password;
+
+        // 启动 SSH 会话
+        self.start_ssh_session(cx);
     }
 
     /// 在窗口上下文中构建主窗口视图
@@ -415,12 +532,33 @@ impl MainWindow {
             )
     }
 
-    /// 渲染主内容区域
+    /// 渲染主内容区域（左侧主机列表 + 右侧终端/欢迎界面）
     fn render_content(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let _theme = cx.theme();
+        let theme = cx.theme();
         let is_connected = self.coordinator.is_connected();
 
-        if is_connected {
+        // 构建主内容区域（水平布局）
+        let mut content = div().id("content").flex_1().w_full().flex().flex_row();
+
+        // 左侧面板：主机列表
+        if self.show_sidebar {
+            if let Some(ref host_list_view) = self.host_list_view {
+                content = content.child(
+                    div()
+                        .id("sidebar")
+                        .w(px(280.0))
+                        .h_full()
+                        .flex_shrink_0()
+                        .border_r_1()
+                        .border_color(theme.border)
+                        .bg(theme.secondary)
+                        .child(host_list_view.clone()),
+                );
+            }
+        }
+
+        // 右侧区域：终端或欢迎界面
+        let right_panel = if is_connected {
             // 确保 TerminalView 已创建
             if self.terminal_view.is_none() {
                 let coordinator = self.coordinator.clone();
@@ -430,9 +568,9 @@ impl MainWindow {
 
             // 渲染终端视图
             div()
-                .id("content")
+                .id("terminal-panel")
                 .flex_1()
-                .w_full()
+                .h_full()
                 .flex()
                 .flex_col()
                 .child(
@@ -451,14 +589,23 @@ impl MainWindow {
             }
 
             div()
-                .id("content")
+                .id("welcome-panel")
                 .flex_1()
-                .w_full()
+                .h_full()
                 .flex()
                 .flex_col()
                 .child(self.render_welcome(cx))
                 .into_any_element()
-        }
+        };
+
+        content.child(right_panel)
+    }
+
+    /// 切换侧边栏显示
+    pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.show_sidebar = !self.show_sidebar;
+        info!("Sidebar visibility toggled: {}", self.show_sidebar);
+        cx.notify();
     }
 
     /// 渲染欢迎界面
