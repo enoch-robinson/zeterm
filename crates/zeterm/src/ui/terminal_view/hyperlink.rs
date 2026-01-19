@@ -212,7 +212,7 @@ pub fn detect_urls_simple(text: &str, line: i32) -> Vec<Hyperlink> {
     }
 
     // 检测邮件地址
-    let mut chars: Vec<char> = text.chars().collect();
+    let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
     while i < chars.len() {
         if chars[i] == '@' && i > 0 {

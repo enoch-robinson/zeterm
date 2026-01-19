@@ -9,7 +9,7 @@ use gpui::{
 };
 use gpui_component::ActiveTheme;
 
-use super::tab_manager::{TabId, TabManager, TabManagerEvent};
+use super::tab_manager::TabManager;
 
 /// Tab 视图组件
 pub struct TabView {

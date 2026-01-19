@@ -23,7 +23,7 @@ use gpui::{
     ScrollWheelEvent, Styled, Window, div, px,
 };
 use gpui_component::ActiveTheme;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::app::session::SessionCoordinator;
 
@@ -635,7 +635,7 @@ impl TerminalView {
     fn handle_shortcut(
         &mut self,
         action: ShortcutAction,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
         match action {

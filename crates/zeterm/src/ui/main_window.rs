@@ -12,8 +12,7 @@ use gpui::{
     ParentElement, Render, Styled, Window, div, px,
 };
 use gpui_component::{
-    ActiveTheme, Sizable, Size,
-    button::{Button, ButtonVariants},
+    ActiveTheme,
     theme,
 };
 use parking_lot::{Mutex, RwLock};
@@ -121,7 +120,7 @@ impl MainWindow {
         let (database, host_list_view) = Self::init_database_and_host_list(cx);
 
         // 创建 Tab 管理器和 Tab 视图
-        let tab_manager = cx.new(|cx| {
+        let tab_manager = cx.new(|_cx| {
             let manager = TabManager::new();
             manager
         });
@@ -615,7 +614,7 @@ impl MainWindow {
     fn render_content(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 提前克隆 theme 值以避免借用冲突
         let theme = cx.theme();
-        let background = theme.background;
+        let _background = theme.background;
         let secondary = theme.secondary;
         let border = theme.border;
         let is_connected = self.coordinator.is_connected();
