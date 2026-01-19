@@ -8,7 +8,7 @@ mod ui;
 
 use gpui::{
     Application, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowKind, WindowOptions,
-    actions, px, size,
+    actions, prelude::*, px, size,
 };
 use tracing::info;
 use ui::MainWindow;
@@ -78,7 +78,12 @@ fn main() {
 
         // 创建窗口
         let window = cx
-            .open_window(window_options, |window, cx| MainWindow::build(window, cx))
+            .open_window(window_options, |_window, cx| {
+                // 先创建 SplitManager
+                let split_manager = cx.new(|_cx| crate::ui::split_pane::SplitManager::new());
+                // 创建 MainWindow Entity
+                cx.new(|cx| MainWindow::new(split_manager, cx))
+            })
             .expect("Failed to create main window");
 
         info!("Main window created");

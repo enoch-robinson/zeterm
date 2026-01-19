@@ -3,39 +3,55 @@
 //! 管理应用程序的主窗口，包括主机列表、终端视图和分屏功能。
 
 use gpui::{
-    App, Context, Entity, Focusable, InteractiveElement, IntoElement, ParentElement, Render,
-    SharedString, Styled, Window, div, px,
+    App, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
+    Render, SharedString, Styled, Window, div, prelude::*, px,
 };
-use std::sync::Arc;
 
-use crate::ui::split_pane::SplitManager;
-use crate::ui::tab_manager::TabManager;
+use crate::ui::split_pane::{SplitManager, SplitView};
+use gpui_component::ActiveTheme;
 
 /// 主窗口
-#[derive(Debug)]
 pub struct MainWindow {
+    ///焦点句柄
+    focus_handle: FocusHandle,
     /// 主机列表视图
     host_list_view: Option<SharedString>,
-    /// 标签管理器
-    tab_manager: TabManager,
     /// 终端视图映射
     terminal_views: std::collections::HashMap<usize, SharedString>,
     /// 分屏管理器
     split_manager: Entity<SplitManager>,
     /// 分屏视图
-    split_view: Entity<gpui::AnyView>,
+    split_view: Entity<SplitView>,
     /// 是否显示侧边栏
     show_sidebar: bool,
 }
 
+impl std::fmt::Debug for MainWindow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MainWindow")
+            .field("host_list_view", &self.host_list_view)
+            .field("terminal_views", &self.terminal_views)
+            .field("show_sidebar", &self.show_sidebar)
+            .finish_non_exhaustive()
+    }
+}
+
 impl MainWindow {
+    /// 构建主窗口（工厂方法，供open_window 使用）
+    pub fn build(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // 先创建 SplitManager
+        let split_manager = cx.new(|_cx| SplitManager::new());
+        Self::new(split_manager, cx)
+    }
+
     /// 创建新的主窗口
     pub fn new(split_manager: Entity<SplitManager>, cx: &mut Context<Self>) -> Self {
-        let split_view =
-            cx.new_view(|_cx| crate::ui::split_pane::SplitView::new(split_manager.clone(), _cx));
+        let focus_handle = cx.focus_handle();
+        let split_view = cx.new(|cx| SplitView::new(split_manager.clone(), cx));
+
         Self {
+            focus_handle,
             host_list_view: None,
-            tab_manager: TabManager::new(),
             terminal_views: std::collections::HashMap::new(),
             split_manager,
             split_view,
@@ -81,8 +97,10 @@ impl MainWindow {
         }
     }
 
-    /// 渲染欢迎界面
-    fn render_welcome(&self) -> impl IntoElement {
+    ///渲染欢迎界面
+    fn render_welcome(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+
         div()
             .flex()
             .flex_col()
@@ -92,25 +110,26 @@ impl MainWindow {
             .h_full()
             .child(
                 div()
-                    .text_4xl()
-                    .font_bold()
+                    .text_3xl()
+                    .font_weight(gpui::FontWeight::BOLD)
                     .text_center()
                     .mb_4()
+                    .text_color(theme.foreground)
                     .child("Zeterm"),
             )
             .child(
                 div()
                     .text_xl()
                     .text_center()
-                    .text_gray_500()
+                    .text_color(theme.muted_foreground)
                     .child("选择左侧主机列表中的主机开始连接"),
             )
     }
 }
 
 impl Focusable for MainWindow {
-    fn focus_handle(&self, _cx: &App) -> gpui::FocusHandle {
-        gpui::FocusHandle::disabled(_cx)
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -157,7 +176,7 @@ impl MainWindow {
                 .h_full()
                 .flex()
                 .flex_col()
-                .child(self.render_welcome())
+                .child(self.render_welcome(cx))
                 .into_any_element()
         };
 
@@ -192,4 +211,3 @@ impl MainWindow {
             .child(main_area.child(content_area))
     }
 }
-

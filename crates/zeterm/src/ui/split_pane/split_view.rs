@@ -1,18 +1,19 @@
 //! 分屏视图组件
 //!
-//! 渲染和管理分屏布局的 UI 组件。
+//!渲染和管理分屏布局的UI 组件。
 
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    Render, Styled, Window, div, px,
+    AnyElement, App, Context, CursorStyle, Entity, FocusHandle, Focusable, Hsla,
+    InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
+    Window, div, px,
 };
 use gpui_component::ActiveTheme;
 
-use super::{Pane, PaneContent, PaneId, SplitDirection, SplitManager, SplitManagerEvent};
+use super::{Pane, PaneContent, PaneId, SplitDirection, SplitManager};
 
 /// 分屏视图组件
 pub struct SplitView {
-    /// 焦点句柄
+    ///焦点句柄
     focus_handle: FocusHandle,
     /// 分屏管理器
     split_manager: Entity<SplitManager>,
@@ -32,19 +33,22 @@ impl SplitView {
         &self.split_manager
     }
 
-    /// 渲染单个面板
-    fn render_pane(
-        &self,
-        pane: &Pane,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    /// 渲染单个面板（返回 AnyElement 避免借用问题）
+    fn render_pane(&self, pane: &Pane, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let pane_id = pane.id;
         let split_manager = self.split_manager.clone();
 
         match &pane.content {
             PaneContent::Terminal { title, focused, .. } => {
+                let is_focused = *focused;
+                let title = title.clone();
+                let border_color = if is_focused {
+                    gpui::rgb(0x3b82f6).into()
+                } else {
+                    theme.border
+                };
+
                 // 终端面板容器
                 div()
                     .id(format!("pane-{}", pane_id))
@@ -53,11 +57,7 @@ impl SplitView {
                     .flex_col()
                     .bg(theme.background)
                     .border_1()
-                    .border_color(if *focused {
-                        gpui::rgb(0x3b82f6).into()
-                    } else {
-                        theme.border
-                    })
+                    .border_color(border_color)
                     .relative()
                     .cursor_pointer()
                     .on_click(cx.listener(move |_this, _event, _window, cx| {
@@ -80,11 +80,10 @@ impl SplitView {
                                 div()
                                     .text_xs()
                                     .text_color(theme.muted_foreground)
-                                    .child(title.clone()),
+                                    .child(title),
                             ),
-                    )
-                    .child(
-                        // 终端内容区域（占位符，实际内容由 MainWindow 提供的 TerminalView 填充）
+                    )    .child(
+                        // 终端内容区域（占位符）
                         div()
                             .id(format!("pane-content-{}", pane_id))
                             .flex_1()
@@ -97,7 +96,7 @@ impl SplitView {
                                     .text_color(theme.muted_foreground)
                                     .child("Terminal View"),
                             ),
-                    )
+                    )    .into_any_element()
             }
             PaneContent::Split {
                 direction,
@@ -109,53 +108,60 @@ impl SplitView {
                 let is_horizontal = matches!(direction, SplitDirection::Horizontal);
                 let first_ratio = *ratio;
                 let second_ratio = 1.0 - first_ratio;
+                let direction_copy = *direction;
 
-                div()
+                // 先渲染子面板
+                let first_child = self.render_pane(first, cx);
+                let second_child = self.render_pane(second, cx);
+                let separator = self.render_separator(direction_copy, pane_id, cx);
+
+                let container = div()
                     .id(format!("split-{}", pane_id))
                     .flex()
-                    .flex_col()
-                    .if_true(!is_horizontal, |div| div.flex_row())
                     .flex_1()
                     .w_full()
-                    .h_full()
-                    // 第一个面板
-                    .child({
-                        let first_child = self.render_pane(first, _window, cx);
-                        div()
-                            .flex_1()
-                            .if_true(is_horizontal, |div| div.h(px(0.0)))
-                            .if_true(!is_horizontal, |div| div.w(px(0.0)))
-                            .when_some(if is_horizontal {
-                                Some(first_ratio as f32)
-                            } else {
-                                None
-                            }, |div, ratio| div.h(px(0.0)).flex_grow(ratio))
-                            .when_some(if !is_horizontal {
-                                Some(first_ratio as f32)
-                            } else {
-                                None
-                            }, |div, ratio| div.w(px(0.0)).flex_grow(ratio))
-                            .child(first_child)
-                    })
-                    // 分隔条
-                    .child(self.render_separator(*direction, pane_id, cx))
-                    // 第二个面板
-                    .child({
-                        let second_child = self.render_pane(second, _window, cx);
-                        div()
-                            .flex_1()
-                            .when_some(if is_horizontal {
-                                Some(second_ratio as f32)
-                            } else {
-                                None
-                            }, |div, ratio| div.h(px(0.0)).flex_grow(ratio))
-                            .when_some(if !is_horizontal {
-                                Some(second_ratio as f32)
-                            } else {
-                                None
-                            }, |div, ratio| div.w(px(0.0)).flex_grow(ratio))
-                            .child(second_child)
-                    })
+                    .h_full();
+
+                if is_horizontal {
+                    // 水平分屏（左右排列）
+                    container
+                        .flex_row()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(50.0))
+                                .flex_basis(gpui::relative(first_ratio))
+                                .child(first_child),
+                        )
+                        .child(separator)
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(50.0))
+                                .flex_basis(gpui::relative(second_ratio))
+                                .child(second_child),
+                        ).into_any_element()
+                } else {
+                    // 垂直分屏（上下排列）
+                    container
+                        .flex_col()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_h(px(50.0))
+                                .flex_basis(gpui::relative(first_ratio))
+                                .child(first_child),
+                        )
+                        .child(separator)
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_h(px(50.0))
+                                .flex_basis(gpui::relative(second_ratio))
+                                .child(second_child),
+                        )
+                        .into_any_element()
+                }
             }
         }
     }
@@ -166,23 +172,26 @@ impl SplitView {
         direction: SplitDirection,
         split_id: PaneId,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
         let theme = cx.theme();
-        let split_manager = self.split_manager.clone();
+        let hover_color: Hsla = gpui::rgb(0x3b82f6).into();
 
-        let (width, height, cursor_class) = match direction {
-            SplitDirection::Horizontal => (px(1.0), px(0.0), "col-resize"),
-            SplitDirection::Vertical => (px(0.0), px(1.0), "row-resize"),
+        let (width, height, cursor) = match direction {
+            SplitDirection::Horizontal => (px(4.0), px(0.0), CursorStyle::ResizeLeftRight),
+            SplitDirection::Vertical => (px(0.0), px(4.0), CursorStyle::ResizeUpDown),
         };
 
-        div()
+        let base = div()
             .id(format!("separator-{}", split_id))
             .bg(theme.border)
-            .when(width != px(0.0), |div| div.w(width))
-            .when(height != px(0.0), |div| div.h(height))
-            .hover(|style| style.bg(gpui::rgb(0x3b82f6).into()))
-            .cursor_style(cursor_class)
-            .z_index(1)
+            .hover(move |style| style.bg(hover_color))
+            .cursor(cursor)
+            .flex_shrink_0();
+
+        match direction {
+            SplitDirection::Horizontal => base.w(width).h_full().into_any_element(),
+            SplitDirection::Vertical => base.h(height).w_full().into_any_element(),
+        }
     }
 }
 
@@ -200,18 +209,18 @@ impl Render for SplitView {
         let root_pane = self.split_manager.read(cx).root().cloned();
 
         // 基础容器
-        div()
+        let container = div()
             .id("split-view")
             .flex()
             .flex_col()
             .size_full()
-            .bg(theme.background)
-            .when_some(root_pane, |div, pane| {
-                div.child(self.render_pane(&pane, _window, cx))
-            })
-            .when(root_pane.is_none(), |div| {
+            .bg(theme.background);
+
+        match root_pane {
+            Some(pane) => container.child(self.render_pane(&pane, cx)),
+            None => {
                 // 没有面板时显示提示
-                div.child(
+                container.child(
                     div()
                         .flex_1()
                         .flex()
@@ -223,6 +232,7 @@ impl Render for SplitView {
                                 .child("暂无终端，请从左侧主机列表选择主机连接"),
                         ),
                 )
-            })
+            }
+        }
     }
 }

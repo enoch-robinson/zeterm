@@ -2,9 +2,7 @@
 //!
 //! 支持水平和垂直分屏布局，用于多个终端视图的并排显示。
 
-use crate::ui::terminal_view::TerminalView;
 use gpui::{Context, EventEmitter};
-use std::collections::HashMap;
 use uuid::Uuid;
 use zeterm_core::entities::HostConfig;
 
@@ -22,6 +20,16 @@ impl PaneId {
 impl Default for PaneId {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Default for PaneContent {
+    fn default() -> Self {
+        PaneContent::Terminal {
+            pane_id: PaneId::new(),
+            title: String::new(),
+            focused: false,
+        }
     }
 }
 
@@ -88,7 +96,7 @@ pub enum PaneContent {
 /// 面板
 ///
 /// 表示分屏布局中的一个节点，可以是终端或子分屏
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Pane {
     /// 面板 ID
     pub id: PaneId,
@@ -311,17 +319,13 @@ impl SplitManager {
             PaneContent::Split { first, second, .. } => {
                 if Self::remove_pane_recursive(first, pane_id) {
                     // 如果第一个子面板被移除，用第二个替换当前分屏
-                    if let PaneContent::Split { second, .. } = &pane.content {
-                        let replacement = std::mem::replace(&mut **second, Pane::new_terminal(""));
-                        *pane = replacement;
-                    }
+                    let replacement = std::mem::take(second.as_mut());
+                    *pane = replacement;
                     true
                 } else if Self::remove_pane_recursive(second, pane_id) {
                     // 如果第二个子面板被移除，用第一个替换当前分屏
-                    if let PaneContent::Split { first, .. } = &pane.content {
-                        let replacement = std::mem::replace(&mut **first, Pane::new_terminal(""));
-                        *pane = replacement;
-                    }
+                    let replacement = std::mem::take(first.as_mut());
+                    *pane = replacement;
                     true
                 } else {
                     false
@@ -389,8 +393,9 @@ impl SplitManager {
             let panes = root.collect_terminal_panes();
             if let Some(current) = self.focused_pane {
                 if let Some(pos) = panes.iter().position(|&id| id == current) {
-                    let prev = panes[if pos == 0 { panes.len() - 1 } else { pos - 1 }];
-                    self.focus_pane(panes[prev], cx);
+                    let prev_idx = if pos == 0 { panes.len() - 1 } else { pos - 1 };
+                    let prev = panes[prev_idx];
+                    self.focus_pane(prev, cx);
                     return;
                 }
             }
