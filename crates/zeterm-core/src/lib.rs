@@ -22,6 +22,7 @@
 //! let session_id = SessionId::new();
 //! ```
 
+pub mod config;
 pub mod entities;
 pub mod errors;
 pub mod state;
@@ -31,6 +32,9 @@ pub mod traits;
 ///
 /// 导出常用类型，方便使用。
 pub mod prelude {
+    pub use crate::config::{
+        AppConfig, AppearanceConfig, CursorStyle, KeybindingsConfig, NetworkConfig, TerminalConfig,
+    };
     pub use crate::entities::{SessionId, TerminalSize};
     pub use crate::errors::{AuthError, ConfigError, ConnectionError, StorageError};
     pub use crate::state::{
@@ -41,6 +45,9 @@ pub mod prelude {
 }
 
 // Re-export commonly used types at crate root
+pub use config::{
+    AppConfig, AppearanceConfig, CursorStyle, KeybindingsConfig, NetworkConfig, TerminalConfig,
+};
 pub use entities::{SessionId, TerminalSize};
 pub use errors::{AuthError, ConfigError, ConnectionError, StorageError};
 pub use state::{

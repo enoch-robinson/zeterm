@@ -2,8 +2,13 @@
 //!
 //! 定义 Zeterm 的核心业务实体。
 
+mod host;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+// 导出主机配置相关类型
+pub use host::{AuthConfig, HostConfig, HostId};
 
 /// 终端尺寸
 ///
