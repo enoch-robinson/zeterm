@@ -6,7 +6,6 @@ use gpui::{
     App, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
     ParentElement, Render, Styled, Window, div, prelude::*,
 };
-use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use zeterm_core::entities::{HostConfig, HostId};
@@ -33,7 +32,7 @@ pub struct HostListView {
     last_click: Option<(HostId, Instant)>,
 
     /// 展开的分组集合
-    expanded_groups: Arc<RwLock<HashSet<String>>>,
+    expanded_groups: Arc<RwLock<std::collections::HashSet<String>>>,
 
     /// 当前显示右键菜单的主机
     context_menu_host: Option<HostConfig>,
@@ -48,8 +47,8 @@ impl HostListView {
         let repository = Arc::new(SqliteHostRepository::new(database.pool().clone()));
         let focus_handle = cx.focus_handle();
         let hosts = Arc::new(RwLock::new(Vec::new()));
-        let expanded_groups = Arc::new(RwLock::new(HashSet::new()));
 
+        let expanded_groups = Arc::new(RwLock::new(std::collections::HashSet::new()));
         let view = Self {
             database,
             repository: repository.clone(),
@@ -110,6 +109,49 @@ impl HostListView {
         self.selected_host_id = Some(host_id);
         cx.notify();
     }
+
+    /// 切换分组展开/折叠状态
+    fn toggle_group(&mut self, group_name: &str, cx: &mut Context<Self>) {
+        if let Ok(mut groups) = self.expanded_groups.write() {
+            if groups.contains(group_name) {
+                groups.remove(group_name);
+            } else {
+                groups.insert(group_name.to_string());
+            }
+        }
+        cx.notify();
+    }
+
+    /// 检查分组是否展开
+    fn is_group_expanded(&self, group_name: &str) -> bool {
+        self.expanded_groups
+            .read()
+            .map(|groups| groups.contains(group_name))
+            .unwrap_or(true) // 默认展开
+    }
+
+    /// 显示右键菜单
+    fn show_context_menu(&mut self, host: &HostConfig, cx: &mut Context<Self>) {
+        self.context_menu_host = Some(host.clone());
+        cx.notify();
+    }
+
+    /// 隐藏右键菜单
+    fn hide_context_menu(&mut self, cx: &mut Context<Self>) {
+        self.context_menu_host = None;
+        cx.notify();
+    }
+</thinking>
+
+<old_text line=183>
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(move |this, _event, _window, cx| {
+                    if let Some(id) = host_id {
+                        this.select_host(id, cx);
+                    }
+                }),
+            )
 
     /// 获取选中的主机
     pub fn selected_host(&self) -> Option<HostConfig> {
@@ -176,15 +218,24 @@ impl HostListView {
         cx.notify();
     }
 
+    /// 处理主机双击（连接）
+    fn handle_host_double_click(&mut self, host: &HostConfig, cx: &mut Context<Self>) {
+        tracing::info!("双击连接主机: {}", host.name);
+        // TODO: 触发连接事件
+        cx.emit(HostListEvent::ConnectRequested(host.clone()));
+    }
+
     /// 处理新建主机
     fn handle_new_host(&mut self, cx: &mut Context<Self>) {
         tracing::info!("新建主机");
+        // TODO: 显示新建主机对话框
         cx.emit(HostListEvent::NewHostRequested);
     }
 
     /// 处理编辑主机
     fn handle_edit_host(&mut self, host: &HostConfig, cx: &mut Context<Self>) {
         tracing::info!("编辑主机: {}", host.name);
+        // TODO: 显示编辑主机对话框
         cx.emit(HostListEvent::EditHostRequested(host.clone()));
     }
 
@@ -229,12 +280,7 @@ impl HostListView {
     }
 
     /// 渲染分组标题
-    fn render_group_header(
-        &self,
-        group_name: &str,
-        count: usize,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_group_header(&self, group_name: &str, count: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let is_expanded = self.is_group_expanded(group_name);
         let group_name_owned = group_name.to_string();
 
@@ -246,12 +292,15 @@ impl HostListView {
             .py_2()
             .cursor_pointer()
             .hover(|this| this.bg(gpui::rgb(0x374151)))
-            .on_mouse_down(gpui::MouseButton::Left, {
-                let group_name = group_name_owned.clone();
-                cx.listener(move |this, _event, _window, cx| {
-                    this.toggle_group(&group_name, cx);
-                })
-            })
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                {
+                    let group_name = group_name_owned.clone();
+                    cx.listener(move |this, _event, _window, cx| {
+                        this.toggle_group(&group_name, cx);
+                    })
+                },
+            )
             .child(
                 div()
                     .flex()
@@ -279,7 +328,7 @@ impl HostListView {
             )
     }
 
-    /// 渲染主机列表项
+    /// 渲染分组标题
     fn render_host_item(&self, host: &HostConfig, cx: &mut Context<Self>) -> impl IntoElement {
         let host_id = host.id;
         let is_selected = self.selected_host_id == host_id;
@@ -294,18 +343,24 @@ impl HostListView {
             .cursor_pointer()
             .when(is_selected, |this| this.bg(gpui::rgb(0x2563eb)))
             .hover(|this| this.bg(gpui::rgb(0x3b82f6)))
-            .on_mouse_down(gpui::MouseButton::Left, {
-                let host = host.clone();
-                cx.listener(move |this, _event, _window, cx| {
-                    this.handle_host_click(&host, cx);
-                })
-            })
-            .on_mouse_down(gpui::MouseButton::Right, {
-                let host = host.clone();
-                cx.listener(move |this, _event, _window, cx| {
-                    this.show_context_menu(&host, cx);
-                })
-            })
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                {
+                    let host = host.clone();
+                    cx.listener(move |this, _event, _window, cx| {
+                        this.handle_host_click(&host, cx);
+                    })
+                },
+            )
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                {
+                    let host = host.clone();
+                    cx.listener(move |this, _event, _window, cx| {
+                        this.show_context_menu(&host, cx);
+                    })
+                },
+            )
             .child(
                 div()
                     .flex()
@@ -325,96 +380,11 @@ impl HostListView {
                     ),
             )
     }
-
-    /// 渲染右键菜单
-    fn render_context_menu(&self, host: &HostConfig, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(|this, _event, _window, cx| {
-                    this.hide_context_menu(cx);
-                }),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .top(gpui::px(100.0))
-                    .left(gpui::px(200.0))
-                    .w(gpui::px(200.0))
-                    .bg(gpui::rgb(0x1f2937))
-                    .border_1()
-                    .border_color(gpui::rgb(0x374151))
-                    .rounded_md()
-                    .shadow_lg()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                // 连接
-                                div()
-                                    .px_4()
-                                    .py_2()
-                                    .cursor_pointer()
-                                    .hover(|this| this.bg(gpui::rgb(0x374151)))
-                                    .on_mouse_down(gpui::MouseButton::Left, {
-                                        let host = host.clone();
-                                        cx.listener(move |this, _event, _window, cx| {
-                                            cx.emit(HostListEvent::ConnectRequested(host.clone()));
-                                            this.hide_context_menu(cx);
-                                        })
-                                    })
-                                    .child(div().text_sm().text_color(gpui::white()).child("连接")),
-                            )
-                            .child(
-                                // 编辑
-                                div()
-                                    .px_4()
-                                    .py_2()
-                                    .cursor_pointer()
-                                    .hover(|this| this.bg(gpui::rgb(0x374151)))
-                                    .on_mouse_down(gpui::MouseButton::Left, {
-                                        let host = host.clone();
-                                        cx.listener(move |this, _event, _window, cx| {
-                                            this.handle_edit_host(&host, cx);
-                                            this.hide_context_menu(cx);
-                                        })
-                                    })
-                                    .child(div().text_sm().text_color(gpui::white()).child("编辑")),
-                            )
-                            .child(
-                                // 删除
-                                div()
-                                    .px_4()
-                                    .py_2()
-                                    .cursor_pointer()
-                                    .hover(|this| this.bg(gpui::rgb(0xdc2626)))
-                                    .on_mouse_down(gpui::MouseButton::Left, {
-                                        let host = host.clone();
-                                        cx.listener(move |this, _event, _window, cx| {
-                                            this.handle_delete_host(&host, cx);
-                                            this.hide_context_menu(cx);
-                                        })
-                                    })
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(gpui::rgb(0xfca5a5))
-                                            .child("删除"),
-                                    ),
-                            ),
-                    ),
-            )
-    }
 }
 
 impl Render for HostListView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut root = div()
+        div()
             .flex()
             .flex_col()
             .size_full()
@@ -475,12 +445,12 @@ impl Render for HostListView {
                 // 从共享状态读取主机列表
                 if let Ok(hosts) = self.hosts.read() {
                     // 按分组组织主机
-                    let mut groups: BTreeMap<String, Vec<&HostConfig>> = BTreeMap::new();
+                    let mut groups: std::collections::BTreeMap<String, Vec<&HostConfig>> =
+                        std::collections::BTreeMap::new();
 
                     for host in hosts.iter() {
                         let group_name = host.group.as_deref().unwrap_or("默认分组");
-                        groups
-                            .entry(group_name.to_string())
+                        groups.entry(group_name.to_string())
                             .or_insert_with(Vec::new)
                             .push(host);
                     }
@@ -488,11 +458,7 @@ impl Render for HostListView {
                     // 渲染每个分组
                     for (group_name, group_hosts) in groups.iter() {
                         // 渲染分组标题
-                        list_div = list_div.child(self.render_group_header(
-                            group_name,
-                            group_hosts.len(),
-                            cx,
-                        ));
+                        list_div = list_div.child(self.render_group_header(group_name, group_hosts.len(), cx));
 
                         // 如果分组展开，渲染主机列表
                         if self.is_group_expanded(group_name) {
@@ -500,7 +466,7 @@ impl Render for HostListView {
                                 list_div = list_div.child(
                                     div()
                                         .pl_4() // 缩进以显示层级关系
-                                        .child(self.render_host_item(host, cx)),
+                                        .child(self.render_host_item(host, cx))
                                 );
                             }
                         }
@@ -520,18 +486,115 @@ impl Render for HostListView {
                     .border_color(gpui::rgb(0x374151))
                     .child(div().text_xs().text_color(gpui::rgb(0x9ca3af)).child({
                         let count = self.hosts.read().map(|h| h.len()).unwrap_or(0);
-                        format!("共{} 个主机", count)
-                    })),
-            );
-
-        // 如果有右键菜单，添加到根元素
-        if let Some(ref host) = self.context_menu_host {
-            root = root.child(self.render_context_menu(host, cx));
+                                format!("共 {} 个主机", count)
+                            })),
+                    )
+                    .when_some(self.context_menu_host.clone(), |this, host| {
+                        // 右键菜单
+                        this.child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .size_full()
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(|this, _event, _window, cx| {
+                                        this.hide_context_menu(cx);
+                                    }),
+                                )
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .top(gpui::px(100.0))
+                                        .left(gpui::px(200.0))
+                                        .w(gpui::px(200.0))
+                                        .bg(gpui::rgb(0x1f2937))
+                                        .border_1()
+                                        .border_color(gpui::rgb(0x374151))
+                                        .rounded_md()
+                                        .shadow_lg()
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_col()
+                                                .child(
+                                                    // 连接
+                                                    div()
+                                                        .px_4()
+                                                        .py_2()
+                                                        .cursor_pointer()
+                                                        .hover(|this| this.bg(gpui::rgb(0x374151)))
+                                                        .on_mouse_down(
+                                                            gpui::MouseButton::Left,
+                                                            {
+                                                                let host = host.clone();
+                                                                cx.listener(move |this, _event, _window, cx| {
+                                                                    cx.emit(HostListEvent::ConnectRequested(host.clone()));
+                                                                    this.hide_context_menu(cx);
+                                                                })
+                                                            },
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .text_color(gpui::white())
+                                                                .child("连接"),
+                                                        ),
+                                                )
+                                                .child(
+                                                    // 编辑
+                                                    div()
+                                                        .px_4()
+                                                        .py_2()
+                                                        .cursor_pointer()
+                                                        .hover(|this| this.bg(gpui::rgb(0x374151)))
+                                                        .on_mouse_down(
+                                                            gpui::MouseButton::Left,
+                                                            {
+                                                                let host = host.clone();
+                                                                cx.listener(move |this, _event, _window, cx| {
+                                                                    this.handle_edit_host(&host, cx);
+                                                                    this.hide_context_menu(cx);
+                                                                })
+                                                            },
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .text_color(gpui::white())
+                                                                .child("编辑"),
+                                                        ),
+                                                )
+                                                .child(
+                                                    // 删除
+                                                    div()
+                                                        .px_4()
+                                                        .py_2()
+                                                        .cursor_pointer()
+                                                        .hover(|this| this.bg(gpui::rgb(0xdc2626)))
+                                                        .on_mouse_down(
+                                                            gpui::MouseButton::Left,
+                                                            {
+                                                                let host = host.clone();
+                                                                cx.listener(move |this, _event, _window, cx| {
+                                                                    this.handle_delete_host(&host, cx);
+                                                                    this.hide_context_menu(cx);
+                                                                })
+                                                            },
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .text_color(gpui::rgb(0xfca5a5))
+                                                                .child("删除"),
+                                                        ),
+                                                ),
+                                        ),
+                                ),
+                        )})
+            }
         }
-
-        root
-    }
-}
 
 impl Focusable for HostListView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
