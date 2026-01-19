@@ -8,7 +8,6 @@ mod host_key_dialog;
 
 pub use host_connection_dialog::HostConnectionDialog;
 pub use host_key_channel::{
-    HostKeyConfirmChannel, HostKeyConfirmRequest, HostKeyConfirmResponse, HostKeyRequestReceiver,
-    HostKeyRequestSender,
+    HostKeyConfirmChannel, HostKeyConfirmRequest, HostKeyRequestReceiver,
 };
 pub use host_key_dialog::{HostKeyDialog, HostKeyInfo, HostKeyResponse};
