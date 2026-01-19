@@ -2,10 +2,10 @@
 //!
 //! 支持水平和垂直分屏布局，用于多个终端视图的并排显示。
 
+use crate::ui::terminal_view::TerminalView;
 use gpui::{Context, EventEmitter};
 use std::collections::HashMap;
 use uuid::Uuid;
-use crate::ui::terminal_view::TerminalView;
 use zeterm_core::entities::HostConfig;
 
 /// 面板 ID
@@ -140,7 +140,7 @@ impl Pane {
         match &mut self.content {
             PaneContent::Terminal { focused: f, .. } => {
                 *f = focused;
-            }
+            },
             PaneContent::Split { first, second, .. } => {
                 if focused {
                     // 递归设置：如果需要焦点，默认设置到第一个面板
@@ -150,7 +150,7 @@ impl Pane {
                     first.set_focused(false);
                     second.set_focused(false);
                 }
-            }
+            },
         }
     }
 
@@ -173,11 +173,11 @@ impl Pane {
         match &self.content {
             PaneContent::Terminal { pane_id, .. } => {
                 panes.push(*pane_id);
-            }
+            },
             PaneContent::Split { first, second, .. } => {
                 first.collect_terminal_panes_recursive(panes);
                 second.collect_terminal_panes_recursive(panes);
-            }
+            },
         }
     }
 }
@@ -268,7 +268,7 @@ impl SplitManager {
                     }
                     // 然后在第二个面板中查找
                     Self::find_and_remove_pane(second, pane_id)
-                }
+                },
                 PaneContent::Terminal { .. } => None,
             }
         }
@@ -326,7 +326,7 @@ impl SplitManager {
                 } else {
                     false
                 }
-            }
+            },
         }
     }
 
@@ -360,7 +360,7 @@ impl SplitManager {
                         second.set_focused(false);
                     }
                     found
-                }
+                },
             }
         }
     }
@@ -389,11 +389,7 @@ impl SplitManager {
             let panes = root.collect_terminal_panes();
             if let Some(current) = self.focused_pane {
                 if let Some(pos) = panes.iter().position(|&id| id == current) {
-                    let prev = panes if pos == 0 {
-                        panes.len() - 1
-                    } else {
-                        pos - 1
-                    }];
+                    let prev = panes[if pos == 0 { panes.len() - 1 } else { pos - 1 }];
                     self.focus_pane(panes[prev], cx);
                     return;
                 }
@@ -445,7 +441,7 @@ impl SplitManager {
                 } else {
                     false
                 }
-            }
+            },
         }
     }
 }
