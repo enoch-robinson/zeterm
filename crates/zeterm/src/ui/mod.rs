@@ -6,6 +6,7 @@ mod components;
 mod dialogs;
 mod host_list;
 mod main_window;
+mod split_pane;
 mod tab_manager;
 mod tab_view;
 mod terminal_view;
