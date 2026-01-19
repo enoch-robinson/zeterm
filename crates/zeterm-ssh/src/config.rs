@@ -39,6 +39,10 @@ pub struct SshConfig {
     pub terminal_cols: u16,
     /// 初始终端高度（行数）
     pub terminal_rows: u16,
+    /// 初始工作目录
+    pub cd: Option<String>,
+    /// 终端仿真模式
+    pub mode: String,
     /// 回退认证方法列表
     pub fallback_auth_methods: Vec<AuthMethod>,
 }
@@ -57,6 +61,8 @@ impl Default for SshConfig {
             terminal_type: "xterm-256color".to_string(),
             terminal_cols: 80,
             terminal_rows: 24,
+            cd: None,
+            mode: "xterm".to_string(),
             fallback_auth_methods: Vec::new(),
         }
     }
@@ -188,6 +194,18 @@ impl SshConfig {
     pub fn with_terminal_size(mut self, cols: u16, rows: u16) -> Self {
         self.terminal_cols = cols;
         self.terminal_rows = rows;
+        self
+    }
+
+    /// 设置初始工作目录
+    pub fn with_cd(mut self, path: impl Into<String>) -> Self {
+        self.cd = Some(path.into());
+        self
+    }
+
+    /// 设置终端仿真模式
+    pub fn with_mode(mut self, mode: impl Into<String>) -> Self {
+        self.mode = mode.into();
         self
     }
 
@@ -372,5 +390,35 @@ mod tests {
             result.is_ok(),
             "Validation should succeed even with allow_insecure enabled"
         );
+    }
+
+    #[test]
+    fn test_ssh_config_cd_default() {
+        let config = SshConfig::default();
+        assert!(config.cd.is_none(), "cd should default to None");
+    }
+
+    #[test]
+    fn test_ssh_config_with_cd() {
+        let config = SshConfig::new("example.com", "user")
+            .with_password("secret")
+            .with_cd("/home/user");
+
+        assert_eq!(config.cd, Some("/home/user".to_string()));
+    }
+
+    #[test]
+    fn test_ssh_config_mode_default() {
+        let config = SshConfig::default();
+        assert_eq!(config.mode, "xterm");
+    }
+
+    #[test]
+    fn test_ssh_config_with_mode() {
+        let config = SshConfig::new("example.com", "user")
+            .with_password("secret")
+            .with_mode("xterm-256color");
+
+        assert_eq!(config.mode, "xterm-256color");
     }
 }
