@@ -24,7 +24,10 @@ use crate::ui::dialogs::{
     HostKeyConfirmChannel, HostKeyDialog, HostKeyInfo, HostKeyRequestReceiver, HostKeyResponse,
 };
 use crate::ui::host_list::{HostListEvent, HostListView};
+use crate::ui::tab_manager::{TabId, TabInfo, TabManager, TabManagerEvent};
+use crate::ui::tab_view::TabView;
 use crate::ui::terminal_view::TerminalView;
+use std::collections::HashMap;
 use zeterm_core::ConnectionState;
 use zeterm_core::entities::HostConfig;
 use zeterm_mock::{MockConfig, MockConnection};
@@ -71,6 +74,12 @@ pub struct MainWindow {
     host_list_view: Option<Entity<HostListView>>,
     /// 是否显示左侧面板（主机列表）
     show_sidebar: bool,
+    /// Tab 管理器
+    tab_manager: Entity<TabManager>,
+    /// Tab 视图
+    tab_view: Entity<TabView>,
+    /// 每个 Tab 对应的终端视图
+    terminal_views: HashMap<TabId, Entity<TerminalView>>,
 }
 
 impl MainWindow {
@@ -111,6 +120,22 @@ impl MainWindow {
         // 初始化数据库和主机列表视图
         let (database, host_list_view) = Self::init_database_and_host_list(cx);
 
+        // 创建 Tab 管理器和 Tab 视图
+        let tab_manager = cx.new(|cx| {
+            let manager = TabManager::new();
+            manager
+        });
+        let tab_view = cx.new(|cx| TabView::new(tab_manager.clone(), cx));
+
+        // 订阅 Tab 管理器事件
+        cx.subscribe(
+            &tab_manager,
+            |this, _manager, event: &TabManagerEvent, cx| {
+                this.handle_tab_manager_event(event, cx);
+            },
+        )
+        .detach();
+
         Self {
             focus_handle: cx.focus_handle(),
             coordinator,
@@ -128,6 +153,9 @@ impl MainWindow {
             database,
             host_list_view,
             show_sidebar: true,
+            tab_manager,
+            tab_view,
+            terminal_views: HashMap::new(),
         }
     }
 
@@ -185,7 +213,7 @@ impl MainWindow {
         match event {
             HostListEvent::ConnectRequested(host_config) => {
                 info!("Connect requested for host: {}", host_config.name);
-                self.connect_to_host(host_config.clone(), cx);
+                self.create_tab_for_host(host_config.clone(), cx);
             },
             HostListEvent::NewHostRequested => {
                 info!("New host requested");
@@ -201,8 +229,54 @@ impl MainWindow {
         }
     }
 
-    /// 连接到指定主机
-    fn connect_to_host(&mut self, host_config: HostConfig, cx: &mut Context<Self>) {
+    /// 处理 Tab 管理器事件
+    fn handle_tab_manager_event(&mut self, event: &TabManagerEvent, cx: &mut Context<Self>) {
+        match event {
+            TabManagerEvent::TabAdded(tab_info) => {
+                info!("Tab added: {}", tab_info.title);
+                // 为新 Tab 创建终端视图
+                let terminal_view = cx.new(|cx| {
+                    let coordinator = self.coordinator.clone();
+                    TerminalView::new(coordinator, cx)
+                });
+                self.terminal_views.insert(tab_info.id, terminal_view);
+                cx.notify();
+            },
+            TabManagerEvent::TabClosed(tab_id) => {
+                info!("Tab closed: {}", tab_id);
+                // 移除对应的终端视图
+                self.terminal_views.remove(tab_id);
+                cx.notify();
+            },
+            TabManagerEvent::TabSwitched(tab_id) => {
+                info!("Tab switched: {}", tab_id);
+                cx.notify();
+            },
+        }
+    }
+
+    /// 为指定主机创建新 Tab 并连接
+    fn create_tab_for_host(&mut self, host_config: HostConfig, cx: &mut Context<Self>) {
+        // 创建新的 SSH Tab
+        let tab_info = TabInfo::new_ssh(host_config.clone());
+        let tab_id = tab_info.id;
+
+        // 添加 Tab 到管理器
+        self.tab_manager.update(cx, |manager, cx| {
+            manager.add_tab(tab_info, cx);
+        });
+
+        // 切换到新创建的 Tab
+        self.tab_manager.update(cx, |manager, cx| {
+            manager.switch_to_tab(tab_id, cx);
+        });
+
+        // 连接到主机
+        self.connect_to_host_with_tab(host_config, cx);
+    }
+
+    /// 连接到指定主机（使用当前活动 Tab）
+    fn connect_to_host_with_tab(&mut self, host_config: HostConfig, cx: &mut Context<Self>) {
         // 检查是否已连接
         {
             let started = self.data_pump_started.read();
@@ -231,6 +305,11 @@ impl MainWindow {
 
         // 启动 SSH 会话
         self.start_ssh_session(cx);
+    }
+
+    /// 连接到指定主机（保持兼容性的旧方法）
+    fn connect_to_host(&mut self, host_config: HostConfig, cx: &mut Context<Self>) {
+        self.create_tab_for_host(host_config, cx);
     }
 
     /// 在窗口上下文中构建主窗口视图
@@ -534,71 +613,111 @@ impl MainWindow {
 
     /// 渲染主内容区域（左侧主机列表 + 右侧终端/欢迎界面）
     fn render_content(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 提前克隆 theme 值以避免借用冲突
         let theme = cx.theme();
+        let background = theme.background;
+        let secondary = theme.secondary;
+        let border = theme.border;
         let is_connected = self.coordinator.is_connected();
 
-        // 构建主内容区域（水平布局）
-        let mut content = div().id("content").flex_1().w_full().flex().flex_row();
+        // 获取当前活动 Tab 的终端视图
+        let active_terminal_view = self
+            .tab_manager
+            .read(cx)
+            .active_tab_id()
+            .and_then(|tab_id| self.terminal_views.get(&tab_id).cloned());
 
-        // 左侧面板：主机列表
-        if self.show_sidebar {
-            if let Some(ref host_list_view) = self.host_list_view {
-                content = content.child(
-                    div()
-                        .id("sidebar")
-                        .w(px(280.0))
-                        .h_full()
-                        .flex_shrink_0()
-                        .border_r_1()
-                        .border_color(theme.border)
-                        .bg(theme.secondary)
-                        .child(host_list_view.clone()),
-                );
-            }
+        // 右侧主区域容器（包含 Tab 栏和终端/欢迎界面）
+        let mut main_area = div().id("main-area").flex_1().flex().flex_col();
+
+        // 渲染 Tab 栏（如果有 Tab）
+        if self.tab_manager.read(cx).has_tabs() {
+            main_area = main_area.child(self.tab_view.clone());
         }
 
-        // 右侧区域：终端或欢迎界面
-        let right_panel = if is_connected {
-            // 确保 TerminalView 已创建
-            if self.terminal_view.is_none() {
-                let coordinator = self.coordinator.clone();
-                self.terminal_view = Some(cx.new(|cx| TerminalView::new(coordinator, cx)));
-                info!("TerminalView created");
-            }
+        // 终端或欢迎界面
+        let content_area = if is_connected {
+            // 使用活动 Tab 的终端视图
+            if let Some(terminal_view) = active_terminal_view {
+                div()
+                    .id("terminal-panel")
+                    .flex_1()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .id("terminal-container")
+                            .flex_1()
+                            .w_full()
+                            .child(terminal_view),
+                    )
+                    .into_any_element()
+            } else {
+                // 回退到旧的 terminal_view（兼容性）
+                if self.terminal_view.is_none() {
+                    let coordinator = self.coordinator.clone();
+                    self.terminal_view = Some(cx.new(|cx| TerminalView::new(coordinator, cx)));
+                    info!("TerminalView created (fallback)");
+                }
 
-            // 渲染终端视图
-            div()
-                .id("terminal-panel")
-                .flex_1()
-                .h_full()
-                .flex()
-                .flex_col()
-                .child(
-                    div()
-                        .id("terminal-container")
-                        .flex_1()
-                        .w_full()
-                        .child(self.terminal_view.clone().unwrap()),
-                )
-                .into_any_element()
+                div()
+                    .id("terminal-panel")
+                    .flex_1()
+                    .h_full()
+                    .flex()
+                    .flex_col()
+                    .child(
+                        div()
+                            .id("terminal-container")
+                            .flex_1()
+                            .w_full()
+                            .child(self.terminal_view.clone().unwrap()),
+                    )
+                    .into_any_element()
+            }
         } else {
-            // 未连接时清理 terminal_view 并显示欢迎界面
-            if self.terminal_view.is_some() {
-                self.terminal_view = None;
-                info!("TerminalView cleared");
-            }
-
+            // 未连接时显示欢迎界面
             div()
                 .id("welcome-panel")
                 .flex_1()
                 .h_full()
                 .flex()
                 .flex_col()
-                .child(self.render_welcome(cx))
+                .child(self.render_welcome())
                 .into_any_element()
         };
+        // 构建主内容区域（水平布局：左侧边栏 + 右侧主区域）
 
-        content.child(right_panel)
+        // 构建主内容区域（水平布局：左侧边栏 + 右侧主区域）
+        div()
+            .id("content")
+            .flex_1()
+            .w_full()
+            .flex()
+            .flex_row()
+            .child({
+                // 左侧面板：主机列表
+                if self.show_sidebar {
+                    if let Some(ref host_list_view) = self.host_list_view {
+                        div()
+                            .id("sidebar")
+                            .w(px(280.0))
+                            .h_full()
+                            .flex_shrink_0()
+                            .border_r_1()
+                            .border_color(border)
+                            .bg(secondary)
+                            .child(host_list_view.clone())
+                            .into_any_element()
+                    } else {
+                        div().into_any_element()
+                    }
+                } else {
+                    div().into_any_element()
+                }
+            })
+            .child(main_area.child(content_area))
     }
 
     /// 切换侧边栏显示
@@ -609,8 +728,7 @@ impl MainWindow {
     }
 
     /// 渲染欢迎界面
-    fn render_welcome(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
+    fn render_welcome(&self) -> impl IntoElement {
         let terminal_size = self.coordinator.terminal_size();
 
         // 获取当前 SSH 配置值
@@ -643,8 +761,8 @@ impl MainWindow {
                     .child(
                         div()
                             .text_size(px(14.0))
-                            .text_color(theme.muted_foreground)
-                            .child("Phase 3: SSH集成测试"),
+                            .text_color(gpui::rgb(0x9ca3af))
+                            .child("Phase 5: Tab 管理与多会话支持"),
                     )
                     // SSH 连接信息显示
                     .child(
@@ -655,8 +773,8 @@ impl MainWindow {
                             .p_4()
                             .rounded_lg()
                             .border_1()
-                            .border_color(theme.border)
-                            .bg(theme.secondary)
+                            .border_color(gpui::rgb(0x374151))
+                            .bg(gpui::rgb(0x1f2937))
                             .child(
                                 div()
                                     .text_size(px(14.0))
@@ -666,61 +784,38 @@ impl MainWindow {
                             .child(
                                 div()
                                     .text_size(px(12.0))
-                                    .text_color(theme.muted_foreground)
+                                    .text_color(gpui::rgb(0x9ca3af))
                                     .child(format!("Host: {}:{}", ssh_host, ssh_port)),
                             )
                             .child(
                                 div()
                                     .text_size(px(12.0))
-                                    .text_color(theme.muted_foreground)
+                                    .text_color(gpui::rgb(0x9ca3af))
                                     .child(format!("Username: {}", ssh_username)),
                             )
                             .child(
                                 div()
                                     .text_size(px(12.0))
-                                    .text_color(theme.muted_foreground)
+                                    .text_color(gpui::rgb(0x9ca3af))
                                     .child("Password: ********"),
                             ),
-                    )
-                    // 连接按钮组
-                    .child(
-                        div()
-                            .flex()
-                            .gap_3()
-                            .child(
-                                Button::new("btn-ssh-connect")
-                                    .label("Connect SSH")
-                                    .primary()
-                                    .with_size(Size::Medium)
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.start_ssh_session(cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("btn-mock-connect")
-                                    .label("Connect Mock")
-                                    .with_size(Size::Medium)
-                                    .on_click(cx.listener(|this, _event, _window, cx| {
-                                        this.start_mock_session(cx);
-                                    })),
-                            ),
-                    )
-                    // 终端尺寸信息
-                    .child(
-                        div()
-                            .text_size(px(12.0))
-                            .text_color(theme.muted_foreground)
-                            .child(format!(
-                                "Terminal Size: {}x{}",
-                                terminal_size.cols, terminal_size.rows
-                            )),
                     )
                     // 提示信息
                     .child(
                         div()
                             .text_size(px(11.0))
-                            .text_color(theme.muted_foreground)
-                            .child("提示: 修改 main_window.rs 中的 ssh_host/username/password 来配置连接"),
+                            .text_color(gpui::rgb(0x9ca3af))
+                            .child("从左侧主机列表选择主机进行连接"),
+                    )
+                    // 终端尺寸信息
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(gpui::rgb(0x9ca3af))
+                            .child(format!(
+                                "Terminal Size: {}x{}",
+                                terminal_size.cols, terminal_size.rows
+                            )),
                     ),
             )
     }

@@ -2,6 +2,7 @@
 //!
 //! 显示和管理终端标签页。
 
+use gpui::StatefulInteractiveElement;
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
     Render, Styled, Window, div, px,
@@ -75,11 +76,22 @@ impl TabView {
         let theme = cx.theme();
         let is_active = tab.is_active;
         let tab_id = tab.id;
+        let tab_title = tab.title.clone();
+        let tab_manager = self.tab_manager.clone();
+        let tab_manager_for_close = self.tab_manager.clone();
 
         div()
             .id(format!("tab-{}", tab_id))
+            .on_click(cx.listener(move |_this, _event, _window, cx| {
+                // 点击 Tab 切换
+                tab_manager.update(cx, |manager, cx| {
+                    manager.switch_to_tab(tab_id, cx);
+                });
+            }))
             .flex()
             .items_center()
+            .justify_between()
+            .gap_2()
             .px_3()
             .py_2()
             .mr_1()
@@ -95,7 +107,6 @@ impl TabView {
             } else {
                 gpui::rgba(0x00000000)
             })
-            .cursor_pointer()
             .hover(|style| {
                 if !is_active {
                     style.bg(theme.border)
@@ -103,11 +114,32 @@ impl TabView {
                     style
                 }
             })
+            .cursor_pointer()
             .child(
                 div()
                     .text_sm()
                     .text_color(theme.foreground)
-                    .child(tab.title.clone()),
+                    .child(tab_title.clone()),
+            )
+            .child(
+                // 关闭按钮
+                div()
+                    .id(format!("tab-close-{}", tab_id))
+                    .on_click(
+                        cx.listener(move |_this, _event: &gpui::ClickEvent, _window, cx| {
+                            // 关闭 Tab（子元素的点击不会冒泡到父元素）
+                            tab_manager_for_close.update(cx, |manager, cx| {
+                                manager.close_tab(tab_id, cx);
+                            });
+
+                            cx.notify();
+                        }),
+                    )
+                    .hover(|style| style.text_color(gpui::rgb(0xef4444)))
+                    .cursor_pointer()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child("×"),
             )
     }
 }
