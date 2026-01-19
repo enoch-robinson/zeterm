@@ -284,8 +284,11 @@ impl SshConnection {
     /// - `passphrase`: 私钥密码（如果有）
     ///
     /// # 示例
-    /// ```no_run
+    /// ```ignore
     /// use std::path::Path;
+    /// # use zeterm_ssh::{SshConnection, SshHandler};
+    /// # use russh::client::Handle;
+    /// # use zeterm_core::ConnectionError;
     /// # async fn example(conn: &SshConnection, session: &mut Handle<SshHandler>) -> Result<(), ConnectionError> {
     /// conn.authenticate_publickey(session, Path::new("~/.ssh/id_rsa"), None).await?;
     /// conn.authenticate_publickey(session, Path::new("~/.ssh/id_ecdsa"), Some("passphrase")).await?;
