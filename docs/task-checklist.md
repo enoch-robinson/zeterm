@@ -1004,25 +1004,37 @@
 
 ### 6.3 分屏布局
 
-#### 6.3.1 Dock 组件集成
+#### 6.3.1 分屏布局组件
 
 | 状态 | 任务 | 优先级 | 预估时间 | 备注 |
 |------|------|--------|----------|------|
-| ⬜ | 使用 gpui-component Dock | P0 | 2h | 待集成 |
+|✅ | 使用自实现 SplitView | P0 | 4h | gpui-component 无 Dock 组件，Resizable 不适合终端场景 |
 | ✅ | 配置左侧面板 (主机列表) | P0 | 1h | MainWindow 左侧 280px 面板 |
 | ✅ | 配置中央区域 (终端) | P0 | 1h | flex_1 右侧区域 |
 | ⬜ | 配置底部面板 (可选) | P2 | 1h | 未实现 |
 
-**注**: 基础布局已完成（左侧 280px 主机列表 + 右侧终端区域）
+**注**: 
+- 基础布局已完成（左侧 280px 主机列表 + 右侧终端区域）
+- gpui-component 的 `Resizable` 组件是通用面板布局，不了解终端特性（字符网格对齐、PTY resize 等）
+- 自实现的 `SplitManager` + `SplitView` 专为终端分屏设计，支持焦点管理和会话生命周期
 
 #### 6.3.2 终端分屏
 
-| 状态 | 任务 | 优先级 | 预估时间 |
-|------|------|--------|----------|
-| ⬜ | 实现水平分屏 | P0 | 2h |
-| ⬜ | 实现垂直分屏 | P0 | 2h |
-| ⬜ | 实现分屏大小调整 | P1 | 2h |
-| ⬜ | 实现焦点切换 | P0 | 1h |
+| 状态 | 任务 | 优先级 | 预估时间 | 备注 |
+|------|------|--------|----------|------|
+| ✅ | 实现水平分屏 | P0 | 2h | `SplitManager::split_horizontal()` 已实现 |
+| ✅ | 实现垂直分屏 | P0 | 2h | `SplitManager::split_vertical()` 已实现 |
+| 🔄 | 实现分屏大小调整 | P1 | 3h | 逻辑层`adjust_split_ratio()` 已实现，UI拖拽待完成 |
+| ✅ | 实现焦点切换 | P0 | 1h | `focus_pane()`/`focus_next_pane()`/`focus_prev_pane()` 已实现 |
+|🔄 | 在 MainWindow 中渲染 SplitView | P0 | 1h | SplitView 组件已创建，待集成到主渲染流程 |
+|⬜ | 将TerminalView嵌入分屏面板 | P0 | 2h | 当前为占位符，需嵌入实际终端 |
+| ⬜ | 添加分屏快捷键 | P1 | 1h | Ctrl+\ 水平分屏，Ctrl+- 垂直分屏 |
+
+**已实现的核心组件**:
+- `SplitManager` (`split_pane/mod.rs`): 分屏数据模型和状态管理
+- `SplitView` (`split_pane/split_view.rs`): 分屏 UI 渲染组件
+- `PaneId`, `SplitDirection`, `Pane`, `PaneContent`: 分屏数据结构
+- `SplitManagerEvent`: 事件系统 (PaneSplit, PaneClosed, FocusChanged,LayoutChanged)
 
 ---
 
