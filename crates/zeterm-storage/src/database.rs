@@ -7,7 +7,7 @@ use sqlx::ConnectOptions;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// 数据库连接管理器
 ///
@@ -138,7 +138,7 @@ impl Database {
     /// 清空所有表（仅用于测试）
     #[cfg(test)]
     pub async fn clear_all_tables(&self) -> Result<()> {
-        warn!("清空所有数据库表（测试模式）");
+        tracing::warn!("清空所有数据库表（测试模式）");
 
         sqlx::query("DELETE FROM connection_history")
             .execute(&self.pool)
