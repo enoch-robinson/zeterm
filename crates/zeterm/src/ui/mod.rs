@@ -2,6 +2,9 @@
 //!
 //! 包含所有 GPUI 视图组件和UI 相关实现。
 
+// 允许暂时未使用但将来会用到的代码
+#![allow(dead_code)]
+
 mod components;
 mod dialogs;
 mod host_list;

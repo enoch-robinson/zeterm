@@ -425,7 +425,7 @@ impl SplitManager {
         self.root.is_some()
     }
 
-    /// 调整分屏大小
+    /// 调整分屏大小（增量）
     pub fn adjust_split_ratio(&mut self, pane_id: PaneId, delta: f32, cx: &mut Context<Self>) {
         if let Some(root) = &mut self.root {
             if Self::adjust_ratio_recursive(root, pane_id, delta) {
@@ -435,16 +435,83 @@ impl SplitManager {
         }
     }
 
-    /// 递归调整分屏比例
+    /// 设置分屏比例（绝对值）
+    pub fn set_split_ratio(&mut self, pane_id: PaneId, new_ratio: f32, cx: &mut Context<Self>) {
+        if let Some(root) = &mut self.root {
+            if Self::set_ratio_recursive(root, pane_id, new_ratio) {
+                cx.emit(SplitManagerEvent::LayoutChanged);
+                cx.notify();
+            }
+        }
+    }
+
+    /// 获取分屏比例
+    pub fn get_split_ratio(&self, pane_id: PaneId) -> Option<f32> {
+        self.root
+            .as_ref()
+            .and_then(|root| Self::get_ratio_recursive(root, pane_id))
+    }
+
+    /// 递归获取分屏比例
+    fn get_ratio_recursive(pane: &Pane, pane_id: PaneId) -> Option<f32> {
+        match &pane.content {
+            PaneContent::Terminal { .. } => None,
+            PaneContent::Split {
+                ratio,
+                first,
+                second,
+                ..
+            } => {
+                if pane.id == pane_id {
+                    Some(*ratio)
+                } else {
+                    // 递归查找子面板
+                    Self::get_ratio_recursive(first, pane_id)
+                        .or_else(|| Self::get_ratio_recursive(second, pane_id))
+                }
+            },
+        }
+    }
+
+    /// 递归调整分屏比例（增量）
     fn adjust_ratio_recursive(pane: &mut Pane, pane_id: PaneId, delta: f32) -> bool {
         match &mut pane.content {
             PaneContent::Terminal { .. } => false,
-            PaneContent::Split { ratio, .. } => {
+            PaneContent::Split {
+                ratio,
+                first,
+                second,
+                ..
+            } => {
                 if pane.id == pane_id {
                     *ratio = (*ratio + delta).clamp(0.1, 0.9);
                     true
                 } else {
-                    false
+                    // 递归查找子面板
+                    Self::adjust_ratio_recursive(first, pane_id, delta)
+                        || Self::adjust_ratio_recursive(second, pane_id, delta)
+                }
+            },
+        }
+    }
+
+    /// 递归设置分屏比例（绝对值）
+    fn set_ratio_recursive(pane: &mut Pane, pane_id: PaneId, new_ratio: f32) -> bool {
+        match &mut pane.content {
+            PaneContent::Terminal { .. } => false,
+            PaneContent::Split {
+                ratio,
+                first,
+                second,
+                ..
+            } => {
+                if pane.id == pane_id {
+                    *ratio = new_ratio.clamp(0.1, 0.9);
+                    true
+                } else {
+                    // 递归查找子面板
+                    Self::set_ratio_recursive(first, pane_id, new_ratio)
+                        || Self::set_ratio_recursive(second, pane_id, new_ratio)
                 }
             },
         }

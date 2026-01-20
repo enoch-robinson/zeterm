@@ -2,6 +2,9 @@
 //!
 //! 提供 Zeterm 的日志配置和初始化功能。
 
+// 允许暂时未使用但将来会用到的代码
+#![allow(dead_code)]
+
 use tracing::Level;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 

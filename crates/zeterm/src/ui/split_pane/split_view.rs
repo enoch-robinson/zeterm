@@ -7,13 +7,29 @@ use std::sync::Arc;
 
 use gpui::{
     AnyElement, App, Context, CursorStyle, Entity, FocusHandle, Focusable, Hsla,
-    InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement, Styled,
-    Window, div, px,
+    InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    ParentElement, Point, Render, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use gpui_component::ActiveTheme;
+use parking_lot::RwLock;
 
 use super::{Pane, PaneContent, PaneId, SplitDirection, SplitManager};
 use crate::ui::terminal_view::TerminalView;
+
+/// 拖拽状态
+#[derive(Debug, Clone)]
+struct DragState {
+    /// 正在拖拽的分隔条所属的面板 ID
+    split_id: PaneId,
+    /// 分屏方向
+    direction: SplitDirection,
+    /// 拖拽开始时的鼠标位置
+    start_position: Point<f32>,
+    /// 拖拽开始时的分屏比例
+    start_ratio: f32,
+    /// 容器尺寸（用于计算比例变化）
+    container_size: f32,
+}
 
 /// 终端视图渲染器
 ///
@@ -27,7 +43,9 @@ pub struct SplitView {
     /// 分屏管理器
     split_manager: Entity<SplitManager>,
     /// 终端视图映射（由外部提供）
-    terminal_views: Arc<parking_lot::RwLock<TerminalViewMap>>,
+    terminal_views: Arc<RwLock<TerminalViewMap>>,
+    /// 当前拖拽状态
+    drag_state: Arc<RwLock<Option<DragState>>>,
 }
 
 impl SplitView {
@@ -36,7 +54,8 @@ impl SplitView {
         Self {
             focus_handle: cx.focus_handle(),
             split_manager,
-            terminal_views: Arc::new(parking_lot::RwLock::new(HashMap::new())),
+            terminal_views: Arc::new(RwLock::new(HashMap::new())),
+            drag_state: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -59,8 +78,73 @@ impl SplitView {
     }
 
     /// 获取终端视图映射的共享引用
-    pub fn terminal_views_ref(&self) -> Arc<parking_lot::RwLock<TerminalViewMap>> {
+    pub fn terminal_views_ref(&self) -> Arc<RwLock<TerminalViewMap>> {
         self.terminal_views.clone()
+    }
+
+    /// 开始拖拽分隔条
+    fn start_drag(
+        &mut self,
+        split_id: PaneId,
+        direction: SplitDirection,
+        position: Point<f32>,
+        current_ratio: f32,
+        container_size: f32,
+        _cx: &mut Context<Self>,
+    ) {
+        let mut drag_state = self.drag_state.write();
+        *drag_state = Some(DragState {
+            split_id,
+            direction,
+            start_position: position,
+            start_ratio: current_ratio,
+            container_size,
+        });
+    }
+
+    /// 处理拖拽移动
+    fn handle_drag_move(&mut self, position: Point<f32>, cx: &mut Context<Self>) {
+        let drag_info = {
+            let drag_state = self.drag_state.read();
+            drag_state.clone()
+        };
+
+        if let Some(state) = drag_info {
+            // 计算位置差异
+            let delta = match state.direction {
+                SplitDirection::Horizontal => position.x - state.start_position.x,
+                SplitDirection::Vertical => position.y - state.start_position.y,
+            };
+
+            // 计算新的比例
+            if state.container_size > 0.0 {
+                let ratio_delta = delta / state.container_size;
+                let new_ratio = (state.start_ratio + ratio_delta).clamp(0.1, 0.9);
+
+                // 更新分屏管理器中的比例
+                self.split_manager.update(cx, |manager, cx| {
+                    manager.adjust_split_ratio(state.split_id, new_ratio - state.start_ratio, cx);
+                });
+
+                // 更新起始比例以便下次计算
+                let mut drag_state = self.drag_state.write();
+                if let Some(ref mut s) = *drag_state {
+                    s.start_ratio = new_ratio;
+                    s.start_position = position;
+                }
+            }
+        }
+    }
+
+    /// 结束拖拽
+    fn end_drag(&mut self, _cx: &mut Context<Self>) {
+        let mut drag_state = self.drag_state.write();
+        *drag_state = None;
+    }
+
+    /// 检查是否正在拖拽
+    fn is_dragging(&self) -> bool {
+        self.drag_state.read().is_some()
     }
 
     /// 获取分屏管理器
@@ -175,7 +259,7 @@ impl SplitView {
                 // 先渲染子面板
                 let first_child = self.render_pane(first, cx);
                 let second_child = self.render_pane(second, cx);
-                let separator = self.render_separator(direction_copy, pane_id, cx);
+                let separator = self.render_separator(direction_copy, pane_id, first_ratio, cx);
 
                 let container = div()
                     .id(format!("split-{}", pane_id))
@@ -234,22 +318,64 @@ impl SplitView {
         &self,
         direction: SplitDirection,
         split_id: PaneId,
+        current_ratio: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let theme = cx.theme();
         let hover_color: Hsla = gpui::rgb(0x3b82f6).into();
+        let dragging_color: Hsla = gpui::rgb(0x2563eb).into();
+
+        let is_dragging = self.is_dragging();
 
         let (width, height, cursor) = match direction {
-            SplitDirection::Horizontal => (px(4.0), px(0.0), CursorStyle::ResizeLeftRight),
-            SplitDirection::Vertical => (px(0.0), px(4.0), CursorStyle::ResizeUpDown),
+            SplitDirection::Horizontal => (px(6.0), px(0.0), CursorStyle::ResizeLeftRight),
+            SplitDirection::Vertical => (px(0.0), px(6.0), CursorStyle::ResizeUpDown),
+        };
+
+        let bg_color = if is_dragging {
+            dragging_color
+        } else {
+            theme.border
         };
 
         let base = div()
             .id(format!("separator-{}", split_id))
-            .bg(theme.border)
+            .bg(bg_color)
             .hover(move |style| style.bg(hover_color))
             .cursor(cursor)
-            .flex_shrink_0();
+            .flex_shrink_0()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
+                    // 获取容器尺寸（使用窗口尺寸作为近似值）
+                    let container_size = match direction {
+                        SplitDirection::Horizontal => 800.0, // 默认宽度
+                        SplitDirection::Vertical => 600.0,   // 默认高度
+                    };
+                    this.start_drag(
+                        split_id,
+                        direction,
+                        Point::new(f32::from(event.position.x), f32::from(event.position.y)),
+                        current_ratio,
+                        container_size,
+                        cx,
+                    );
+                }),
+            )
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
+                if this.is_dragging() {
+                    this.handle_drag_move(
+                        Point::new(f32::from(event.position.x), f32::from(event.position.y)),
+                        cx,
+                    );
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
+                    this.end_drag(cx);
+                }),
+            );
 
         match direction {
             SplitDirection::Horizontal => base.w(width).h_full().into_any_element(),
