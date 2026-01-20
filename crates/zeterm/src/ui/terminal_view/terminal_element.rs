@@ -480,6 +480,69 @@ impl TerminalElement {
         }
     }
 
+    /// 从 RenderConfig 创建终端元素///
+    /// 完全使用 RenderConfig 中的配置，包括：
+    /// - 字体大小和行高
+    /// - 光标颜色（从主题获取）
+    /// - 光标闪烁设置
+    /// - 选择颜色（从主题获取）
+    /// - 搜索匹配颜色（从主题获取）
+    pub fn from_render_config(
+        coordinator: Arc<SessionCoordinator>,
+        config: &super::RenderConfig,
+        focused: bool,
+        cursor_visible: bool,
+    ) -> Self {
+        use super::theme::rgb_to_hsla;
+
+        let theme = &config.theme;
+
+        // 从主题获取光标颜色
+        let cursor_color = rgb_to_hsla(theme.cursor.color);
+
+        // 从主题获取选择颜色
+        let selection_rgb = theme.selection.background;
+        let selection_color = Hsla {
+            h: rgb_to_hsla(selection_rgb).h,
+            s: rgb_to_hsla(selection_rgb).s,
+            l: rgb_to_hsla(selection_rgb).l,
+            a: 0.4, // 选择高亮需要透明度
+        };
+
+        // 从主题获取搜索匹配颜色
+        let search_match_rgb = theme.ui.search_match;
+        let search_match_color = Hsla {
+            h: rgb_to_hsla(search_match_rgb).h,
+            s: rgb_to_hsla(search_match_rgb).s,
+            l: rgb_to_hsla(search_match_rgb).l,
+            a: 0.4,
+        };
+
+        let search_match_active_rgb = theme.ui.search_match_active;
+        let current_search_match_color = Hsla {
+            h: rgb_to_hsla(search_match_active_rgb).h,
+            s: rgb_to_hsla(search_match_active_rgb).s,
+            l: rgb_to_hsla(search_match_active_rgb).l,
+            a: 0.6,
+        };
+
+        Self {
+            coordinator,
+            focused,
+            cursor_visible,
+            cursor_blink_enabled: config.cursor_blink,
+            font_size: config.font_size,
+            line_height: config.line_height,
+            cursor_color: Some(cursor_color),
+            search_matches: Vec::new(),
+            current_search_index: None,
+            search_match_color,
+            current_search_match_color,
+            selection_range: None,
+            selection_color,
+        }
+    }
+
     /// 设置选择范围
     pub fn with_selection(mut self, range: super::selection::SelectionRange) -> Self {
         self.selection_range = Some(range);
@@ -987,9 +1050,11 @@ impl Element for TerminalElement {
         // 预处理光标
         let cursor_layout = if self.cursor_visible {
             let cursor = content.cursor;
+            // 使用配置的光标颜色，如果未配置则使用默认灰白色（而非硬编码的绿色）
+            // 这个默认值应该很少使用，因为 from_render_config 会从主题获取颜色
             let cursor_color = self
                 .cursor_color
-                .unwrap_or_else(|| gpui::rgb(0x00ff00).into());
+                .unwrap_or_else(|| gpui::rgb(0xcccccc).into());
 
             Some(CursorLayout {
                 line: cursor.point.line.0,

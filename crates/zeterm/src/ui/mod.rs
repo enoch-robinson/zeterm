@@ -12,6 +12,6 @@ mod main_window;
 pub mod split_pane;
 mod tab_manager;
 mod tab_view;
-mod terminal_view;
+pub mod terminal_view;
 
 pub use main_window::MainWindow;

@@ -813,13 +813,13 @@ impl Render for TerminalView {
             .child(
                 // 终端渲染区域
                 div().id("terminal-content").size_full().p_2().child({
-                    let mut element = TerminalElement::with_config(
+                    // 使用 from_render_config 完全应用 RenderConfig 配置
+                    // 包括主题颜色、光标设置、选择颜色、搜索匹配颜色等
+                    let mut element = TerminalElement::from_render_config(
                         self.coordinator.clone(),
+                        &self.render_config,
                         focused,
                         self.cursor_visible,
-                        self.render_config.font_size,
-                        self.render_config.line_height,
-                        Some(rgb_to_hsla(self.render_config.theme.cursor.color)),
                     )
                     .with_search_matches(
                         self.search_state.matches().to_vec(),
