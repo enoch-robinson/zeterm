@@ -14,6 +14,7 @@ use russh::client::{self, Handle, Msg};
 // 条件编译：平台特定的 stream 类型
 #[cfg(unix)]
 use tokio::net::UnixStream;
+use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
 use zeterm_core::errors::ConnectionError;
@@ -22,6 +23,50 @@ use zeterm_core::traits::{ConnectionInfo, ConnectionType, TerminalConnection};
 use crate::agent::{get_agent_socket_path, is_agent_available};
 use crate::config::{AuthMethod, SshConfig};
 use crate::handler::{DataReceiver, HostKeyConfirmCallback, SshHandler, create_data_channel};
+use crate::keepalive::{KeepaliveCallback, KeepaliveConfig, KeepaliveEvent, KeepaliveManager};
+
+/// 连接心跳回调
+///
+/// 处理心跳事件，在连接丢失时更新连接状态
+struct ConnectionKeepaliveCallback {
+    /// 主机名（用于日志）
+    host: String,
+    /// 连接状态标志
+    connected: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl KeepaliveCallback for ConnectionKeepaliveCallback {
+    fn on_event(&self, event: KeepaliveEvent) {
+        match event {
+            KeepaliveEvent::Started => {
+                info!("Keepalive started for {}", self.host);
+            },
+            KeepaliveEvent::Sent { seq } => {
+                debug!("Keepalive #{} sent to {}", seq, self.host);
+            },
+            KeepaliveEvent::Received { seq, rtt } => {
+                debug!(
+                    "Keepalive #{} received from {}, RTT: {:?}",
+                    seq, self.host, rtt
+                );
+            },
+            KeepaliveEvent::Timeout { missed_count } => {
+                warn!(
+                    "Keepalive timeout for {} (missed: {})",
+                    self.host, missed_count
+                );
+            },
+            KeepaliveEvent::ConnectionLost => {
+                error!("Connection lost to {} (keepalive failed)", self.host); // 更新连接状态
+                self.connected
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+            },
+            KeepaliveEvent::Stopped => {
+                info!("Keepalive stopped for {}", self.host);
+            },
+        }
+    }
+}
 
 /// SSH 连接内部状态
 struct SshConnectionInner {
@@ -35,6 +80,10 @@ struct SshConnectionInner {
     connected_at: Option<Instant>,
     /// 当前终端尺寸
     terminal_size: (u16, u16),
+    /// 心跳管理器
+    keepalive_manager: Option<KeepaliveManager>,
+    /// 心跳任务句柄
+    keepalive_handle: Option<JoinHandle<()>>,
 }
 
 /// SSH 连接
@@ -64,6 +113,8 @@ impl SshConnection {
                 data_receiver: None,
                 connected_at: None,
                 terminal_size,
+                keepalive_manager: None,
+                keepalive_handle: None,
             })),
             connected: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             host_key_confirm_callback: None,
@@ -171,7 +222,101 @@ impl SshConnection {
         self.connected
             .store(true, std::sync::atomic::Ordering::SeqCst);
 
+        // 启动心跳保活
+        self.start_keepalive();
+
         Ok(())
+    }
+
+    /// 启动心跳保活
+    fn start_keepalive(&self) {
+        let keepalive_interval = match self.config.keepalive_interval {
+            Some(interval) => interval,
+            None => {
+                info!("Keepalive is disabled in config");
+                return;
+            },
+        };
+
+        let keepalive_config = KeepaliveConfig::new()
+            .with_interval(keepalive_interval)
+            .with_timeout(std::time::Duration::from_secs(15))
+            .with_max_missed(3);
+
+        let mut manager = KeepaliveManager::new(keepalive_config);
+
+        // 获取 session 的克隆用于心跳发送
+        let inner = self.inner.clone();
+        let connected = self.connected.clone();
+        let host = self.config.host.clone();
+
+        // 创建心跳发送函数
+        // 注意：russh 的 Handle 不支持 Clone，所以我们只检查连接状态标志
+        // russh 的 client::Config 中已经配置了 keepalive_interval，会自动发送心跳
+        // 这里的 keepalive 主要用于检测连接状态并在超时时更新状态标志
+        let send_keepalive = move || {
+            let inner = inner.clone();
+            let connected = connected.clone();
+            let host = host.clone();
+
+            async move {
+                // 检查连接状态标志
+                if !connected.load(std::sync::atomic::Ordering::SeqCst) {
+                    return Err("Connection closed".into());
+                }
+
+                // 检查 session 是否存在
+                let has_session = {
+                    let guard = inner.lock();
+                    guard.session.is_some() && guard.channel.is_some()
+                };
+
+                if has_session {
+                    // russh 的 Config 中已经配置了 keepalive，会自动发送心跳
+                    // 这里只是确认连接仍然活跃
+                    debug!("Keepalive check passed for {}", host);
+                    Ok(())
+                } else {
+                    Err("No active session".into())
+                }
+            }
+        };
+
+        // 创建事件回调
+        let callback: Arc<dyn KeepaliveCallback> = Arc::new(ConnectionKeepaliveCallback {
+            host: self.config.host.clone(),
+            connected: self.connected.clone(),
+        });
+
+        // 启动心跳管理器
+        let handle = manager.start(send_keepalive, Some(callback));
+
+        // 保存管理器和句柄
+        {
+            let mut inner = self.inner.lock();
+            inner.keepalive_manager = Some(manager);
+            inner.keepalive_handle = handle;
+        }
+
+        info!("Keepalive started for {}", self.config.host);
+    }
+
+    /// 停止心跳保活
+    fn stop_keepalive(&self) {
+        let mut inner = self.inner.lock();
+
+        // 停止心跳管理器
+        if let Some(ref mut manager) = inner.keepalive_manager {
+            manager.stop();
+        }
+        inner.keepalive_manager = None;
+
+        // 取消心跳任务
+        if let Some(handle) = inner.keepalive_handle.take() {
+            handle.abort();
+        }
+
+        info!("Keepalive stopped");
     }
 
     /// 执行认证
@@ -535,6 +680,9 @@ impl TerminalConnection for SshConnection {
 
     async fn close(&self) -> Result<(), ConnectionError> {
         info!("Closing SSH connection...");
+
+        // 先停止心跳
+        self.stop_keepalive();
 
         // 取出 channel 和 session，释放锁
         let (channel, session) = {

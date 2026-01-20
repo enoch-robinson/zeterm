@@ -1,6 +1,9 @@
 //! 分屏视图组件
 //!
-//!渲染和管理分屏布局的UI 组件。
+//! 渲染和管理分屏布局的UI 组件。
+
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use gpui::{
     AnyElement, App, Context, CursorStyle, Entity, FocusHandle, Focusable, Hsla,
@@ -10,13 +13,21 @@ use gpui::{
 use gpui_component::ActiveTheme;
 
 use super::{Pane, PaneContent, PaneId, SplitDirection, SplitManager};
+use crate::ui::terminal_view::TerminalView;
+
+/// 终端视图渲染器
+///
+/// 用于从外部提供终端视图实体的映射
+pub type TerminalViewMap = HashMap<PaneId, Entity<TerminalView>>;
 
 /// 分屏视图组件
 pub struct SplitView {
-    ///焦点句柄
+    /// 焦点句柄
     focus_handle: FocusHandle,
     /// 分屏管理器
     split_manager: Entity<SplitManager>,
+    /// 终端视图映射（由外部提供）
+    terminal_views: Arc<parking_lot::RwLock<TerminalViewMap>>,
 }
 
 impl SplitView {
@@ -25,7 +36,31 @@ impl SplitView {
         Self {
             focus_handle: cx.focus_handle(),
             split_manager,
+            terminal_views: Arc::new(parking_lot::RwLock::new(HashMap::new())),
         }
+    }
+
+    /// 设置终端视图映射
+    pub fn set_terminal_views(&mut self, views: TerminalViewMap) {
+        let mut guard = self.terminal_views.write();
+        *guard = views;
+    }
+
+    /// 注册终端视图
+    pub fn register_terminal_view(&self, pane_id: PaneId, view: Entity<TerminalView>) {
+        let mut guard = self.terminal_views.write();
+        guard.insert(pane_id, view);
+    }
+
+    /// 移除终端视图
+    pub fn unregister_terminal_view(&self, pane_id: PaneId) {
+        let mut guard = self.terminal_views.write();
+        guard.remove(&pane_id);
+    }
+
+    /// 获取终端视图映射的共享引用
+    pub fn terminal_views_ref(&self) -> Arc<parking_lot::RwLock<TerminalViewMap>> {
+        self.terminal_views.clone()
     }
 
     /// 获取分屏管理器
@@ -40,7 +75,12 @@ impl SplitView {
         let split_manager = self.split_manager.clone();
 
         match &pane.content {
-            PaneContent::Terminal { title, focused, .. } => {
+            PaneContent::Terminal {
+                pane_id: terminal_pane_id,
+                title,
+                focused,
+                ..
+            } => {
                 let is_focused = *focused;
                 let title = title.clone();
                 let border_color = if is_focused {
@@ -49,8 +89,14 @@ impl SplitView {
                     theme.border
                 };
 
+                // 尝试获取对应的 TerminalView
+                let terminal_view = {
+                    let guard = self.terminal_views.read();
+                    guard.get(&terminal_pane_id).cloned()
+                };
+
                 // 终端面板容器
-                div()
+                let container = div()
                     .id(format!("pane-{}", pane_id))
                     .flex_1()
                     .flex()
@@ -82,22 +128,38 @@ impl SplitView {
                                     .text_color(theme.muted_foreground)
                                     .child(title),
                             ),
-                    )    .child(
-                        // 终端内容区域（占位符）
-                        div()
-                            .id(format!("pane-content-{}", pane_id))
-                            .flex_1()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .text_color(theme.muted_foreground)
-                                    .child("Terminal View"),
-                            ),
-                    )    .into_any_element()
-            }
+                    );
+
+                // 根据是否有TerminalView 渲染不同内容
+                if let Some(view) = terminal_view {
+                    // 渲染实际的终端视图
+                    container
+                        .child(
+                            div()
+                                .id(format!("pane-content-{}", pane_id))
+                                .flex_1()
+                                .child(view),
+                        )
+                        .into_any_element()
+                } else {
+                    // 渲染占位符
+                    container
+                        .child(
+                            div()
+                                .id(format!("pane-content-{}", pane_id))
+                                .flex_1()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    div()
+                                        .text_color(theme.muted_foreground)
+                                        .child("正在加载终端..."),
+                                ),
+                        )
+                        .into_any_element()
+                }
+            },
             PaneContent::Split {
                 direction,
                 first,
@@ -140,7 +202,8 @@ impl SplitView {
                                 .min_w(px(50.0))
                                 .flex_basis(gpui::relative(second_ratio))
                                 .child(second_child),
-                        ).into_any_element()
+                        )
+                        .into_any_element()
                 } else {
                     // 垂直分屏（上下排列）
                     container
@@ -162,7 +225,7 @@ impl SplitView {
                         )
                         .into_any_element()
                 }
-            }
+            },
         }
     }
 
@@ -221,18 +284,13 @@ impl Render for SplitView {
             None => {
                 // 没有面板时显示提示
                 container.child(
-                    div()
-                        .flex_1()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            div()
-                                .text_color(theme.muted_foreground)
-                                .child("暂无终端，请从左侧主机列表选择主机连接"),
-                        ),
+                    div().flex_1().flex().items_center().justify_center().child(
+                        div()
+                            .text_color(theme.muted_foreground)
+                            .child("暂无终端，请从左侧主机列表选择主机连接"),
+                    ),
                 )
-            }
+            },
         }
     }
 }

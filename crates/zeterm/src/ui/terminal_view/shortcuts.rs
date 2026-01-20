@@ -46,7 +46,7 @@ pub enum ShortcutAction {
     ZoomReset,
     /// 清屏
     Clear,
-    ///滚动到顶部
+    /// 滚动到顶部
     ScrollToTop,
     /// 滚动到底部
     ScrollToBottom,
@@ -66,6 +66,19 @@ pub enum ShortcutAction {
     Disconnect,
     /// 重新连接
     Reconnect,
+    //========== 分屏相关 ==========
+    /// 水平分屏（左右）
+    SplitHorizontal,
+    /// 垂直分屏（上下）
+    SplitVertical,
+    /// 关闭当前面板
+    ClosePane,
+    /// 切换到下一个面板
+    FocusNextPane,
+    /// 切换到上一个面板
+    FocusPrevPane,
+    /// 切换侧边栏
+    ToggleSidebar,
 }
 
 impl ShortcutAction {
@@ -93,6 +106,13 @@ impl ShortcutAction {
             Self::OpenSettings => "打开设置",
             Self::Disconnect => "断开连接",
             Self::Reconnect => "重新连接",
+            //分屏相关
+            Self::SplitHorizontal => "水平分屏",
+            Self::SplitVertical => "垂直分屏",
+            Self::ClosePane => "关闭面板",
+            Self::FocusNextPane => "下一个面板",
+            Self::FocusPrevPane => "上一个面板",
+            Self::ToggleSidebar => "切换侧边栏",
         }
     }
 }
@@ -340,6 +360,44 @@ impl ShortcutManager {
         self.register(
             Shortcut::new("l", Modifiers::ctrl_shift()),
             ShortcutAction::Clear,
+        );
+
+        // 分屏管理
+        self.register(
+            Shortcut::new("\\", Modifiers::ctrl()),
+            ShortcutAction::SplitHorizontal,
+        );
+        self.register(
+            Shortcut::new("|", Modifiers::ctrl_shift()),
+            ShortcutAction::SplitHorizontal,
+        );
+        self.register(
+            Shortcut::new("-", Modifiers::ctrl_shift()),
+            ShortcutAction::SplitVertical,
+        );
+        self.register(
+            Shortcut::new("_", Modifiers::ctrl_shift()),
+            ShortcutAction::SplitVertical,
+        );
+        self.register(
+            Shortcut::new("w", Modifiers::ctrl_alt()),
+            ShortcutAction::ClosePane,
+        );
+
+        // 面板焦点切换
+        self.register(
+            Shortcut::new("]", Modifiers::ctrl()),
+            ShortcutAction::FocusNextPane,
+        );
+        self.register(
+            Shortcut::new("[", Modifiers::ctrl()),
+            ShortcutAction::FocusPrevPane,
+        );
+
+        // 侧边栏
+        self.register(
+            Shortcut::new("b", Modifiers::ctrl()),
+            ShortcutAction::ToggleSidebar,
         );
     }
 

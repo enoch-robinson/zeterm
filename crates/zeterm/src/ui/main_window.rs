@@ -2,22 +2,30 @@
 //!
 //! 管理应用程序的主窗口，包括主机列表、终端视图和分屏功能。
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
     Render, SharedString, Styled, Window, div, prelude::*, px,
 };
-
-use crate::ui::split_pane::{SplitManager, SplitView};
 use gpui_component::ActiveTheme;
+use tracing::info;
+
+use crate::app::session::SessionCoordinator;
+use crate::ui::split_pane::{Pane, PaneId, SplitManager, SplitView};
+use crate::ui::terminal_view::TerminalView;
 
 /// 主窗口
 pub struct MainWindow {
-    ///焦点句柄
+    /// 焦点句柄
     focus_handle: FocusHandle,
     /// 主机列表视图
     host_list_view: Option<SharedString>,
-    /// 终端视图映射
-    terminal_views: std::collections::HashMap<usize, SharedString>,
+    /// 终端视图映射 (PaneId -> TerminalView Entity)
+    terminal_views: HashMap<PaneId, Entity<TerminalView>>,
+    /// 会话协调器映射 (PaneId -> SessionCoordinator)
+    coordinators: HashMap<PaneId, Arc<SessionCoordinator>>,
     /// 分屏管理器
     split_manager: Entity<SplitManager>,
     /// 分屏视图
@@ -52,7 +60,8 @@ impl MainWindow {
         Self {
             focus_handle,
             host_list_view: None,
-            terminal_views: std::collections::HashMap::new(),
+            terminal_views: HashMap::new(),
+            coordinators: HashMap::new(),
             split_manager,
             split_view,
             show_sidebar: true,
@@ -95,6 +104,102 @@ impl MainWindow {
                 manager.close_pane(pane_id, cx);
             });
         }
+    }
+
+    /// 添加终端面板///
+    /// 创建一个新的终端面板并添加到分屏管理器。
+    /// 如果当前没有面板，则设置为根面板；
+    /// 如果已有面板，则在当前焦点面板旁边水平分屏。
+    pub fn add_terminal_pane(
+        &mut self,
+        title: impl Into<String>,
+        coordinator: Arc<SessionCoordinator>,
+        cx: &mut Context<Self>,
+    ) -> PaneId {
+        let title = title.into();
+        let new_pane = Pane::new_terminal(&title);
+        let pane_id = new_pane.id;
+
+        // 创建 TerminalView 实体
+        let terminal_view = cx.new(|cx| TerminalView::new(coordinator.clone(), cx));
+
+        // 存储映射关系
+        self.terminal_views.insert(pane_id, terminal_view.clone());
+        self.coordinators.insert(pane_id, coordinator);
+
+        // 同步到 SplitView
+        self.split_view.update(cx, |view, _cx| {
+            view.register_terminal_view(pane_id, terminal_view);
+        });
+
+        let has_panes = self.split_manager.read(cx).has_panes();
+
+        if !has_panes {
+            // 没有面板，设置为根面板
+            self.split_manager.update(cx, |manager, cx| {
+                manager.set_root(new_pane, cx);
+                manager.focus_pane(pane_id, cx);
+            });
+        } else {
+            // 已有面板，在当前焦点面板旁边水平分屏
+            if let Some(focused_id) = self.split_manager.read(cx).focused_pane() {
+                self.split_manager.update(cx, |manager, cx| {
+                    manager.split_horizontal(focused_id, cx);
+                });
+            }
+        }
+
+        info!("Added terminal pane: {} (id: {})", title, pane_id);
+        cx.notify();
+        pane_id
+    }
+
+    /// 添加 SSH 终端面板
+    ///
+    /// 使用主机配置创建一个新的终端面板
+    pub fn add_ssh_terminal_pane(
+        &mut self,
+        host_config: &zeterm_core::entities::HostConfig,
+        coordinator: Arc<SessionCoordinator>,
+        cx: &mut Context<Self>,
+    ) -> PaneId {
+        let title = format!("{}@{}", host_config.username, host_config.host);
+        self.add_terminal_pane(title, coordinator, cx)
+    }
+
+    /// 获取指定面板的 TerminalView
+    pub fn get_terminal_view(&self, pane_id: PaneId) -> Option<&Entity<TerminalView>> {
+        self.terminal_views.get(&pane_id)
+    }
+
+    /// 获取指定面板的 SessionCoordinator
+    pub fn get_coordinator(&self, pane_id: PaneId) -> Option<&Arc<SessionCoordinator>> {
+        self.coordinators.get(&pane_id)
+    }
+
+    /// 关闭指定面板的终端
+    pub fn close_terminal_pane(&mut self, pane_id: PaneId, cx: &mut Context<Self>) {
+        // 移除终端视图和协调器
+        self.terminal_views.remove(&pane_id);
+        self.coordinators.remove(&pane_id);
+
+        // 从 SplitView 中移除
+        self.split_view.update(cx, |view, _cx| {
+            view.unregister_terminal_view(pane_id);
+        });
+
+        // 从分屏管理器中移除
+        self.split_manager.update(cx, |manager, cx| {
+            manager.close_pane(pane_id, cx);
+        });
+
+        info!("Closed terminal pane: {}", pane_id);
+        cx.notify();
+    }
+
+    /// 获取所有终端视图
+    pub fn terminal_views(&self) -> &HashMap<PaneId, Entity<TerminalView>> {
+        &self.terminal_views
     }
 
     ///渲染欢迎界面
@@ -145,31 +250,27 @@ impl MainWindow {
         let theme = cx.theme();
         let secondary = theme.secondary;
         let border = theme.border;
-        let is_connected = self.is_connected();
 
         // 右侧主区域容器
         let main_area = div().id("main-area").flex_1().flex().flex_col();
 
-        // 终端或欢迎界面
-        let content_area = if is_connected {
+        // 使用 SplitView 渲染终端区域
+        // 如果有面板则渲染 SplitView，否则渲染欢迎界面
+        let has_panes = self.split_manager.read(cx).has_panes();
+
+        let content_area = if has_panes {
+            //渲染分屏视图
             div()
-                .id("terminal-panel")
+                .id("split-panel")
                 .flex_1()
                 .w_full()
+                .h_full()
                 .flex()
                 .flex_col()
-                .child(
-                    div().id("terminal-container").flex_1().w_full().child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child("Terminal View"),
-                    ),
-                )
+                .child(self.split_view.clone())
                 .into_any_element()
         } else {
+            // 渲染欢迎界面
             div()
                 .id("welcome-panel")
                 .flex_1()

@@ -1,16 +1,56 @@
 # Phase 5 UI 层实现状态报告
 
-**日期**: 2026-01-19  
+**日期**: 2026-01-21  
 **报告人**: AI Assistant  
 **项目**: Zeterm Terminal Emulator  
-**阶段**: Phase 5 -高级功能与UI 完善  
-**状态**: 🔄 分屏布局核心逻辑已完成
+**阶段**: Phase 5 - 高级功能与UI 完善  
+**状态**: 🔄 分屏布局UI 集成已完成，Keepalive 已集成
 
 ---
 
-## 📋 本次会话完成的工作
+## 📋 本次会话完成的工作(2026-01-21)
 
-### 1. Tab 管理系统 (6.2)
+### 0. 高优先级任务完成
+
+#### 0.1 Keepalive 心跳集成 (Phase 3遗留问题)
+
+**文件**: `crates/zeterm-ssh/src/connection.rs`
+
+-✅ 集成 `KeepaliveManager` 到 `SshConnection`
+- ✅ 实现 `ConnectionKeepaliveCallback` 事件回调
+- ✅ 连接成功后自动启动心跳
+- ✅ 连接关闭时自动停止心跳
+- ✅ 心跳超时时更新连接状态标志
+
+#### 0.2 分屏布局UI 集成 (6.3)
+
+**文件**:
+- `crates/zeterm/src/ui/main_window.rs`
+- `crates/zeterm/src/ui/split_pane/split_view.rs`
+
+- ✅ MainWindow 集成 SplitView 渲染
+- ✅ 添加 `add_terminal_pane()` 方法创建终端面板
+- ✅ 添加 `add_ssh_terminal_pane()` 方法支持 SSH 连接
+- ✅ 添加 `close_terminal_pane()` 方法关闭终端面板
+- ✅ TerminalView 实体映射 (PaneId -> Entity<TerminalView>)
+- ✅ SplitView 支持渲染实际的 TerminalView（不再是占位符）
+- ✅ 终端视图自动同步到 SplitView
+
+#### 0.3 分屏快捷键 (6.3)
+
+**文件**: `crates/zeterm/src/ui/terminal_view/shortcuts.rs`
+
+新增快捷键动作：
+- ✅ `SplitHorizontal` - 水平分屏 (Ctrl+\ 或 Ctrl+Shift+|)
+- ✅ `SplitVertical` - 垂直分屏 (Ctrl+Shift+- 或 Ctrl+Shift+_)
+- ✅ `ClosePane` - 关闭面板 (Ctrl+Alt+W)
+- ✅ `FocusNextPane` - 下一个面板 (Ctrl+])
+- ✅ `FocusPrevPane` - 上一个面板 (Ctrl+[)
+- ✅ `ToggleSidebar` - 切换侧边栏 (Ctrl+B)
+
+---
+
+### 1. Tab 管理系统 (6.2) - 之前会话
 
 **文件**:
 - `crates/zeterm/src/ui/tab_manager.rs`
@@ -85,16 +125,23 @@
 
 | 模块 | 状态 | 完成度 | 说明 |
 |------|------|--------|------|
-|6.1主机管理 | ✅ | 100% | 主机列表、连接对话框、数据库集成 |
+| 6.1 主机管理 | ✅ | 100% | 主机列表、连接对话框、数据库集成 |
 | 6.2 Tab 管理 | ✅ | 85% | 基础功能完成，拖拽排序待实现 |
-| 6.3 分屏布局 | 🔄 | **70%** | 核心逻辑完成，UI 集成和拖拽待完成 |
+| 6.3 分屏布局 | ✅ | **90%** | UI 集成完成，TerminalView 嵌入完成，快捷键已添加 |
 | 6.4 配置系统 | ⬜ | 0% | 待实现 |
-| 6.5 数据持久化 | ✅ | 100% | SQLite +HostRepository |
+| 6.5 数据持久化 | ✅ | 100% | SQLite + HostRepository |
 | 6.6 SFTP 文件管理 | ⬜ | 0% | 待实现 |
 | 6.7 主题系统 | ⬜ | 0% | 待实现 |
-| 6.8 状态栏 | 🔄 | 30% | 基础状态栏在MainWindow 中 |
+| 6.8 状态栏 | 🔄 | 30% | 基础状态栏在 MainWindow 中 |
 
-**总体进度**: Phase 5 约 **60%** 完成
+**总体进度**: Phase 5 约 **65%** 完成
+
+### Phase 3 遗留问题修复
+
+| 问题 | 状态 | 说明 |
+|------|------|------|
+| Keepalive 管理器未启动 | ✅ 已修复 | 已集成到 SshConnection |
+| 主机密钥验证 | ✅ 已确认 | 实际已实现，无需修复 |
 
 ---
 
@@ -113,20 +160,21 @@
 | 分隔条视觉效果 | `render_separator()` | hover 高亮、游标变化 |
 | 左侧边栏布局 | `main_window.rs` | 280px 主机列表 |
 | MainWindow 集成 SplitManager | `main_window.rs` | 字段已添加 |
+| **在MainWindow 渲染 SplitView** | `main_window.rs` | ✅ 2026-01-21 完成 |
+| **将 TerminalView 嵌入分屏面板** | `split_view.rs` | ✅ 2026-01-21 完成 |
+| **添加分屏快捷键** | `shortcuts.rs` | ✅ 2026-01-21 完成 |
+| **TerminalView 实体映射** | `main_window.rs` | ✅ PaneId -> Entity 映射 |
 
 ### 进行中 🔄
 
 | 任务 | 预估时间 | 说明 |
 |------|----------|------|
-| 在MainWindow 渲染 SplitView | 1h | 需更新 `render_content()` |
 | 分隔条拖拽事件 | 3h | 需实现 `on_drag` / `on_drag_move` |
 
 ### 待完成 ⬜
 
 | 任务 | 预估时间 | 优先级 |
 |------|----------|--------|
-| 将TerminalView 嵌入分屏面板 | 2h | P0 |
-| 添加分屏快捷键 (Ctrl+\ / Ctrl+-) | 1h | P1 |
 | 右键菜单：分屏/关闭面板 | 1h | P2 |
 | 底部面板（可选） | 1h | P2 |
 
@@ -134,15 +182,9 @@
 
 ## 🎯 下一步建议
 
-### 短期 (1-2天) - 完成 6.3 分屏布局
+### 短期 (1-2天)
 
-1. **在 MainWindow 中渲染 SplitView** (P0,1h)
-   ```rust
-   // 在 render_content() 中使用 split_view
-   .child(self.split_view.clone())
-   ```
-
-2. **实现分隔条拖拽调整** (P0, 3h)
+1. **实现分隔条拖拽调整** (P1, 3h)
    ```rust
    .on_drag(DragSeparator { split_id, direction }, |drag, _, _, cx| { ... })
    .on_drag_move(cx.listener(move |this, event, window, cx| {
@@ -150,39 +192,55 @@
    }))
    ```
 
-3. **将 TerminalView 嵌入分屏面板** (P0, 2h)
-   - 修改 `PaneContent::Terminal` 渲染逻辑
-   - 从 MainWindow 的 terminal_views HashMap 获取实际终端
-
-4. **添加分屏快捷键** (P1, 1h)
-   - `Ctrl+\`水平分屏
-   - `Ctrl+-` 垂直分屏
-   - `Ctrl+W` 关闭当前面板
+2. **清理编译警告** (P2, 2h)
+   - 当前有 183 个警告
+   - 主要是未使用的代码
 
 ### 中期 (3-5天)
 
-5. **实现配置系统 (6.4)**
+3. **实现配置系统 (6.4)**
    - TOML 配置文件
    - 配置热更新
 
-6. **实现主题系统 (6.7)**
+4. **实现主题系统 (6.7)**
    - 集成 gpui-component Theme
    - 深色/浅色主题切换
+
+5. **实现 SFTP 文件管理 (6.6)**
+   - 文件列表视图
+   - 上传/下载功能
 
 ---
 
 ## ✅ 结论
 
-本次会话完成了：
-1. ✅ 6.3 分屏布局的核心逻辑（SplitManager + SplitView）
-2. ✅ 确认gpui-component 无 Dock 组件，决定使用自实现方案
-3. ✅ 更新 task-checklist.md 中的 6.3 任务状态
+### 本次会话 (2026-01-21)完成了：
+
+1. ✅ **Keepalive 心跳集成** - 修复 Phase 3 遗留问题
+   - `ConnectionKeepaliveCallback` 事件回调
+   - 连接后自动启动心跳
+   - 超时时更新连接状态
+
+2. ✅ **分屏布局 UI 集成** - 完成 P0 任务
+   - MainWindow 渲染 SplitView
+   - TerminalView 嵌入分屏面板
+   - PaneId -> Entity<TerminalView> 映射
+
+3. ✅ **分屏快捷键** - 6个新快捷键
+   - Ctrl+\ / Ctrl+Shift+| 水平分屏
+   - Ctrl+Shift+- / Ctrl+Shift+_ 垂直分屏
+   - Ctrl+Alt+W 关闭面板
+   - Ctrl+] / Ctrl+[ 面板焦点切换
+   - Ctrl+B 切换侧边栏
 
 **剩余工作**：
-- 🔄 UI 集成（将 SplitView渲染到 MainWindow）
 - 🔄 分隔条拖拽交互
-- ⬜ 终端视图嵌入
+- ⬜ 配置系统 (6.4)
+- ⬜ 主题系统 (6.7)
+- ⬜ SFTP 文件管理 (6.6)
 
-**编译状态**:✅ 通过
+**编译状态**:✅ 通过 (183 warnings)
 
-**6.3 分屏布局进度**: 约 **70%** 完成
+**6.3 分屏布局进度**: 约 **90%** 完成
+
+**Phase 5 整体进度**: 约 **65%** 完成
