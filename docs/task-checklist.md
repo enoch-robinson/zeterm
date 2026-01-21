@@ -1065,10 +1065,20 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 | 备注 |
 |------|------|--------|----------|------|
-|⬜ | 实现 hosts.toml 解析 | P0 | 2h | HostConfig 结构已定义，文件操作待实现 |
-| ⬜ | 实现 hosts.toml 保存 | P0 | 1h | 可使用 HostConfig 的序列化功能 |
-| ⬜ | 支持密码引用格式 (keychain:xxx) | P1 | 2h | AuthConfig 已支持 password_ref 字段 |
-| ⬜ | 支持环境变量引用 (env:xxx) | P2 | 1h | 待实现 |
+| ✅ | 实现 hosts.toml 解析 | P0 | 2h | HostsConfig::from_toml/load_from_file (2026-01-22) |
+| ✅ | 实现 hosts.toml 保存 | P0 | 1h | HostsConfig::to_toml/save_to_file (2026-01-22) |
+| ✅ | 支持密码引用格式 (keychain:xxx) | P1 | 2h | PasswordRef::Keychain + parse() (2026-01-22) |
+| ✅ | 支持环境变量引用 (env:xxx) | P2 | 1h | PasswordRef::Env + resolve() (2026-01-22) |
+
+**实现说明** (2026-01-22):
+- 新增 `hosts_config.rs` 模块 (`zeterm-core/src/config/`)
+- `HostsConfig` - hosts.toml 完整结构（hosts 列表 + groups 配置）
+- `HostEntry` - 单个主机配置条目，支持 password/public_key/agent 三种认证
+- `PasswordRef` - 密码引用解析器（keychain:/env:/plain: 三种格式）
+- `HostsConfigManager` - 高层次配置管理 API（加载/保存/CRUD/导入导出）
+- `GroupConfig` - 分组配置（display_name/color/order）
+- `generate_example_hosts_toml()` - 生成示例配置
+- 29 个单元测试全部通过
 
 #### 6.4.4 配置热更新
 
@@ -1188,21 +1198,28 @@
 
 #### 6.7.1 主题定义
 
-| 状态 | 任务 | 优先级 | 预估时间 |
-|------|------|--------|----------|
-| ⬜ | 定义 `TerminalTheme` 结构体 | P0 | 1h |
-| ⬜ | 定义终端颜色调色板 | P0 | 1h |
-| ⬜ | 定义默认亮色主题 | P0 | 1h |
-| ⬜ | 定义默认暗色主题 | P0 | 1h |
+| 状态 | 任务 | 优先级 | 预估时间 | 备注 |
+|------|------|--------|----------|------|
+| ✅ | 定义 `TerminalTheme` 结构体 | P0 | 1h | terminal_view/theme.rs 已实现 |
+| ✅ | 定义终端颜色调色板 | P0 | 1h | ColorPalette 16色+前景+背景 |
+| ✅ | 定义默认亮色主题 | P0 | 1h | Light, Solarized Light |
+| ✅ | 定义默认暗色主题 | P0 | 1h | Dark, Dracula, One Dark, Nord, Monokai, Gruvbox, Tokyo Night, Solarized Dark |
 
 #### 6.7.2 主题集成
 
-| 状态 | 任务 | 优先级 | 预估时间 |
-|------|------|--------|----------|
-| ⬜ | 集成 gpui-component Theme | P0 | 1h |
-| ⬜ | 实现主题切换功能 | P0 | 1h |
-| ⬜ | 实现主题持久化 | P1 | 1h |
-| ⬜ | 支持自定义主题文件 | P2 | 2h |
+| 状态 | 任务 | 优先级 | 预估时间 | 备注 |
+|------|------|--------|----------|------|
+| ✅ | 集成 gpui-component Theme | P0 | 1h | AppThemeManager + BuiltinTheme 枚举 |
+| ✅ | 实现主题切换功能 | P0 | 1h | toggle_theme/next_theme/prev_theme + 快捷键 |
+| ✅ | 实现主题持久化 | P1 | 1h | ThemeConfig TOML 序列化 |
+| ⬜ | 支持自定义主题文件 | P2 | 2h | 待实现 |
+
+**注**: 主题系统 2026-01-21 完成，包括：
+- `AppThemeManager` 全局主题管理器
+- `BuiltinTheme` 枚举（10种内置主题）
+- `ThemeConfig` 配置持久化（TOML）
+- 主题切换快捷键（Ctrl+Alt+T 切换深浅, Ctrl+. 下一个, Ctrl+, 上一个）
+- 14个单元测试通过
 
 ---
 
@@ -1343,3 +1360,4 @@
 | v1.4 | 2026-01-13 | 完成主机密钥确认对话框跨线程集成：HostKeyConfirmChannel 连接到 SshHandler，实现 SSH 线程与UI 线程的双向通信 |
 | v1.5 | 2026-01-19 | 完成 Phase 5 数据持久化和配置系统：实现 HostRepository（9个方法）、Database 连接管理、数据库迁移脚本、配置管理（AppConfig/TerminalConfig/AppearanceConfig/NetworkConfig），开始实现主机管理 UI（HostListView 基础结构），17个单元测试全部通过 |
 | v1.6 | 2026-01-21 | 完成状态栏实现（6.8）：StatusBar 组件、连接状态图标、终端尺寸显示、编码信息、RTT 延迟显示，集成到 MainWindow 底部，5个单元测试通过 |
+| v1.7 | 2026-01-21 | 完成主题系统（6.7）：AppThemeManager 全局管理、10种内置主题（Dark/Light/Dracula/One Dark/Nord/Monokai/Gruvbox/Tokyo Night/Solarized Dark/Solarized Light）、ThemeConfig 持久化、主题切换快捷键（Ctrl+Alt+T/Ctrl+./Ctrl+,）、集成到 MainWindow，14个单元测试通过 |

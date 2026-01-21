@@ -1,6 +1,6 @@
 //! 主窗口模块
 //!
-//! 管理应用程序的主窗口，包括主机列表、终端视图、分屏功能和状态栏。
+//! 管理应用程序的主窗口，包括主机列表、终端视图、分屏功能、状态栏和主题。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,6 +13,7 @@ use gpui_component::ActiveTheme;
 use tracing::info;
 
 use crate::app::session::SessionCoordinator;
+use crate::ui::app_theme::{AppThemeManager, BuiltinTheme, ThemeMode};
 use crate::ui::split_pane::{Pane, PaneId, SplitManager, SplitView};
 use crate::ui::status_bar::{ConnectionStatus, StatusBar, StatusInfo};
 use crate::ui::terminal_view::TerminalView;
@@ -33,6 +34,8 @@ pub struct MainWindow {
     split_view: Entity<SplitView>,
     /// 状态栏
     status_bar: Entity<StatusBar>,
+    /// 主题管理器
+    theme_manager: AppThemeManager,
     /// 是否显示侧边栏
     show_sidebar: bool,
 }
@@ -60,6 +63,7 @@ impl MainWindow {
         let focus_handle = cx.focus_handle();
         let split_view = cx.new(|cx| SplitView::new(split_manager.clone(), cx));
         let status_bar = cx.new(|cx| StatusBar::new(cx));
+        let theme_manager = AppThemeManager::new();
 
         Self {
             focus_handle,
@@ -69,6 +73,7 @@ impl MainWindow {
             split_manager,
             split_view,
             status_bar,
+            theme_manager,
             show_sidebar: true,
         }
     }
@@ -122,6 +127,96 @@ impl MainWindow {
             bar.update_status(info, cx);
         });
     }
+
+    // ==================== 主题管理 ====================
+
+    /// 获取主题管理器
+    pub fn theme_manager(&self) -> &AppThemeManager {
+        &self.theme_manager
+    }
+
+    /// 获取主题管理器（可变）
+    pub fn theme_manager_mut(&mut self) -> &mut AppThemeManager {
+        &mut self.theme_manager
+    }
+
+    /// 获取当前主题
+    pub fn current_theme(&self) -> BuiltinTheme {
+        self.theme_manager.current_theme()
+    }
+
+    /// 设置主题
+    pub fn set_theme(&mut self, theme: BuiltinTheme, cx: &mut Context<Self>) {
+        self.theme_manager.set_theme(theme);
+        // 同步终端视图的主题
+        self.sync_terminal_themes(cx);
+        info!("Theme changed to: {:?}", theme);
+        cx.notify();
+    }
+
+    /// 设置主题模式
+    pub fn set_theme_mode(&mut self, mode: ThemeMode, cx: &mut Context<Self>) {
+        self.theme_manager.set_mode(mode);
+        self.sync_terminal_themes(cx);
+        info!("Theme mode changed to: {:?}", mode);
+        cx.notify();
+    }
+
+    /// 切换深色/浅色模式
+    pub fn toggle_theme(&mut self, cx: &mut Context<Self>) {
+        self.theme_manager.toggle_dark_light();
+        self.sync_terminal_themes(cx);
+        info!(
+            "Theme toggled to: {:?} (dark: {})",
+            self.theme_manager.current_theme(),
+            self.theme_manager.is_dark_mode()
+        );
+        cx.notify();
+    }
+
+    /// 切换到下一个主题
+    pub fn next_theme(&mut self, cx: &mut Context<Self>) {
+        self.theme_manager.next_theme();
+        self.sync_terminal_themes(cx);
+        info!(
+            "Switched to next theme: {:?}",
+            self.theme_manager.current_theme()
+        );
+        cx.notify();
+    }
+
+    /// 切换到上一个主题
+    pub fn prev_theme(&mut self, cx: &mut Context<Self>) {
+        self.theme_manager.prev_theme();
+        self.sync_terminal_themes(cx);
+        info!(
+            "Switched to prev theme: {:?}",
+            self.theme_manager.current_theme()
+        );
+        cx.notify();
+    }
+
+    /// 是否为深色模式
+    pub fn is_dark_mode(&self) -> bool {
+        self.theme_manager.is_dark_mode()
+    }
+
+    /// 获取所有可用主题
+    pub fn available_themes(&self) -> &'static [BuiltinTheme] {
+        self.theme_manager.available_themes()
+    }
+
+    /// 同步终端视图的主题
+    fn sync_terminal_themes(&mut self, cx: &mut Context<Self>) {
+        let terminal_theme = self.theme_manager.terminal_theme().clone();
+        for terminal_view in self.terminal_views.values() {
+            terminal_view.update(cx, |view, _cx| {
+                view.set_theme(terminal_theme.clone());
+            });
+        }
+    }
+
+    // ==================== 侧边栏管理 ====================
 
     /// 切换侧边栏
     pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {

@@ -3,9 +3,15 @@
 //! 提供应用配置的定义、加载和保存功能。
 
 mod app_config;
+mod hosts_config;
 
 pub use app_config::{
     AppConfig, AppearanceConfig, CursorStyle, KeybindingsConfig, NetworkConfig, TerminalConfig,
+};
+
+pub use hosts_config::{
+    AuthType, GroupConfig, HostEntry, HostsConfig, HostsConfigManager, PasswordRef,
+    generate_example_hosts_toml,
 };
 
 use anyhow::{Context, Result};

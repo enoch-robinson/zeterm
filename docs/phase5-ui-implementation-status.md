@@ -1,18 +1,84 @@
 # Phase 5 UI 层实现状态报告
 
-**日期**: 2026-01-21 23:25 (更新)  
+**日期**: 2026-01-22 00:04 (更新)  
 **报告人**: AI Assistant  
 **项目**: Zeterm Terminal Emulator  
 **阶段**: Phase 5 - 高级功能与UI 完善  
-**状态**: ✅ 分屏布局完成，状态栏完成，编译警告已清理
+**状态**: ✅ 分屏布局完成，状态栏完成，主题系统完成，hosts.toml配置完成
 
 ---
 
-## 📋 本次会话完成的工作(2026-01-21)
+## 📋 本次会话完成的工作(2026-01-22)
 
 ### 0. 高优先级任务完成
 
-#### 0.0 状态栏实现 (6.8) - 2026-01-21 23:25 新增
+#### 0.0 hosts.toml 配置系统 (6.4.3) - 2026-01-22 00:04 新增
+
+**文件**: `crates/zeterm-core/src/config/hosts_config.rs` (新增)
+
+- ✅ 创建 `HostsConfig` 结构体 - hosts.toml 完整映射
+- ✅ 创建 `HostEntry` 结构体 - 单个主机配置条目
+- ✅ 创建 `AuthType` 枚举 (Password/PublicKey/Agent)
+- ✅ 创建 `PasswordRef` 枚举 - 密码引用解析器
+- ✅ 创建 `GroupConfig` 结构体 - 分组配置
+- ✅ 创建 `HostsConfigManager` - 高层次配置管理器
+- ✅ 实现 `from_toml()` / `to_toml()` TOML 序列化
+- ✅ 实现 `load_from_file()` / `save_to_file()` 文件操作
+- ✅ 实现 `PasswordRef::parse()` 密码引用解析
+- ✅ 实现 `PasswordRef::resolve()` 环境变量解析
+- ✅ 实现 `HostEntry` ↔ `HostConfig` 双向转换
+- ✅ 实现 `generate_example_hosts_toml()` 示例生成
+- ✅ 29 个单元测试通过
+
+**支持的密码引用格式**:
+- `keychain:service_name` - 从系统密钥链读取
+- `env:VAR_NAME` - 从环境变量读取
+- `plain:password` - 明文密码（不推荐）
+
+**文件**: `crates/zeterm-core/src/config/mod.rs`
+
+- ✅ 导出 `HostsConfig`, `HostEntry`, `AuthType`, `PasswordRef`
+- ✅ 导出 `GroupConfig`, `HostsConfigManager`
+- ✅ 导出 `generate_example_hosts_toml`
+
+#### 0.1 主题系统实现 (6.7) - 2026-01-21 23:37 新增
+
+**文件**: `crates/zeterm/src/ui/app_theme.rs` (新增)
+
+- ✅ 创建 `AppThemeManager` 全局主题管理器
+- ✅ 创建 `BuiltinTheme` 枚举（10种内置主题）
+- ✅ 创建 `ThemeMode` 枚举（Dark/Light/System）
+- ✅ 创建 `ThemeConfig` 配置结构（支持 TOML 持久化）
+- ✅ 实现 `set_theme()` / `toggle_dark_light()` 主题切换
+- ✅ 实现 `next_theme()` / `prev_theme()` 主题循环切换
+- ✅ 实现主题持久化（load_config/save_config）
+- ✅ 14 个单元测试通过
+
+**内置主题列表**:
+- Dark (默认深色)
+- Light (默认浅色)
+- Dracula
+- One Dark
+- Solarized Dark / Solarized Light
+- Nord
+- Monokai
+- Gruvbox Dark
+- Tokyo Night
+
+**文件**: `crates/zeterm/src/ui/terminal_view/shortcuts.rs`
+
+- ✅ 添加 `ToggleTheme` 动作 (Ctrl+Alt+T)
+- ✅ 添加 `NextTheme` 动作 (Ctrl+.)
+- ✅ 添加 `PrevTheme` 动作 (Ctrl+,)
+
+**文件**: `crates/zeterm/src/ui/main_window.rs`
+
+- ✅ 添加 `theme_manager: AppThemeManager` 字段
+- ✅ 添加 `set_theme()` / `toggle_theme()` 方法
+- ✅ 添加 `next_theme()` / `prev_theme()` 方法
+- ✅ 实现 `sync_terminal_themes()` 同步所有终端视图
+
+#### 0.1 状态栏实现 (6.8) - 2026-01-21 23:25 新增
 
 **文件**: `crates/zeterm/src/ui/status_bar.rs`
 
@@ -177,13 +243,13 @@
 | 6.1 主机管理 | ✅ | 100% | 主机列表、连接对话框、数据库集成 |
 | 6.2 Tab 管理 | ✅ | 85% | 基础功能完成，拖拽排序待实现 |
 | 6.3 分屏布局 | ✅ | **100%** | UI 集成、TerminalView 嵌入、快捷键、拖拽调整全部完成 |
-| 6.4 配置系统 | ⬜ | 0% | 待实现 |
+| 6.4 配置系统 | ✅ | **80%** | config.toml + hosts.toml 完成，热更新待实现 |
 | 6.5 数据持久化 | ✅ | 100% | SQLite + HostRepository |
 | 6.6 SFTP 文件管理 | ⬜ | 0% | 待实现 |
-| 6.7 主题系统 | ⬜ | 0% | 待实现 |
+| 6.7 主题系统 | ✅ | **100%** | AppThemeManager + 10种内置主题 + 快捷键 |
 | 6.8 状态栏 | ✅ | **100%** | StatusBar 组件完成，集成到 MainWindow |
 
-**总体进度**: Phase 5 约 **75%** 完成
+**总体进度**: Phase 5 约 **85%** 完成
 
 ### Phase 3 遗留问题修复
 
@@ -290,9 +356,10 @@
    - Ctrl+B 切换侧边栏
 
 **剩余工作**：
-- ⬜ 配置系统 (6.4)
-- ⬜ 主题系统 (6.7)
+- ⬜ 配置热更新 (6.4.4 P2)
 - ⬜ SFTP 文件管理 (6.6)
+- ⬜ 自定义主题文件支持 (6.7 P2)
+- ⬜ 敏感信息存储 SecretStore (6.5.5)
 
 **编译状态**: ✅ 通过 (0 warnings)
 
@@ -300,13 +367,30 @@
 
 **6.3 分屏布局进度**: ✅ **100%** 完成
 
+**6.7 主题系统进度**: ✅ **100%** 完成
+
 **6.8 状态栏进度**: ✅ **100%** 完成
 
-**Phase 5 整体进度**: 约 **75%** 完成
+**Phase 5 整体进度**: 约 **85%** 完成
 
 ---
 
 ##📝 更新日志
+
+### 2026-01-22 00:04
+- ✅ 实现 hosts.toml 配置系统 (6.4.3)
+- ✅ 创建 HostsConfig/HostEntry/PasswordRef 数据结构
+- ✅ 实现 from_toml/to_toml/load_from_file/save_to_file
+- ✅ 实现密码引用解析 (keychain:/env:/plain:)
+- ✅ 创建 HostsConfigManager 高层次 API
+- ✅ 29 个单元测试通过
+
+### 2026-01-21 23:37
+- ✅ 实现主题系统 (AppThemeManager)
+- ✅ 添加 10 种内置主题 (Dark/Light/Dracula/One Dark/Nord/Monokai/Gruvbox/Tokyo Night/Solarized)
+- ✅ 添加主题切换快捷键 (Ctrl+Alt+T, Ctrl+., Ctrl+,)
+- ✅ 集成到 MainWindow
+- ✅ 14 个单元测试通过
 
 ### 2026-01-21 23:25
 - ✅ 实现状态栏组件 (StatusBar)

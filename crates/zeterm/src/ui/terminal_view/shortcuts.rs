@@ -79,6 +79,13 @@ pub enum ShortcutAction {
     FocusPrevPane,
     /// 切换侧边栏
     ToggleSidebar,
+    //========== 主题相关 ==========
+    /// 切换深色/浅色主题
+    ToggleTheme,
+    /// 切换到下一个主题
+    NextTheme,
+    /// 切换到上一个主题
+    PrevTheme,
 }
 
 impl ShortcutAction {
@@ -113,6 +120,10 @@ impl ShortcutAction {
             Self::FocusNextPane => "下一个面板",
             Self::FocusPrevPane => "上一个面板",
             Self::ToggleSidebar => "切换侧边栏",
+            // 主题相关
+            Self::ToggleTheme => "切换深色/浅色主题",
+            Self::NextTheme => "下一个主题",
+            Self::PrevTheme => "上一个主题",
         }
     }
 }
@@ -398,6 +409,20 @@ impl ShortcutManager {
         self.register(
             Shortcut::new("b", Modifiers::ctrl()),
             ShortcutAction::ToggleSidebar,
+        );
+
+        // 主题切换
+        self.register(
+            Shortcut::new("t", Modifiers::ctrl_alt()),
+            ShortcutAction::ToggleTheme,
+        );
+        self.register(
+            Shortcut::new(".", Modifiers::ctrl()),
+            ShortcutAction::NextTheme,
+        );
+        self.register(
+            Shortcut::new(",", Modifiers::ctrl()),
+            ShortcutAction::PrevTheme,
         );
     }
 

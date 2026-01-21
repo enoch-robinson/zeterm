@@ -28,7 +28,7 @@ use tracing::{debug, info};
 use crate::app::session::SessionCoordinator;
 
 mod clipboard;
-mod colors;
+pub mod colors;
 mod font_metrics;
 mod fonts;
 mod hyperlink;
@@ -40,7 +40,7 @@ mod search;
 mod selection;
 mod shortcuts;
 mod terminal_element;
-mod theme;
+pub mod theme;
 mod wide_char;
 
 #[allow(unused_imports)]
