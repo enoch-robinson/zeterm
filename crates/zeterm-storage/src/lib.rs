@@ -28,13 +28,16 @@
 
 pub mod database;
 pub mod repository;
+pub mod secret;
 
 // 导出常用类型
 pub use database::Database;
 pub use repository::{HostRepository, SqliteHostRepository};
-
-// 预留模块声明（待实现）
-// pub mod secret;
+pub use secret::{
+    KeyringSecretStore, MemorySecretStore, PasswordResolver, SecretHelper, SecretKeyGenerator,
+    SecretKeyType, SecretStore, default_password_resolver, default_secret_helper,
+    default_secret_store,
+};
 
 #[cfg(test)]
 mod tests {

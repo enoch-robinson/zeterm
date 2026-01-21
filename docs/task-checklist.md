@@ -1136,11 +1136,22 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 | 备注 |
 |------|------|--------|----------|------|
-| ⬜ | 定义 `SecretStore` trait | P0 | 1h | 待实现 |
-| ⬜ | 实现 macOS Keychain 集成 | P0 | 2h | 可使用 keyring crate |
-| ⬜ | 实现 Windows Credential Manager 集成 | P0 | 2h | 可使用 keyring crate |
-| ⬜ | 实现 Linux Secret Service 集成 | P0 | 2h | 可使用 keyring crate |
-| ⬜ | 实现密码存储和读取 | P0 | 1h | 待实现 |
+| ✅ | 定义 `SecretStore` trait | P0 | 1h | SecretStore trait + 6个方法 (2026-01-22) |
+| ✅ | 实现 macOS Keychain 集成 | P0 | 2h | KeyringSecretStore (keyring crate) (2026-01-22) |
+| ✅ | 实现 Windows Credential Manager 集成 | P0 | 2h | KeyringSecretStore (keyring crate) (2026-01-22) |
+| ✅ | 实现 Linux Secret Service 集成 | P0 | 2h | KeyringSecretStore (keyring crate) (2026-01-22) |
+| ✅ | 实现密码存储和读取 | P0 | 1h | set_password/get_password/delete_password (2026-01-22) |
+
+**实现说明** (2026-01-22):
+- 新增 `secret.rs` 模块 (`zeterm-storage/src/`)
+- `SecretStore` trait - 定义敏感信息存储接口
+- `KeyringSecretStore` - 基于 keyring crate 的跨平台实现
+- `MemorySecretStore` - 内存存储实现（用于测试）
+- `SecretKeyGenerator` - 密钥名称生成器
+- `PasswordResolver` - 密码引用解析器
+- `SecretHelper` - 高层次 API（连接 PasswordRef 和 SecretStore）
+- 支持 `keychain:`/`env:`/`plain:` 三种密码引用格式
+- 24 个单元测试通过
 
 ---
 

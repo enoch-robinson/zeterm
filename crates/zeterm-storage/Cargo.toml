@@ -34,6 +34,9 @@ tracing.workspace = true
 dirs.workspace = true
 chrono.workspace = true
 
+# Secret storage
+keyring.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
 tempfile = "3.8"

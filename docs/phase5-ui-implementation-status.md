@@ -1,10 +1,10 @@
 # Phase 5 UI 层实现状态报告
 
-**日期**: 2026-01-22 00:04 (更新)  
+**日期**: 2026-01-22 00:48 (更新)  
 **报告人**: AI Assistant  
 **项目**: Zeterm Terminal Emulator  
 **阶段**: Phase 5 - 高级功能与UI 完善  
-**状态**: ✅ 分屏布局完成，状态栏完成，主题系统完成，hosts.toml配置完成
+**状态**: ✅ 分屏布局完成，状态栏完成，主题系统完成，hosts.toml配置完成，敏感信息存储完成
 
 ---
 
@@ -41,7 +41,33 @@
 - ✅ 导出 `GroupConfig`, `HostsConfigManager`
 - ✅ 导出 `generate_example_hosts_toml`
 
-#### 0.1 主题系统实现 (6.7) - 2026-01-21 23:37 新增
+#### 0.1 敏感信息存储 (6.5.5) - 2026-01-22 00:48 新增
+
+**文件**: `crates/zeterm-storage/src/secret.rs` (新增)
+
+- ✅ 创建 `SecretStore` trait - 敏感信息存储接口
+- ✅ 创建 `KeyringSecretStore` - 跨平台系统密钥链实现
+- ✅ 创建 `MemorySecretStore` - 内存存储实现（测试用）
+- ✅ 创建 `SecretKeyGenerator` - 密钥名称生成器
+- ✅ 创建 `PasswordResolver` - 密码引用解析器
+- ✅ 创建 `SecretHelper` - 高层次 API（连接 PasswordRef 和 SecretStore）
+- ✅ 实现 `set_password()` / `get_password()` / `delete_password()`
+- ✅ 实现 `resolve_password_ref()` 解析 PasswordRef
+- ✅ 实现 `store_host_password()` / `store_key_passphrase()`
+- ✅ 24 个单元测试通过
+
+**支持的平台**:
+- macOS: Keychain Access
+- Windows: Credential Manager
+- Linux: Secret Service (GNOME Keyring / KWallet)
+
+**文件**: `crates/zeterm-storage/src/lib.rs`
+
+- ✅ 导出 `SecretStore`, `KeyringSecretStore`, `MemorySecretStore`
+- ✅ 导出 `SecretHelper`, `SecretKeyGenerator`, `PasswordResolver`
+- ✅ 导出 `default_secret_store()`, `default_secret_helper()`
+
+#### 0.2 主题系统实现 (6.7) - 2026-01-21 23:37 新增
 
 **文件**: `crates/zeterm/src/ui/app_theme.rs` (新增)
 
@@ -113,7 +139,7 @@
 - ✅ 连接关闭时自动停止心跳
 - ✅ 心跳超时时更新连接状态标志
 
-#### 0.2 分屏布局UI 集成 (6.3)
+#### 0.3 分屏布局UI 集成 (6.3)
 
 **文件**:
 - `crates/zeterm/src/ui/main_window.rs`
@@ -127,7 +153,7 @@
 - ✅ SplitView 支持渲染实际的 TerminalView（不再是占位符）
 - ✅ 终端视图自动同步到 SplitView
 
-#### 0.3 分屏快捷键 (6.3)
+#### 0.4 分屏快捷键 (6.3)
 
 **文件**: `crates/zeterm/src/ui/terminal_view/shortcuts.rs`
 
@@ -244,12 +270,12 @@
 | 6.2 Tab 管理 | ✅ | 85% | 基础功能完成，拖拽排序待实现 |
 | 6.3 分屏布局 | ✅ | **100%** | UI 集成、TerminalView 嵌入、快捷键、拖拽调整全部完成 |
 | 6.4 配置系统 | ✅ | **80%** | config.toml + hosts.toml 完成，热更新待实现 |
-| 6.5 数据持久化 | ✅ | 100% | SQLite + HostRepository |
+| 6.5 数据持久化 | ✅ | **100%** | SQLite + HostRepository + SecretStore |
 | 6.6 SFTP 文件管理 | ⬜ | 0% | 待实现 |
 | 6.7 主题系统 | ✅ | **100%** | AppThemeManager + 10种内置主题 + 快捷键 |
 | 6.8 状态栏 | ✅ | **100%** | StatusBar 组件完成，集成到 MainWindow |
 
-**总体进度**: Phase 5 约 **85%** 完成
+**总体进度**: Phase 5 约 **88%** 完成
 
 ### Phase 3 遗留问题修复
 
@@ -359,7 +385,7 @@
 - ⬜ 配置热更新 (6.4.4 P2)
 - ⬜ SFTP 文件管理 (6.6)
 - ⬜ 自定义主题文件支持 (6.7 P2)
-- ⬜ 敏感信息存储 SecretStore (6.5.5)
+- ⬜ 连接历史 Repository (6.5.4)
 
 **编译状态**: ✅ 通过 (0 warnings)
 
@@ -367,15 +393,25 @@
 
 **6.3 分屏布局进度**: ✅ **100%** 完成
 
+**6.5 数据持久化进度**: ✅ **100%** 完成
+
 **6.7 主题系统进度**: ✅ **100%** 完成
 
 **6.8 状态栏进度**: ✅ **100%** 完成
 
-**Phase 5 整体进度**: 约 **85%** 完成
+**Phase 5 整体进度**: 约 **88%** 完成
 
 ---
 
 ##📝 更新日志
+
+### 2026-01-22 00:48
+- ✅ 实现敏感信息存储 (6.5.5)
+- ✅ 创建 SecretStore trait + KeyringSecretStore/MemorySecretStore
+- ✅ 创建 SecretHelper（连接 PasswordRef 和 SecretStore）
+- ✅ 实现跨平台密钥链支持 (macOS/Windows/Linux)
+- ✅ 添加 keyring v3 依赖
+- ✅ 24 个单元测试通过
 
 ### 2026-01-22 00:04
 - ✅ 实现 hosts.toml 配置系统 (6.4.3)
