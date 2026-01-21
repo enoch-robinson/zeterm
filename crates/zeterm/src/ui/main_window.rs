@@ -1,6 +1,6 @@
 //! 主窗口模块
 //!
-//! 管理应用程序的主窗口，包括主机列表、终端视图和分屏功能。
+//! 管理应用程序的主窗口，包括主机列表、终端视图、分屏功能和状态栏。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use tracing::info;
 
 use crate::app::session::SessionCoordinator;
 use crate::ui::split_pane::{Pane, PaneId, SplitManager, SplitView};
+use crate::ui::status_bar::{ConnectionStatus, StatusBar, StatusInfo};
 use crate::ui::terminal_view::TerminalView;
 
 /// 主窗口
@@ -30,6 +31,8 @@ pub struct MainWindow {
     split_manager: Entity<SplitManager>,
     /// 分屏视图
     split_view: Entity<SplitView>,
+    /// 状态栏
+    status_bar: Entity<StatusBar>,
     /// 是否显示侧边栏
     show_sidebar: bool,
 }
@@ -45,7 +48,7 @@ impl std::fmt::Debug for MainWindow {
 }
 
 impl MainWindow {
-    /// 构建主窗口（工厂方法，供open_window 使用）
+    /// 构建主窗口（工厂方法，供 open_window 使用）
     pub fn build(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         // 先创建 SplitManager
         let split_manager = cx.new(|_cx| SplitManager::new());
@@ -56,6 +59,7 @@ impl MainWindow {
     pub fn new(split_manager: Entity<SplitManager>, cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
         let split_view = cx.new(|cx| SplitView::new(split_manager.clone(), cx));
+        let status_bar = cx.new(|cx| StatusBar::new(cx));
 
         Self {
             focus_handle,
@@ -64,13 +68,59 @@ impl MainWindow {
             coordinators: HashMap::new(),
             split_manager,
             split_view,
+            status_bar,
             show_sidebar: true,
         }
     }
 
     /// 检查是否已连接
     pub fn is_connected(&self) -> bool {
-        false
+        !self.coordinators.is_empty()
+    }
+
+    /// 获取状态栏实体
+    pub fn status_bar(&self) -> &Entity<StatusBar> {
+        &self.status_bar
+    }
+
+    /// 更新状态栏连接状态
+    pub fn update_connection_status(&self, status: ConnectionStatus, cx: &mut Context<Self>) {
+        self.status_bar.update(cx, |bar, cx| {
+            bar.set_connection_status(status, cx);
+        });
+    }
+
+    /// 更新状态栏用户和主机信息
+    pub fn update_user_host(
+        &self,
+        username: Option<String>,
+        hostname: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.status_bar.update(cx, |bar, cx| {
+            bar.set_user_host(username, hostname, cx);
+        });
+    }
+
+    /// 更新状态栏终端尺寸
+    pub fn update_terminal_size(&self, cols: u16, rows: u16, cx: &mut Context<Self>) {
+        self.status_bar.update(cx, |bar, cx| {
+            bar.set_size(cols, rows, cx);
+        });
+    }
+
+    /// 更新状态栏 RTT
+    pub fn update_rtt(&self, rtt_ms: Option<u32>, cx: &mut Context<Self>) {
+        self.status_bar.update(cx, |bar, cx| {
+            bar.set_rtt(rtt_ms, cx);
+        });
+    }
+
+    /// 更新完整状态信息
+    pub fn update_status_info(&self, info: StatusInfo, cx: &mut Context<Self>) {
+        self.status_bar.update(cx, |bar, cx| {
+            bar.update_status(info, cx);
+        });
     }
 
     /// 切换侧边栏
@@ -106,7 +156,8 @@ impl MainWindow {
         }
     }
 
-    /// 添加终端面板///
+    /// 添加终端面板
+    ///
     /// 创建一个新的终端面板并添加到分屏管理器。
     /// 如果当前没有面板，则设置为根面板；
     /// 如果已有面板，则在当前焦点面板旁边水平分屏。
@@ -149,6 +200,9 @@ impl MainWindow {
             }
         }
 
+        // 更新状态栏为已连接状态
+        self.update_connection_status(ConnectionStatus::Connected, cx);
+
         info!("Added terminal pane: {} (id: {})", title, pane_id);
         cx.notify();
         pane_id
@@ -164,6 +218,14 @@ impl MainWindow {
         cx: &mut Context<Self>,
     ) -> PaneId {
         let title = format!("{}@{}", host_config.username, host_config.host);
+
+        // 更新状态栏用户主机信息
+        self.update_user_host(
+            Some(host_config.username.clone()),
+            Some(host_config.host.clone()),
+            cx,
+        );
+
         self.add_terminal_pane(title, coordinator, cx)
     }
 
@@ -193,6 +255,12 @@ impl MainWindow {
             manager.close_pane(pane_id, cx);
         });
 
+        // 如果没有更多连接，更新状态栏
+        if self.coordinators.is_empty() {
+            self.update_connection_status(ConnectionStatus::Disconnected, cx);
+            self.update_user_host(None, None, cx);
+        }
+
         info!("Closed terminal pane: {}", pane_id);
         cx.notify();
     }
@@ -202,7 +270,7 @@ impl MainWindow {
         &self.terminal_views
     }
 
-    ///渲染欢迎界面
+    /// 渲染欢迎界面
     fn render_welcome(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
@@ -259,7 +327,7 @@ impl MainWindow {
         let has_panes = self.split_manager.read(cx).has_panes();
 
         let content_area = if has_panes {
-            //渲染分屏视图
+            // 渲染分屏视图
             div()
                 .id("split-panel")
                 .flex_1()
@@ -281,34 +349,46 @@ impl MainWindow {
                 .into_any_element()
         };
 
-        // 构建主内容区域（水平布局：左侧边栏 + 右侧主区域）
+        // 构建主布局（垂直布局：内容区 + 状态栏）
         div()
-            .id("content")
-            .flex_1()
-            .w_full()
+            .id("main-window")
+            .size_full()
             .flex()
-            .flex_row()
-            .child({
-                // 左侧面板：主机列表
-                if self.show_sidebar {
-                    if let Some(ref host_list_view) = self.host_list_view {
-                        div()
-                            .id("sidebar")
-                            .w(px(280.0))
-                            .h_full()
-                            .flex_shrink_0()
-                            .border_r_1()
-                            .border_color(border)
-                            .bg(secondary)
-                            .child(host_list_view.clone())
-                            .into_any_element()
-                    } else {
-                        div().into_any_element()
-                    }
-                } else {
-                    div().into_any_element()
-                }
-            })
-            .child(main_area.child(content_area))
+            .flex_col()
+            .child(
+                // 内容区域（水平布局：左侧边栏 + 右侧主区域）
+                div()
+                    .id("content")
+                    .flex_1()
+                    .w_full()
+                    .flex()
+                    .flex_row()
+                    .child({
+                        // 左侧面板：主机列表
+                        if self.show_sidebar {
+                            if let Some(ref host_list_view) = self.host_list_view {
+                                div()
+                                    .id("sidebar")
+                                    .w(px(280.0))
+                                    .h_full()
+                                    .flex_shrink_0()
+                                    .border_r_1()
+                                    .border_color(border)
+                                    .bg(secondary)
+                                    .child(host_list_view.clone())
+                                    .into_any_element()
+                            } else {
+                                div().into_any_element()
+                            }
+                        } else {
+                            div().into_any_element()
+                        }
+                    })
+                    .child(main_area.child(content_area)),
+            )
+            .child(
+                // 底部状态栏
+                self.status_bar.clone(),
+            )
     }
 }

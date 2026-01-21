@@ -1,16 +1,41 @@
 # Phase 5 UI 层实现状态报告
 
-**日期**: 2026-01-21(更新)  
+**日期**: 2026-01-21 23:25 (更新)  
 **报告人**: AI Assistant  
 **项目**: Zeterm Terminal Emulator  
 **阶段**: Phase 5 - 高级功能与UI 完善  
-**状态**: ✅ 分屏布局完成，编译警告已清理
+**状态**: ✅ 分屏布局完成，状态栏完成，编译警告已清理
 
 ---
 
 ## 📋 本次会话完成的工作(2026-01-21)
 
 ### 0. 高优先级任务完成
+
+#### 0.0 状态栏实现 (6.8) - 2026-01-21 23:25 新增
+
+**文件**: `crates/zeterm/src/ui/status_bar.rs`
+
+- ✅ 创建 `StatusBar` 组件
+- ✅ 创建 `StatusInfo` 数据结构
+- ✅ 创建 `ConnectionStatus` 枚举 (Disconnected/Connecting/Connected/Error)
+- ✅ 实现连接状态图标显示 (● ○ ◐ ✕)
+- ✅ 实现用户@主机显示
+- ✅ 实现终端尺寸显示 (80×24 格式)
+- ✅ 实现编码信息显示 (UTF-8)
+- ✅ 实现 RTT 延迟显示（颜色随延迟变化）
+- ✅ 集成到 MainWindow 底部
+- ✅ 5 个单元测试通过
+
+**文件**: `crates/zeterm/src/ui/main_window.rs`
+
+- ✅ 添加 `status_bar: Entity<StatusBar>` 字段
+- ✅ 添加 `update_connection_status()` 方法
+- ✅ 添加 `update_user_host()` 方法
+- ✅ 添加 `update_terminal_size()` 方法
+- ✅ 添加 `update_rtt()` 方法
+- ✅ 终端连接时自动更新状态栏
+- ✅ 终端断开时自动更新状态栏
 
 #### 0.1 Keepalive 心跳集成 (Phase 3遗留问题)
 
@@ -156,9 +181,9 @@
 | 6.5 数据持久化 | ✅ | 100% | SQLite + HostRepository |
 | 6.6 SFTP 文件管理 | ⬜ | 0% | 待实现 |
 | 6.7 主题系统 | ⬜ | 0% | 待实现 |
-| 6.8 状态栏 | 🔄 | 30% | 基础状态栏在 MainWindow 中 |
+| 6.8 状态栏 | ✅ | **100%** | StatusBar 组件完成，集成到 MainWindow |
 
-**总体进度**: Phase 5 约 **70%** 完成
+**总体进度**: Phase 5 约 **75%** 完成
 
 ### Phase 3 遗留问题修复
 
@@ -197,6 +222,26 @@
 |------|----------|--------|
 | 右键菜单：分屏/关闭面板 | 1h | P2 |
 | 底部面板（可选） | 1h | P2 |
+
+---
+
+## 🔍 6.8 状态栏详细状态
+
+### 已完成 ✅
+
+| 任务 | 文件 | 说明 |
+|------|------|------|
+| StatusBar 组件 | `status_bar.rs` | 完整的状态栏 UI 组件 |
+| StatusInfo 数据结构 | `status_bar.rs` | Builder 模式配置 |
+| ConnectionStatus 枚举 | `status_bar.rs` | 4 种连接状态 |
+| 连接状态图标 | `render_connection_status()` | ● ○ ◐ ✕ |
+| 用户@主机显示 | `render_user_host()` | 可选显示 |
+| 终端尺寸显示 | `render_size()` | 80×24 格式 |
+| 编码信息显示 | `render_encoding()` | UTF-8 |
+| RTT 延迟显示 | `render_rtt()` | 颜色随延迟变化 |
+| MainWindow 集成 | `main_window.rs` | 底部状态栏布局 |
+| 单元测试 | `status_bar.rs` | 5 个测试通过 |
+
 
 ---
 
@@ -248,7 +293,6 @@
 - ⬜ 配置系统 (6.4)
 - ⬜ 主题系统 (6.7)
 - ⬜ SFTP 文件管理 (6.6)
-- ⬜ 状态栏完善 (6.8)
 
 **编译状态**: ✅ 通过 (0 warnings)
 
@@ -256,11 +300,21 @@
 
 **6.3 分屏布局进度**: ✅ **100%** 完成
 
-**Phase 5 整体进度**:约 **70%** 完成
+**6.8 状态栏进度**: ✅ **100%** 完成
+
+**Phase 5 整体进度**: 约 **75%** 完成
 
 ---
 
 ##📝 更新日志
+
+### 2026-01-21 23:25
+- ✅ 实现状态栏组件 (StatusBar)
+- ✅ 实现连接状态图标 (● ○ ◐ ✕)
+- ✅ 实现终端尺寸显示 (80×24)
+- ✅ 实现编码信息和 RTT 延迟显示
+- ✅ 集成到 MainWindow 底部
+- ✅ 5 个单元测试通过
 
 ### 2026-01-21 00:50
 - ✅ 实现分隔条拖拽调整功能

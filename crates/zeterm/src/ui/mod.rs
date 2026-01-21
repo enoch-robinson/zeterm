@@ -10,8 +10,11 @@ mod dialogs;
 mod host_list;
 mod main_window;
 pub mod split_pane;
+mod status_bar;
 mod tab_manager;
 mod tab_view;
 pub mod terminal_view;
 
 pub use main_window::MainWindow;
+#[allow(unused_imports)]
+pub use status_bar::{ConnectionStatus, StatusBar, StatusInfo};
