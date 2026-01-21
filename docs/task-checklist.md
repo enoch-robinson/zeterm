@@ -998,7 +998,29 @@
 - 新建 Tab（从主机列表连接时自动创建）
 - 关闭 Tab（点击 × 按钮）
 - Tab 切换（点击 Tab 项）
-- 每个 Tab 对应独立的 TerminalView
+
+#### 6.2.3 Tab + 分屏集成 ⭐ 重要
+
+> **设计决策**: 参考 iTerm2、Windows Terminal 等主流终端应用，采用 **"每个 Tab 独立分屏"** 模式，
+> 而非全局分屏。每个 Tab 代表一个工作场景，拥有独立的分屏布局。
+
+| 状态 | 任务 | 优先级 | 预估时间 | 备注 |
+|------|------|--------|----------|------|
+| ⬜ | 调整 TabInfo 结构，添加 SplitManager 引用 | P0 | 1h | 每个 Tab 拥有独立的 SplitManager |
+| ⬜ | 调整 MainWindow，移除全局 SplitManager | P0 | 2h | 改为从当前 Tab 获取 SplitManager |
+| ⬜ | 集成 TabView 到 MainWindow 渲染 | P0 | 2h | 在内容区顶部渲染 Tab 栏 |
+| ⬜ | 实现 Tab 切换时切换 SplitView | P0 | 2h | 切换 Tab 时显示对应的分屏布局 |
+| ⬜ | 新建 Tab 时创建独立 SplitManager | P0 | 1h | 每个新 Tab 初始化空的 SplitManager |
+| ⬜ | 关闭 Tab 时清理分屏资源 | P0 | 1h | 关闭所有终端连接，释放资源 |
+| ⬜ | 测试和调试 | P0 | 2h | 验证多 Tab + 分屏功能正常 |
+
+**预估总工时**: 11h（约 1.5 天）
+
+**设计要点**:
+- Tab 作为工作区：每个 Tab 代表一个工作场景（如：生产环境、开发环境）
+- 独立分屏布局：每个 Tab 的 `SplitManager` 相互独立，布局互不影响
+- Tab 切换：切换 Tab 时，整个分屏布局（含所有终端）随之切换
+- 后续扩展：支持保存/恢复每个 Tab 的分屏布局
 
 ---
 
