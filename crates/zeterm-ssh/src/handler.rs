@@ -8,7 +8,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use russh::ChannelId;
 use russh::client::{Handler, Session};
-use russh::keys::PublicKey;
+use russh::keys::{Algorithm, EcdsaCurve, PublicKey};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -151,23 +151,23 @@ impl SshHandler {
     }
 
     /// 从 PublicKey 提取密钥类型
+    ///
+    /// 使用 russh 官方 API 获取密钥算法类型，避免依赖不稳定的 Debug 格式。
     fn extract_key_type(public_key: &PublicKey) -> KeyType {
-        // 使用 Debug 格式获取密钥类型信息
-        let debug_str = format!("{:?}", public_key);
-
-        // 从 Debug 输出中解析密钥类型
-        if debug_str.contains("Ed25519") {
-            KeyType::Ed25519
-        } else if debug_str.contains("RSA") || debug_str.contains("Rsa") {
-            KeyType::Rsa
-        } else if debug_str.contains("nistp256") || debug_str.contains("P256") {
-            KeyType::EcdsaSha2Nistp256
-        } else if debug_str.contains("nistp384") || debug_str.contains("P384") {
-            KeyType::EcdsaSha2Nistp384
-        } else if debug_str.contains("nistp521") || debug_str.contains("P521") {
-            KeyType::EcdsaSha2Nistp521
-        } else {
-            KeyType::Unknown("unknown".to_string())
+        match public_key.algorithm() {
+            Algorithm::Ed25519 => KeyType::Ed25519,
+            Algorithm::Rsa { .. } => KeyType::Rsa,
+            Algorithm::Ecdsa { curve } => match curve {
+                EcdsaCurve::NistP256 => KeyType::EcdsaSha2Nistp256,
+                EcdsaCurve::NistP384 => KeyType::EcdsaSha2Nistp384,
+                EcdsaCurve::NistP521 => KeyType::EcdsaSha2Nistp521,
+            },
+            Algorithm::Dsa => KeyType::Unknown("ssh-dss".to_string()),
+            Algorithm::SkEcdsaSha2NistP256 => KeyType::EcdsaSha2Nistp256,
+            Algorithm::SkEd25519 => KeyType::Ed25519,
+            Algorithm::Other(name) => KeyType::Unknown(format!("{:?}", name)),
+            // 处理未来可能添加的新变体
+            _ => KeyType::Unknown("unknown".to_string()),
         }
     }
 

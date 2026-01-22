@@ -348,23 +348,46 @@ impl KnownHostsStore {
     }
 
     /// 保存到文件
+    ///
+    /// 使用临时文件+原子重命名确保写入安全，避免写入过程中崩溃导致文件损坏。
     pub fn save(&mut self) -> Result<(), KnownHostsError> {
         // 确保目录存在
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|e| KnownHostsError::IoError(e.to_string()))?;
         }
 
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&self.path)
-            .map_err(|e| KnownHostsError::IoError(e.to_string()))?;
+        // 生成临时文件路径
+        let temp_path = self.path.with_extension("tmp");
 
-        for entry in &self.entries {
-            writeln!(file, "{}", entry.to_line())
-                .map_err(|e| KnownHostsError::IoError(e.to_string()))?;
+        // 写入临时文件
+        {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(&temp_path)
+                .map_err(|e| {
+                    KnownHostsError::IoError(format!("Failed to create temp file: {}", e))
+                })?;
+
+            for entry in &self.entries {
+                writeln!(file, "{}", entry.to_line()).map_err(|e| {
+                    KnownHostsError::IoError(format!("Failed to write temp file: {}", e))
+                })?;
+            }
+
+            // 确保数据刷新到磁盘
+            file.sync_all().map_err(|e| {
+                KnownHostsError::IoError(format!("Failed to sync temp file: {}", e))
+            })?;
         }
+
+        // 原子重命名临时文件到目标文件
+        fs::rename(&temp_path, &self.path).map_err(|e| {
+            // 清理临时文件
+            let _ = fs::remove_file(&temp_path);
+            KnownHostsError::IoError(format!("Failed to rename temp file: {}", e))
+        })?;
 
         self.modified = false;
         info!("Saved {} entries to known_hosts", self.entries.len());

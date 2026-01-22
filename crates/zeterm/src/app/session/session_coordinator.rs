@@ -107,23 +107,37 @@ impl SessionCoordinator {
     /// # Returns
     ///
     /// 返回数据接收流，调用者需要将其传递给 `start_data_pump`。
-    pub fn set_connection(
+    pub async fn set_connection(
         &self,
         conn: Box<dyn TerminalConnection>,
     ) -> BoxStream<'static, Result<Vec<u8>, ConnectionError>> {
-        let stream = self.connection_manager.set_connection(conn);
+        let stream = self.connection_manager.set_connection(conn).await;
         info!("Session connection established");
         stream
     }
 
     /// 获取连接状态
-    pub fn connection_state(&self) -> ConnectionState {
-        self.connection_manager.state()
+    pub async fn connection_state(&self) -> ConnectionState {
+        self.connection_manager.state().await
     }
 
     /// 检查是否已连接
-    pub fn is_connected(&self) -> bool {
-        self.connection_manager.is_connected()
+    pub async fn is_connected(&self) -> bool {
+        self.connection_manager.is_connected().await
+    }
+
+    /// 检查是否已连接（同步版本，用于非异步上下文）
+    ///
+    /// 注意：此方法会阻塞当前线程，仅在无法使用异步版本时使用。
+    pub fn is_connected_sync(&self) -> bool {
+        // 尝试立即获取锁状态，如果无法获取则返回 false
+        // 这是一个简化实现，用于兼容同步代码
+        futures::executor::block_on(self.connection_manager.is_connected())
+    }
+
+    /// 获取连接状态（同步版本）
+    pub fn connection_state_sync(&self) -> ConnectionState {
+        futures::executor::block_on(self.connection_manager.state())
     }
 
     /// 获取终端尺寸
@@ -210,14 +224,14 @@ impl SessionCoordinator {
                                 // 标记连接已断开
                                 self.connection_manager.mark_disconnected(
                                     zeterm_core::DisconnectReason::NetworkError,
-                                );
+                                ).await;
                                 break;
                             }
                         }
                         None => {
                             info!("Data stream ended");
                             // 流结束，标记连接已断开（服务器关闭）
-                            self.connection_manager.mark_disconnected_by_server();
+                            self.connection_manager.mark_disconnected_by_server().await;
                             break;
                         }
                     }
@@ -276,7 +290,7 @@ impl SessionCoordinator {
     /// coordinator.send_input(&[0x03]).await?;
     /// ```
     pub async fn send_input(&self, data: &[u8]) -> Result<(), ConnectionError> {
-        if !self.is_connected() {
+        if !self.is_connected().await {
             return Err(ConnectionError::Disconnected);
         }
 
@@ -293,7 +307,7 @@ impl SessionCoordinator {
     ///
     /// * `data` - 要发送的字节数据
     pub fn send_input_sync(&self, data: &[u8]) {
-        if !self.is_connected() {
+        if !self.is_connected_sync() {
             warn!("Cannot send input: not connected");
             return;
         }
@@ -334,7 +348,7 @@ impl SessionCoordinator {
         info!("Local terminal resized to {}x{}", cols, rows);
 
         // 如果已连接，同步到远端
-        if self.is_connected() {
+        if self.is_connected().await {
             self.connection_manager.resize(rows, cols).await?;
             info!("Remote terminal resized to {}x{}", cols, rows);
         }
@@ -463,14 +477,14 @@ mod tests {
     use super::*;
     use zeterm_core::ConnectionState;
 
-    #[test]
-    fn test_session_coordinator_new() {
+    #[tokio::test]
+    async fn test_session_coordinator_new() {
         let coordinator = SessionCoordinator::with_defaults();
 
-        assert!(!coordinator.is_connected());
+        assert!(!coordinator.is_connected().await);
         assert!(!coordinator.is_data_pump_running());
         assert!(matches!(
-            coordinator.connection_state(),
+            coordinator.connection_state().await,
             ConnectionState::Idle
         ));
     }

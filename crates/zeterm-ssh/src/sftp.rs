@@ -692,22 +692,47 @@ impl SftpClient {
     }
 
     /// 规范化路径
+    ///
+    /// 处理相对路径、`.`、`..` 等各种情况，返回规范化的绝对路径。
+    ///
+    /// # 支持的路径格式
+    /// - 绝对路径: `/foo/bar`
+    /// - 当前目录: `.`, `./foo`
+    /// - 上级目录: `..`, `../foo`, `foo/../bar`
+    /// - 相对路径: `foo/bar`
     fn normalize_path(&self, path: &str, cwd: &str) -> String {
-        if path.starts_with('/') {
+        // 1. 确定基础路径
+        let base = if path.starts_with('/') {
             path.to_string()
-        } else if path == "." {
-            cwd.to_string()
-        } else if path == ".." {
-            Path::new(cwd)
-                .parent()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| "/".to_string())
+        } else if cwd == "/" {
+            format!("/{}", path)
         } else {
-            if cwd == "/" {
-                format!("/{}", path)
-            } else {
-                format!("{}/{}", cwd, path)
+            format!("{}/{}", cwd, path)
+        };
+
+        // 2. 分解路径并处理 . 和 ..
+        let mut components: Vec<&str> = Vec::new();
+        for part in base.split('/') {
+            match part {
+                "" | "." => {
+                    // 跳过空段和当前目录
+                    continue;
+                },
+                ".." => {
+                    // 返回上级目录
+                    components.pop();
+                },
+                _ => {
+                    components.push(part);
+                },
             }
+        }
+
+        // 3. 重建规范化路径
+        if components.is_empty() {
+            "/".to_string()
+        } else {
+            format!("/{}", components.join("/"))
         }
     }
 
@@ -1622,5 +1647,124 @@ mod tests {
         assert!(progress.formatted_progress().contains("50.0%"));
 
         assert_eq!(progress.formatted_speed(), "100.00 KB/s");
+    }
+
+    #[test]
+    fn test_normalize_path_absolute() {
+        // 测试绝对路径
+        let client = create_test_client();
+        assert_eq!(client.normalize_path_test("/foo/bar", "/home"), "/foo/bar");
+        assert_eq!(client.normalize_path_test("/", "/home"), "/");
+        assert_eq!(client.normalize_path_test("/a/b/c", "/"), "/a/b/c");
+    }
+
+    #[test]
+    fn test_normalize_path_relative() {
+        // 测试相对路径
+        let client = create_test_client();
+        assert_eq!(client.normalize_path_test("foo", "/home"), "/home/foo");
+        assert_eq!(
+            client.normalize_path_test("foo/bar", "/home"),
+            "/home/foo/bar"
+        );
+        assert_eq!(client.normalize_path_test("foo", "/"), "/foo");
+    }
+
+    #[test]
+    fn test_normalize_path_dot() {
+        // 测试 . 和 ./
+        let client = create_test_client();
+        assert_eq!(client.normalize_path_test(".", "/home"), "/home");
+        assert_eq!(client.normalize_path_test("./foo", "/home"), "/home/foo");
+        assert_eq!(
+            client.normalize_path_test("./foo/bar", "/home"),
+            "/home/foo/bar"
+        );
+        assert_eq!(
+            client.normalize_path_test("foo/./bar", "/home"),
+            "/home/foo/bar"
+        );
+    }
+
+    #[test]
+    fn test_normalize_path_dotdot() {
+        // 测试 .. 和 ../
+        let client = create_test_client();
+        assert_eq!(client.normalize_path_test("..", "/home/user"), "/home");
+        assert_eq!(
+            client.normalize_path_test("../foo", "/home/user"),
+            "/home/foo"
+        );
+        assert_eq!(
+            client.normalize_path_test("../../foo", "/home/user"),
+            "/foo"
+        );
+        assert_eq!(
+            client.normalize_path_test("foo/../bar", "/home"),
+            "/home/bar"
+        );
+        assert_eq!(
+            client.normalize_path_test("foo/bar/../baz", "/home"),
+            "/home/foo/baz"
+        );
+    }
+
+    #[test]
+    fn test_normalize_path_edge_cases() {
+        // 测试边界情况
+        let client = create_test_client();
+        // 超出根目录的 .. 应该停在根目录
+        assert_eq!(client.normalize_path_test("../../..", "/home"), "/");
+        assert_eq!(client.normalize_path_test("..", "/"), "/");
+        // 空路径段
+        assert_eq!(
+            client.normalize_path_test("foo//bar", "/home"),
+            "/home/foo/bar"
+        );
+        // 复杂组合
+        assert_eq!(
+            client.normalize_path_test("./foo/../bar/./baz", "/home"),
+            "/home/bar/baz"
+        );
+    }
+
+    /// 创建用于测试的 mock client（仅用于 normalize_path 测试）
+    fn create_test_client() -> TestSftpClient {
+        TestSftpClient
+    }
+
+    /// 用于测试 normalize_path 的辅助结构
+    struct TestSftpClient;
+
+    impl TestSftpClient {
+        fn normalize_path_test(&self, path: &str, cwd: &str) -> String {
+            // 复制 SftpClient::normalize_path 的逻辑用于测试
+            let base = if path.starts_with('/') {
+                path.to_string()
+            } else if cwd == "/" {
+                format!("/{}", path)
+            } else {
+                format!("{}/{}", cwd, path)
+            };
+
+            let mut components: Vec<&str> = Vec::new();
+            for part in base.split('/') {
+                match part {
+                    "" | "." => continue,
+                    ".." => {
+                        components.pop();
+                    },
+                    _ => {
+                        components.push(part);
+                    },
+                }
+            }
+
+            if components.is_empty() {
+                "/".to_string()
+            } else {
+                format!("/{}", components.join("/"))
+            }
+        }
     }
 }

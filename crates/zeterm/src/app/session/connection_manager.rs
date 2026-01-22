@@ -5,7 +5,7 @@
 use std::time::Instant;
 
 use futures::stream::BoxStream;
-use parking_lot::RwLock;
+use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use zeterm_core::{ConnectionError, ConnectionState, DisconnectReason, TerminalConnection};
@@ -56,17 +56,17 @@ impl ConnectionManager {
     /// # Returns
     ///
     /// 返回数据接收流，调用者需要负责处理这个流。
-    pub fn set_connection(
+    pub async fn set_connection(
         &self,
         conn: Box<dyn TerminalConnection>,
     ) -> BoxStream<'static, Result<Vec<u8>, ConnectionError>> {
         // 获取数据接收流
         let stream = conn.receive_stream();
 
-        let mut connection = self.connection.write();
+        let mut connection = self.connection.write().await;
         *connection = Some(conn);
 
-        *self.state.write() = ConnectionState::Connected {
+        *self.state.write().await = ConnectionState::Connected {
             connected_at: Instant::now(),
         };
         info!("Connection established");
@@ -75,23 +75,23 @@ impl ConnectionManager {
     }
 
     /// 获取连接状态
-    pub fn state(&self) -> ConnectionState {
-        self.state.read().clone()
+    pub async fn state(&self) -> ConnectionState {
+        self.state.read().await.clone()
     }
 
     /// 检查是否已连接
-    pub fn is_connected(&self) -> bool {
-        self.state().is_active()
+    pub async fn is_connected(&self) -> bool {
+        self.state().await.is_active()
     }
 
     /// 检查是否已取消
-    pub fn is_cancelled(&self) -> bool {
-        *self.cancelled.read()
+    pub async fn is_cancelled(&self) -> bool {
+        *self.cancelled.read().await
     }
 
     /// 取消操作
-    pub fn cancel(&self) {
-        *self.cancelled.write() = true;
+    pub async fn cancel(&self) {
+        *self.cancelled.write().await = true;
     }
 
     /// 发送数据到后端连接
@@ -105,7 +105,7 @@ impl ConnectionManager {
     /// * `Ok(())` - 发送成功
     /// * `Err(ConnectionError)` - 发送失败
     pub async fn write(&self, data: &[u8]) -> Result<(), ConnectionError> {
-        let conn = self.connection.read();
+        let conn = self.connection.read().await;
         match conn.as_ref() {
             Some(conn) => {
                 debug!("Writing {} bytes to connection", data.len());
@@ -130,7 +130,7 @@ impl ConnectionManager {
     /// * `Ok(())` - 调整成功
     /// * `Err(ConnectionError)` - 调整失败
     pub async fn resize(&self, rows: u16, cols: u16) -> Result<(), ConnectionError> {
-        let conn = self.connection.read();
+        let conn = self.connection.read().await;
         match conn.as_ref() {
             Some(conn) => {
                 debug!("Resizing connection to {}x{}", cols, rows);
@@ -145,15 +145,15 @@ impl ConnectionManager {
 
     /// 关闭连接
     pub async fn close(&self) {
-        self.cancel();
-        let conn = self.connection.write().take();
+        self.cancel().await;
+        let conn = self.connection.write().await.take();
         if let Some(conn) = conn {
             if let Err(e) = conn.close().await {
                 warn!("Error closing connection: {}", e);
             }
         }
 
-        *self.state.write() = ConnectionState::Disconnected {
+        *self.state.write().await = ConnectionState::Disconnected {
             reason: DisconnectReason::UserInitiated,
         };
         info!("Connection closed");
@@ -166,20 +166,20 @@ impl ConnectionManager {
     /// # Arguments
     ///
     /// * `reason` - 断开原因
-    pub fn mark_disconnected(&self, reason: DisconnectReason) {
-        let current_state = self.state.read().clone();
+    pub async fn mark_disconnected(&self, reason: DisconnectReason) {
+        let current_state = self.state.read().await.clone();
 
         // 只有在已连接状态才更新为断开
         if current_state.is_active() {
-            *self.state.write() = ConnectionState::Disconnected { reason };
+            *self.state.write().await = ConnectionState::Disconnected { reason };
             info!("Connection marked as disconnected");
         }
     }
     /// 标记连接已断开（服务器关闭）
     ///
     /// 简化版本，使用 ServerClosed 作为断开原因。
-    pub fn mark_disconnected_by_server(&self) {
-        self.mark_disconnected(DisconnectReason::ServerClosed);
+    pub async fn mark_disconnected_by_server(&self) {
+        self.mark_disconnected(DisconnectReason::ServerClosed).await;
     }
 }
 
@@ -189,44 +189,40 @@ impl Default for ConnectionManager {
     }
 }
 
-// 手动实现 Send 和 Sync
-// ConnectionManager 内部使用 RwLock 保护所有字段，是线程安全的
-//TerminalConnection trait 要求 Send + Sync
-unsafe impl Send for ConnectionManager {}
-unsafe impl Sync for ConnectionManager {}
+// tokio::sync::RwLock 自动实现 Send + Sync，无需手动 unsafe impl
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use zeterm_core::ConnectionState;
 
-    #[test]
-    fn test_connection_manager_new() {
+    #[tokio::test]
+    async fn test_connection_manager_new() {
         let manager = ConnectionManager::new();
-        assert!(!manager.is_connected());
-        assert!(!manager.is_cancelled());
-        assert!(matches!(manager.state(), ConnectionState::Idle));
+        assert!(!manager.is_connected().await);
+        assert!(!manager.is_cancelled().await);
+        assert!(matches!(manager.state().await, ConnectionState::Idle));
     }
 
-    #[test]
-    fn test_connection_manager_default() {
+    #[tokio::test]
+    async fn test_connection_manager_default() {
         let manager = ConnectionManager::default();
-        assert!(!manager.is_connected());
+        assert!(!manager.is_connected().await);
     }
 
-    #[test]
-    fn test_connection_manager_cancel() {
+    #[tokio::test]
+    async fn test_connection_manager_cancel() {
         let manager = ConnectionManager::new();
-        assert!(!manager.is_cancelled());
+        assert!(!manager.is_cancelled().await);
 
-        manager.cancel();
-        assert!(manager.is_cancelled());
+        manager.cancel().await;
+        assert!(manager.is_cancelled().await);
     }
 
-    #[test]
-    fn test_connection_manager_state_idle() {
+    #[tokio::test]
+    async fn test_connection_manager_state_idle() {
         let manager = ConnectionManager::new();
-        let state = manager.state();
+        let state = manager.state().await;
         assert!(matches!(state, ConnectionState::Idle));
         assert!(!state.is_active());
     }
