@@ -6,6 +6,7 @@
 //! - 传输队列
 //! - 工具栏操作
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::app::runtime;
@@ -17,7 +18,9 @@ use gpui::{
 use gpui_component::ActiveTheme;
 
 use parking_lot::RwLock;
-use zeterm_ssh::{DirEntry, SftpClient, TransferProgress, TransferTaskId};
+use zeterm_ssh::{
+    DirEntry, SftpClient, TransferProgress, TransferState, TransferTask, TransferTaskId,
+};
 
 use super::file_list::{FileListEvent, FileListView};
 use super::path_bar::{PathBar, PathBarEvent};
@@ -143,6 +146,8 @@ pub struct SftpView {
     connected: bool,
     /// 待处理的加载结果（用于异步加载后更新 UI）
     pending_load_result: Arc<RwLock<Option<LoadResult>>>,
+    /// 传输任务映射（用于控制暂停/恢复/取消）
+    transfer_tasks: Arc<RwLock<HashMap<TransferTaskId, TransferTask>>>,
 }
 
 impl SftpView {
@@ -168,6 +173,7 @@ impl SftpView {
             error_message: None,
             connected: false,
             pending_load_result: Arc::new(RwLock::new(None)),
+            transfer_tasks: Arc::new(RwLock::new(HashMap::new())),
         };
 
         // 订阅路径栏事件
@@ -404,20 +410,16 @@ impl SftpView {
     ) {
         match event {
             TransferQueueEvent::PauseRequested(id) => {
-                // TODO: 实现暂停逻辑
-                let _ = id;
+                self.pause_transfer(*id, cx);
             },
             TransferQueueEvent::ResumeRequested(id) => {
-                // TODO: 实现恢复逻辑
-                let _ = id;
+                self.resume_transfer(*id, cx);
             },
             TransferQueueEvent::CancelRequested(id) => {
-                // TODO: 实现取消逻辑
-                let _ = id;
+                self.cancel_transfer(*id, cx);
             },
             TransferQueueEvent::RetryRequested(id) => {
-                // TODO: 实现重试逻辑
-                let _ = id;
+                self.retry_transfer(*id, cx);
             },
             TransferQueueEvent::ClearCompleted => {
                 self.transfer_queue.update(cx, |queue, cx| {
@@ -461,8 +463,136 @@ impl SftpView {
         });
     }
 
+    /// 暂停传输任务
+    fn pause_transfer(&mut self, id: TransferTaskId, cx: &mut Context<Self>) {
+        tracing::info!("Pausing transfer: {}", id);
+
+        // 设置任务暂停标志
+        if let Some(task) = self.transfer_tasks.write().get_mut(&id) {
+            task.pause();
+            task.set_state(TransferState::Paused);
+        }
+
+        // 更新 UI
+        self.transfer_queue.update(cx, |queue, cx| {
+            queue.update_transfer_state(id, TransferState::Paused, cx);
+        });
+    }
+
+    /// 恢复传输任务
+    fn resume_transfer(&mut self, id: TransferTaskId, cx: &mut Context<Self>) {
+        tracing::info!("Resuming transfer: {}", id);
+
+        // 清除暂停标志
+        if let Some(task) = self.transfer_tasks.write().get_mut(&id) {
+            task.resume();
+            task.set_state(TransferState::InProgress);
+        }
+
+        // 更新 UI
+        self.transfer_queue.update(cx, |queue, cx| {
+            queue.update_transfer_state(id, TransferState::InProgress, cx);
+        });
+    }
+
+    /// 取消传输任务
+    fn cancel_transfer(&mut self, id: TransferTaskId, cx: &mut Context<Self>) {
+        tracing::info!("Cancelling transfer: {}", id);
+
+        // 设置取消标志
+        if let Some(task) = self.transfer_tasks.write().get_mut(&id) {
+            task.cancel();
+            task.mark_cancelled();
+        }
+
+        // 更新 UI
+        self.transfer_queue.update(cx, |queue, cx| {
+            queue.update_transfer_state(id, TransferState::Cancelled, cx);
+        });
+
+        // 发出取消事件
+        cx.emit(SftpViewEvent::TransferFailed {
+            task_id: id,
+            error: "Transfer cancelled by user".to_string(),
+        });
+    }
+
+    /// 重试传输任务
+    fn retry_transfer(&mut self, id: TransferTaskId, cx: &mut Context<Self>) {
+        tracing::info!("Retrying transfer: {}", id);
+
+        // 获取原始任务信息
+        let task_info = {
+            let tasks = self.transfer_tasks.read();
+            tasks.get(&id).map(|t| {
+                (
+                    t.progress.direction.clone(),
+                    t.progress.source_path.clone(),
+                    t.progress.dest_path.clone(),
+                    t.progress.total_bytes,
+                )
+            })
+        };
+
+        if let Some((direction, source, dest, total)) = task_info {
+            // 从旧任务映射中移除
+            self.transfer_tasks.write().remove(&id);
+
+            // 从传输队列中移除旧任务
+            self.transfer_queue.update(cx, |queue, cx| {
+                queue.remove_transfer(id, cx);
+            });
+
+            // 创建新任务（使用 SFTP 客户端的下一个任务 ID）
+            if let Some(client) = &self.sftp_client {
+                let new_id = client.next_task_id();
+                let new_task = TransferTask::new(new_id, direction.clone(), &source, &dest, total);
+
+                // 添加到任务映射
+                self.transfer_tasks.write().insert(new_id, new_task);
+
+                // 添加到传输队列 UI
+                let progress =
+                    TransferProgress::new(direction, source.clone(), dest.clone(), total);
+                self.transfer_queue.update(cx, |queue, cx| {
+                    queue.add_transfer(new_id, progress.clone(), cx);
+                });
+
+                // TODO: 启动实际的传输操作
+                // 这需要根据传输方向调用 download_file_cancellable 或 upload_file_cancellable
+                tracing::info!("Created new transfer task: {} (retry of {})", new_id, id);
+
+                cx.emit(SftpViewEvent::TransferStarted(new_id));
+            }
+        } else {
+            tracing::warn!("Cannot retry transfer {}: task not found", id);
+        }
+    }
+
+    /// 注册传输任务（供外部调用以便控制）
+    pub fn register_transfer_task(&mut self, task: TransferTask) {
+        let id = task.id;
+        self.transfer_tasks.write().insert(id, task);
+    }
+
+    /// 获取传输任务的暂停标志（供异步传输使用）
+    pub fn get_pause_flag(
+        &self,
+        id: TransferTaskId,
+    ) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        self.transfer_tasks.read().get(&id).map(|t| t.pause_flag())
+    }
+
+    /// 获取传输任务的取消标志（供异步传输使用）
+    pub fn get_cancel_flag(
+        &self,
+        id: TransferTaskId,
+    ) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
+        self.transfer_tasks.read().get(&id).map(|t| t.cancel_flag())
+    }
+
     /// 渲染工具栏
-    fn render_toolbar(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let connected = self.connected;
 

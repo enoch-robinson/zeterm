@@ -531,6 +531,8 @@ pub struct TransferTask {
     pub progress: TransferProgress,
     /// 取消标志
     cancelled: Arc<AtomicBool>,
+    /// 暂停标志
+    paused: Arc<AtomicBool>,
     /// 已传输字节数（原子计数器，用于进度更新）
     transferred: Arc<AtomicU64>,
 }
@@ -548,6 +550,7 @@ impl TransferTask {
             id,
             progress: TransferProgress::new(direction, source, dest, total),
             cancelled: Arc::new(AtomicBool::new(false)),
+            paused: Arc::new(AtomicBool::new(false)),
             transferred: Arc::new(AtomicU64::new(0)),
         }
     }
@@ -567,6 +570,26 @@ impl TransferTask {
         self.cancelled.clone()
     }
 
+    /// 暂停任务
+    pub fn pause(&self) {
+        self.paused.store(true, Ordering::SeqCst);
+    }
+
+    /// 恢复任务
+    pub fn resume(&self) {
+        self.paused.store(false, Ordering::SeqCst);
+    }
+
+    /// 是否已暂停
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
+    }
+
+    /// 获取暂停标志的克隆
+    pub fn pause_flag(&self) -> Arc<AtomicBool> {
+        self.paused.clone()
+    }
+
     /// 获取传输计数器的克隆
     pub fn transferred_counter(&self) -> Arc<AtomicU64> {
         self.transferred.clone()
@@ -576,6 +599,28 @@ impl TransferTask {
     pub fn update_transferred(&mut self, bytes: u64) {
         self.transferred.store(bytes, Ordering::SeqCst);
         self.progress.transferred_bytes = bytes;
+    }
+
+    /// 更新传输状态
+    pub fn set_state(&mut self, state: TransferState) {
+        self.progress.state = state;
+    }
+
+    /// 设置错误信息
+    pub fn set_error(&mut self, error: impl Into<String>) {
+        self.progress.error = Some(error.into());
+        self.progress.state = TransferState::Failed;
+    }
+
+    /// 标记为完成
+    pub fn mark_completed(&mut self) {
+        self.progress.state = TransferState::Completed;
+        self.progress.transferred_bytes = self.progress.total_bytes;
+    }
+
+    /// 标记为已取消
+    pub fn mark_cancelled(&mut self) {
+        self.progress.state = TransferState::Cancelled;
     }
 }
 

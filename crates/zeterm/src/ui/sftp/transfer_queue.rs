@@ -251,6 +251,19 @@ impl TransferQueueView {
         }
     }
 
+    /// 更新传输状态
+    pub fn update_transfer_state(
+        &mut self,
+        id: TransferTaskId,
+        state: TransferState,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(item) = self.transfers.get_mut(&id) {
+            item.progress.state = state;
+            cx.notify();
+        }
+    }
+
     /// 移除传输任务
     pub fn remove_transfer(&mut self, id: TransferTaskId, cx: &mut Context<Self>) {
         self.transfers.remove(&id);
