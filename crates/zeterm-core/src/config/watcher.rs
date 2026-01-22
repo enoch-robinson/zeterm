@@ -181,8 +181,8 @@ pub struct ConfigWatcher {
     running: Arc<AtomicBool>,
     /// 停止信号发送器
     stop_tx: Mutex<Option<mpsc::Sender<()>>>,
-    /// 最后事件时间（用于去抖动）
-    last_events: RwLock<std::collections::HashMap<PathBuf, Instant>>,
+    /// 最后事件时间（用于去抖动）- 使用 Arc 以便在异步任务中共享
+    last_events: Arc<RwLock<std::collections::HashMap<PathBuf, Instant>>>,
 }
 
 impl ConfigWatcher {
@@ -199,7 +199,7 @@ impl ConfigWatcher {
             callbacks: RwLock::new(Vec::new()),
             running: Arc::new(AtomicBool::new(false)),
             stop_tx: Mutex::new(None),
-            last_events: RwLock::new(std::collections::HashMap::new()),
+            last_events: Arc::new(RwLock::new(std::collections::HashMap::new())),
         })
     }
 
@@ -279,9 +279,8 @@ impl ConfigWatcher {
         // 克隆需要的数据
         let callbacks = self.callbacks.read().clone();
         let debounce_ms = self.config.debounce_ms;
-        let last_events = Arc::new(RwLock::new(
-            std::collections::HashMap::<PathBuf, Instant>::new(),
-        ));
+        // 使用结构体字段而非创建新的局部变量，保持防抖状态跨 watcher 重启
+        let last_events = Arc::clone(&self.last_events);
 
         // 创建 watcher
         let event_tx_clone = event_tx.clone();
@@ -310,7 +309,7 @@ impl ConfigWatcher {
 
         // 启动事件处理任务
         let running = Arc::clone(&self.running);
-        let last_events_clone = last_events.clone();
+        let last_events_clone = Arc::clone(&last_events);
 
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()

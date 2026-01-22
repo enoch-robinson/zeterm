@@ -2,6 +2,7 @@
 //!
 //! 显示和管理 SSH 主机列表。
 
+use crate::app::runtime;
 use crate::ui::dialogs::HostConnectionDialog;
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
@@ -79,28 +80,25 @@ impl HostListView {
         repository: Arc<SqliteHostRepository>,
         hosts: Arc<RwLock<Vec<HostConfig>>>,
     ) {
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        // 使用共享 Runtime 执行异步加载
+        runtime::spawn_blocking(async move {
+            tracing::info!("开始异步加载主机列表");
 
-            rt.block_on(async move {
-                tracing::info!("开始异步加载主机列表");
+            match repository.list_all().await {
+                Ok(loaded_hosts) => {
+                    tracing::info!("成功加载 {} 个主机", loaded_hosts.len());
 
-                match repository.list_all().await {
-                    Ok(loaded_hosts) => {
-                        tracing::info!("成功加载 {} 个主机", loaded_hosts.len());
-
-                        // 更新共享状态
-                        if let Ok(mut hosts_guard) = hosts.write() {
-                            *hosts_guard = loaded_hosts;
-                        } else {
-                            tracing::error!("无法获取主机列表写锁");
-                        }
-                    },
-                    Err(e) => {
-                        tracing::error!("加载主机列表失败: {:?}", e);
-                    },
-                }
-            });
+                    // 更新共享状态
+                    if let Ok(mut hosts_guard) = hosts.write() {
+                        *hosts_guard = loaded_hosts;
+                    } else {
+                        tracing::error!("无法获取主机列表写锁");
+                    }
+                },
+                Err(e) => {
+                    tracing::error!("加载主机列表失败: {:?}", e);
+                },
+            }
         });
     }
 
@@ -257,25 +255,21 @@ impl HostListView {
         let repository = self.repository.clone();
         let hosts = self.hosts.clone();
 
-        // 在独立线程中执行异步删除
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        // 使用共享 Runtime 执行异步删除
+        runtime::spawn_blocking(async move {
+            match repository.delete(host_id).await {
+                Ok(_) => {
+                    tracing::info!("成功删除主机: {}", host_name);
 
-            rt.block_on(async move {
-                match repository.delete(host_id).await {
-                    Ok(_) => {
-                        tracing::info!("成功删除主机: {}", host_name);
-
-                        // 从内存中移除
-                        if let Ok(mut hosts_guard) = hosts.write() {
-                            hosts_guard.retain(|h| h.id != Some(host_id));
-                        }
-                    },
-                    Err(e) => {
-                        tracing::error!("删除主机失败: {:?}", e);
-                    },
-                }
-            });
+                    // 从内存中移除
+                    if let Ok(mut hosts_guard) = hosts.write() {
+                        hosts_guard.retain(|h| h.id != Some(host_id));
+                    }
+                },
+                Err(e) => {
+                    tracing::error!("删除主机失败: {:?}", e);
+                },
+            }
         });
 
         cx.notify();
@@ -296,51 +290,45 @@ impl HostListView {
             tracing::info!("更新主机: {}", host_name);
         }
 
-        // 在独立线程中执行异步保存
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+        // 使用共享 Runtime 执行异步保存
+        runtime::spawn_blocking(async move {
+            if is_new {
+                // 新建主机
+                match repository.create(&config).await {
+                    Ok(new_id) => {
+                        tracing::info!("成功创建主机: {} (ID: {})", host_name, new_id);
 
-            rt.block_on(async move {
-                if is_new {
-                    // 新建主机
-                    match repository.create(&config).await {
-                        Ok(new_id) => {
-                            tracing::info!("成功创建主机: {} (ID: {})", host_name, new_id);
+                        // 创建包含新 ID 的配置
+                        let mut saved_config = config.clone();
+                        saved_config.id = Some(new_id);
 
-                            // 创建包含新 ID 的配置
-                            let mut saved_config = config.clone();
-                            saved_config.id = Some(new_id);
-
-                            // 添加到内存列表
-                            if let Ok(mut hosts_guard) = hosts.write() {
-                                hosts_guard.push(saved_config);
-                            }
-                        },
-                        Err(e) => {
-                            tracing::error!("创建主机失败: {:?}", e);
-                        },
-                    }
-                } else {
-                    // 更新主机
-                    match repository.update(&config).await {
-                        Ok(_) => {
-                            tracing::info!("成功更新主机: {}", host_name);
-
-                            // 更新内存中的配置
-                            if let Ok(mut hosts_guard) = hosts.write() {
-                                if let Some(pos) =
-                                    hosts_guard.iter().position(|h| h.id == config.id)
-                                {
-                                    hosts_guard[pos] = config.clone();
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            tracing::error!("更新主机失败: {:?}", e);
-                        },
-                    }
+                        // 添加到内存列表
+                        if let Ok(mut hosts_guard) = hosts.write() {
+                            hosts_guard.push(saved_config);
+                        }
+                    },
+                    Err(e) => {
+                        tracing::error!("创建主机失败: {:?}", e);
+                    },
                 }
-            });
+            } else {
+                // 更新主机
+                match repository.update(&config).await {
+                    Ok(_) => {
+                        tracing::info!("成功更新主机: {}", host_name);
+
+                        // 更新内存中的配置
+                        if let Ok(mut hosts_guard) = hosts.write() {
+                            if let Some(pos) = hosts_guard.iter().position(|h| h.id == config.id) {
+                                hosts_guard[pos] = config.clone();
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        tracing::error!("更新主机失败: {:?}", e);
+                    },
+                }
+            }
         });
     }
 

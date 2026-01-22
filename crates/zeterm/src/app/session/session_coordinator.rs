@@ -16,6 +16,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use super::ConnectionManager;
+use crate::app::runtime;
 use crate::app::terminal::{EventProxy, TerminalConfig, TerminalEvent, TerminalState};
 use zeterm_core::{ConnectionError, ConnectionState, TerminalConnection, TerminalSize};
 
@@ -306,18 +307,11 @@ impl SessionCoordinator {
         let data = data.to_vec();
         let connection_manager = self.connection_manager.clone();
 
-        // 只有实际的 I/O 写入需要异步执行
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("Failed to create tokio runtime");
-
-            rt.block_on(async move {
-                if let Err(e) = connection_manager.write(&data).await {
-                    error!("Failed to send input: {}", e);
-                }
-            });
+        // 使用共享 Runtime 执行异步写入（在新线程中避免阻塞 UI）
+        runtime::spawn_blocking(async move {
+            if let Err(e) = connection_manager.write(&data).await {
+                error!("Failed to send input: {}", e);
+            }
         });
     }
 

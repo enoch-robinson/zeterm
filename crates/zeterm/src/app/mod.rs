@@ -5,5 +5,6 @@
 // 允许暂时未使用但将来会用到的代码
 #![allow(dead_code)]
 
+pub mod runtime;
 pub mod session;
 pub mod terminal;

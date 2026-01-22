@@ -138,6 +138,12 @@ impl ConnectionStateMachine {
             (ConnectionState::Connecting { .. }, ConnectionEvent::Disconnect) => {
                 Some(ConnectionState::Idle)
             },
+            // 连接过程中连接丢失（如网络问题），转为断开状态
+            (ConnectionState::Connecting { .. }, ConnectionEvent::ConnectionLost) => {
+                Some(ConnectionState::Disconnected {
+                    reason: DisconnectReason::NetworkError,
+                })
+            },
 
             // === 从 Authenticating 状态的转换 ===
             (ConnectionState::Authenticating, ConnectionEvent::AuthSuccess) => {
@@ -515,5 +521,28 @@ mod tests {
         sm.handle_event(ConnectionEvent::TcpConnected);
         sm.handle_event(ConnectionEvent::AuthSuccess);
         assert_eq!(sm.ui_status(), UiConnectionStatus::Online);
+    }
+
+    #[test]
+    fn test_connection_lost_during_connecting() {
+        let sm = ConnectionStateMachine::new();
+
+        // 开始连接
+        sm.handle_event(ConnectionEvent::Connect);
+        assert!(matches!(
+            sm.current_state(),
+            ConnectionState::Connecting { .. }
+        ));
+
+        // 连接过程中连接丢失
+        sm.handle_event(ConnectionEvent::ConnectionLost);
+
+        // 应该转为 Disconnected 状态，原因是 NetworkError
+        assert!(matches!(
+            sm.current_state(),
+            ConnectionState::Disconnected {
+                reason: DisconnectReason::NetworkError
+            }
+        ));
     }
 }

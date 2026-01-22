@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use crate::app::runtime;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Window, div,
@@ -15,7 +16,8 @@ use gpui::{
 };
 use gpui_component::ActiveTheme;
 
-use zeterm_ssh::{SftpClient, TransferProgress, TransferTaskId};
+use parking_lot::RwLock;
+use zeterm_ssh::{DirEntry, SftpClient, TransferProgress, TransferTaskId};
 
 use super::file_list::{FileListEvent, FileListView};
 use super::path_bar::{PathBar, PathBarEvent};
@@ -97,6 +99,18 @@ impl SftpViewMode {
 // SFTP 视图
 // ============================================================================
 
+/// 目录加载结果
+#[derive(Debug, Clone)]
+enum LoadResult {
+    /// 加载成功
+    Success {
+        path: String,
+        entries: Vec<DirEntry>,
+    },
+    /// 加载失败
+    Error { path: String, message: String },
+}
+
 /// SFTP 视图组件
 ///
 /// 整合路径栏、文件列表和传输队列，提供完整的 SFTP 文件管理界面。
@@ -127,6 +141,8 @@ pub struct SftpView {
     error_message: Option<String>,
     /// 连接状态
     connected: bool,
+    /// 待处理的加载结果（用于异步加载后更新 UI）
+    pending_load_result: Arc<RwLock<Option<LoadResult>>>,
 }
 
 impl SftpView {
@@ -151,6 +167,7 @@ impl SftpView {
             loading: false,
             error_message: None,
             connected: false,
+            pending_load_result: Arc::new(RwLock::new(None)),
         };
 
         // 订阅路径栏事件
@@ -271,33 +288,35 @@ impl SftpView {
 
         cx.notify();
 
-        // TODO: 异步加载目录内容
-        // 目前 SFTP 客户端需要异步调用，但 gpui 的 Context::spawn 有生命周期限制
-        // 未来需要使用以下方式之一来解决：
-        // 1. 使用 gpui 的事件系统（emit/subscribe）来异步通知结果
-        // 2. 使用共享状态 + 定时器轮询
-        // 3. 将 SFTP 客户端的加载结果缓存到内存中
-        //
-        // 临时解决方案：在后台线程中加载，通过共享状态传递结果
-        let _file_list = self.file_list.clone();
+        // 异步加载目录内容
+        // 使用共享状态传递结果，在 render 时检查并更新 UI
+        let pending_result = self.pending_load_result.clone();
         let path_clone = path.clone();
 
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-            let result = rt.block_on(async move { client.list_dir(&path_clone).await });
+        // 使用共享 Runtime 执行异步加载
+        runtime::spawn_blocking(async move {
+            let result = client.list_dir(&path_clone).await;
 
-            // 注意：这里无法直接更新 UI，因为跨线程
-            // 结果需要通过其他方式传递给 UI 线程
-            match result {
+            // 将结果写入共享状态
+            let load_result = match result {
                 Ok(entries) => {
-                    tracing::info!("SFTP: Loaded {} entries from {}", entries.len(), path);
-                    // TODO: 通过事件系统更新 file_list
+                    tracing::info!("SFTP: Loaded {} entries from {}", entries.len(), path_clone);
+                    LoadResult::Success {
+                        path: path_clone,
+                        entries,
+                    }
                 },
                 Err(e) => {
-                    tracing::error!("SFTP: Failed to load directory {}: {}", path, e);
-                    // TODO: 通过事件系统显示错误
+                    tracing::error!("SFTP: Failed to load directory {}: {}", path_clone, e);
+                    LoadResult::Error {
+                        path: path_clone,
+                        message: e.to_string(),
+                    }
                 },
-            }
+            };
+
+            // 写入共享状态，等待 UI 线程处理
+            *pending_result.write() = Some(load_result);
         });
     }
 
@@ -632,6 +651,67 @@ impl SftpView {
             .p_2()
             .child(self.transfer_queue.clone())
     }
+
+    /// 处理待处理的加载结果
+    ///
+    /// 在 render 时调用，检查是否有后台线程完成的加载结果，
+    /// 如果有则更新 UI 状态。
+    fn process_pending_load_result(&mut self, cx: &mut Context<Self>) {
+        // 尝试获取待处理的结果
+        let result = {
+            let mut pending = self.pending_load_result.write();
+            pending.take()
+        };
+
+        // 如果有结果，处理它
+        if let Some(load_result) = result {
+            match load_result {
+                LoadResult::Success { path, entries } => {
+                    tracing::debug!(
+                        "Processing load result: {} entries for path {}",
+                        entries.len(),
+                        path
+                    );
+
+                    // 验证路径是否仍然是当前路径（可能用户已经导航到其他目录）
+                    if path == self.current_path {
+                        // 更新文件列表
+                        self.file_list.update(cx, |file_list, cx| {
+                            file_list.set_entries(entries, cx);
+                        });
+
+                        // 更新状态
+                        self.loading = false;
+                        self.error_message = None;
+                    } else {
+                        tracing::debug!(
+                            "Ignoring stale load result for {} (current path is {})",
+                            path,
+                            self.current_path
+                        );
+                    }
+                },
+                LoadResult::Error { path, message } => {
+                    tracing::debug!("Processing load error for path {}: {}", path, message);
+
+                    // 验证路径
+                    if path == self.current_path {
+                        // 更新错误状态
+                        self.loading = false;
+                        self.error_message = Some(message.clone());
+
+                        // 更新文件列表显示错误
+                        self.file_list.update(cx, |file_list, cx| {
+                            file_list.set_error(Some(message), cx);
+                        });
+                    }
+                },
+            }
+
+            // 通知 UI 更新
+            cx.notify();
+        }
+    }
 }
 
 impl EventEmitter<SftpViewEvent> for SftpView {}
@@ -644,6 +724,9 @@ impl Focusable for SftpView {
 
 impl Render for SftpView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 检查是否有待处理的加载结果
+        self.process_pending_load_result(cx);
+
         let theme = cx.theme();
         let connected = self.connected;
         let show_transfers = self.show_transfer_queue;
