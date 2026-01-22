@@ -41,9 +41,163 @@ impl ThemeMode {
         match self {
             ThemeMode::Light => false,
             ThemeMode::Dark => true,
-            ThemeMode::System => true, // 默认假设系统为深色
+            ThemeMode::System => detect_system_dark_mode(),
         }
     }
+}
+
+/// 检测系统是否使用深色模式
+///
+/// 支持以下平台：
+/// - Windows: 读取 AppsUseLightTheme 注册表值
+/// - macOS: 检查 AppleInterfaceStyle
+/// - Linux: 检查 GTK 主题或 color-scheme portal
+///
+/// 如果检测失败，默认返回深色模式
+pub fn detect_system_dark_mode() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        detect_windows_dark_mode()
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        detect_macos_dark_mode()
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        detect_linux_dark_mode()
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        true // 默认深色模式
+    }
+}
+
+/// Windows 深色模式检测
+#[cfg(target_os = "windows")]
+fn detect_windows_dark_mode() -> bool {
+    use std::process::Command;
+
+    // 尝试通过 reg query 读取注册表
+    let output = Command::new("reg")
+        .args([
+            "query",
+            "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+            "/v",
+            "AppsUseLightTheme",
+        ])
+        .output();
+
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // AppsUseLightTheme = 0 表示深色模式，= 1 表示浅色模式
+            if stdout.contains("0x0") {
+                tracing::debug!("Windows system theme detected: dark mode");
+                true
+            } else if stdout.contains("0x1") {
+                tracing::debug!("Windows system theme detected: light mode");
+                false
+            } else {
+                tracing::debug!("Windows theme detection: unable to parse, defaulting to dark");
+                true
+            }
+        },
+        Err(e) => {
+            tracing::warn!("Failed to detect Windows theme: {}, defaulting to dark", e);
+            true
+        },
+    }
+}
+
+/// macOS 深色模式检测
+#[cfg(target_os = "macos")]
+fn detect_macos_dark_mode() -> bool {
+    use std::process::Command;
+
+    // 使用 defaults read 检查 AppleInterfaceStyle
+    let output = Command::new("defaults")
+        .args(["read", "-g", "AppleInterfaceStyle"])
+        .output();
+
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if stdout.trim().eq_ignore_ascii_case("dark") {
+                tracing::debug!("macOS system theme detected: dark mode");
+                true
+            } else {
+                tracing::debug!("macOS system theme detected: light mode");
+                false
+            }
+        },
+        Err(_) => {
+            // 如果读取失败，通常意味着使用浅色模式（默认没有设置 AppleInterfaceStyle）
+            tracing::debug!("macOS theme: AppleInterfaceStyle not set, assuming light mode");
+            false
+        },
+    }
+}
+
+/// Linux 深色模式检测
+#[cfg(target_os = "linux")]
+fn detect_linux_dark_mode() -> bool {
+    use std::process::Command;
+
+    // 方法 1: 尝试使用 freedesktop portal (适用于 GNOME, KDE 等)
+    let portal_result = Command::new("gdbus")
+        .args([
+            "call",
+            "--session",
+            "--dest=org.freedesktop.portal.Desktop",
+            "--object-path=/org/freedesktop/portal/desktop",
+            "--method=org.freedesktop.portal.Settings.Read",
+            "org.freedesktop.appearance",
+            "color-scheme",
+        ])
+        .output();
+
+    if let Ok(output) = portal_result {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        // color-scheme: 0 = 无偏好, 1 = 深色, 2 = 浅色
+        if stdout.contains("uint32 1") {
+            tracing::debug!("Linux system theme detected via portal: dark mode");
+            return true;
+        } else if stdout.contains("uint32 2") {
+            tracing::debug!("Linux system theme detected via portal: light mode");
+            return false;
+        }
+    }
+
+    // 方法 2: 检查 GTK 主题名称
+    if let Ok(gtk_theme) = std::env::var("GTK_THEME") {
+        let is_dark = gtk_theme.to_lowercase().contains("dark");
+        tracing::debug!("Linux GTK_THEME={}, dark mode: {}", gtk_theme, is_dark);
+        return is_dark;
+    }
+
+    // 方法 3: 尝试通过 gsettings 读取 GNOME 主题
+    let gsettings_result = Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.interface", "color-scheme"])
+        .output();
+
+    if let Ok(output) = gsettings_result {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if stdout.contains("prefer-dark") {
+            tracing::debug!("Linux system theme detected via gsettings: dark mode");
+            return true;
+        } else if stdout.contains("prefer-light") || stdout.contains("default") {
+            tracing::debug!("Linux system theme detected via gsettings: light mode");
+            return false;
+        }
+    }
+
+    // 默认深色模式
+    tracing::debug!("Linux theme detection: all methods failed, defaulting to dark");
+    true
 }
 
 /// 内置主题名称
@@ -385,7 +539,18 @@ impl AppThemeManager {
                     }
                 },
                 ThemeMode::System => {
-                    // TODO: 检测系统主题
+                    // 检测系统主题并应用
+                    let is_system_dark = detect_system_dark_mode();
+                    info!(
+                        "System theme detected: {}",
+                        if is_system_dark { "dark" } else { "light" }
+                    );
+
+                    if is_system_dark && !self.config.theme.is_dark() {
+                        self.set_theme(BuiltinTheme::Dark);
+                    } else if !is_system_dark && self.config.theme.is_dark() {
+                        self.set_theme(BuiltinTheme::Light);
+                    }
                 },
             }
 

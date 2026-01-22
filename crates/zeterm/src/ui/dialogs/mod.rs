@@ -3,11 +3,15 @@
 //! 包含应用程序中使用的各种对话框组件。
 
 mod close_confirm_dialog;
+mod delete_confirm_dialog;
 mod host_connection_dialog;
 mod host_key_channel;
 mod host_key_dialog;
 
 pub use close_confirm_dialog::{
     CloseConfirmDialog, CloseConfirmEvent, CloseConfirmType, create_close_confirm_dialog,
+};
+pub use delete_confirm_dialog::{
+    DeleteConfirmDialog, DeleteConfirmEvent, DeleteTarget, create_delete_confirm_dialog,
 };
 pub use host_connection_dialog::HostConnectionDialog;

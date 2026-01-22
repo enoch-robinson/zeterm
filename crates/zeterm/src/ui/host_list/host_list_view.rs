@@ -3,7 +3,9 @@
 //! 显示和管理 SSH 主机列表。
 
 use crate::app::runtime;
-use crate::ui::dialogs::HostConnectionDialog;
+use crate::ui::dialogs::{
+    DeleteConfirmDialog, DeleteConfirmEvent, DeleteTarget, HostConnectionDialog,
+};
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
     ParentElement, Render, Styled, Window, div, prelude::*,
@@ -46,6 +48,12 @@ pub struct HostListView {
 
     /// 连接对话框（新建或编辑主机）- 使用共享引用以便在回调中关闭
     connection_dialog: Arc<Mutex<Option<Entity<HostConnectionDialog>>>>,
+
+    /// 删除确认对话框
+    delete_dialog: Option<Entity<DeleteConfirmDialog>>,
+
+    /// 待删除的主机信息（ID 和名称）
+    pending_delete: Option<(HostId, String)>,
 }
 
 impl HostListView {
@@ -53,8 +61,10 @@ impl HostListView {
     pub fn new(database: Arc<Database>, cx: &mut Context<Self>) -> Self {
         let repository = Arc::new(SqliteHostRepository::new(database.pool().clone()));
         let focus_handle = cx.focus_handle();
-        let hosts = Arc::new(RwLock::new(Vec::new()));
+
+        // 初始化默认展开所有分组
         let expanded_groups = Arc::new(RwLock::new(HashSet::new()));
+        let hosts = Arc::new(RwLock::new(Vec::new()));
 
         let view = Self {
             database,
@@ -67,6 +77,8 @@ impl HostListView {
             context_menu_host: None,
             focus_handle,
             connection_dialog: Arc::new(Mutex::new(None)),
+            delete_dialog: None,
+            pending_delete: None,
         };
 
         // 异步加载主机列表
@@ -239,7 +251,7 @@ impl HostListView {
         cx.notify();
     }
 
-    /// 处理删除主机
+    /// 处理删除主机 - 显示确认对话框
     fn handle_delete_host(&mut self, host: &HostConfig, cx: &mut Context<Self>) {
         let host_id = match host.id {
             Some(id) => id,
@@ -250,7 +262,49 @@ impl HostListView {
         };
 
         let host_name = host.name.clone();
-        tracing::info!("删除主机: {} (ID: {})", host_name, host_id);
+        tracing::info!("请求删除主机: {} (ID: {})", host_name, host_id);
+
+        // 保存待删除的主机信息
+        self.pending_delete = Some((host_id, host_name.clone()));
+
+        // 创建删除确认对话框
+        let dialog = cx.new(|cx| DeleteConfirmDialog::for_host(host_id, host_name, cx));
+
+        // 订阅对话框事件
+        cx.subscribe(&dialog, Self::on_delete_dialog_event).detach();
+
+        self.delete_dialog = Some(dialog);
+        cx.notify();
+    }
+
+    /// 处理删除确认对话框事件
+    fn on_delete_dialog_event(
+        &mut self,
+        _dialog: Entity<DeleteConfirmDialog>,
+        event: &DeleteConfirmEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            DeleteConfirmEvent::Confirmed(target) => {
+                if let Some(host_id) = target.host_id() {
+                    let host_name = target.host_name().unwrap_or("unknown").to_string();
+                    self.do_delete_host(host_id, host_name, cx);
+                }
+            },
+            DeleteConfirmEvent::Cancelled => {
+                tracing::info!("用户取消删除操作");
+            },
+        }
+
+        // 关闭对话框
+        self.delete_dialog = None;
+        self.pending_delete = None;
+        cx.notify();
+    }
+
+    /// 执行实际的删除操作
+    fn do_delete_host(&mut self, host_id: HostId, host_name: String, cx: &mut Context<Self>) {
+        tracing::info!("执行删除主机: {} (ID: {})", host_name, host_id);
 
         let repository = self.repository.clone();
         let hosts = self.hosts.clone();
@@ -272,6 +326,8 @@ impl HostListView {
             }
         });
 
+        // 发出删除事件
+        cx.emit(HostListEvent::HostDeleted(host_id));
         cx.notify();
     }
 
@@ -635,6 +691,11 @@ impl Render for HostListView {
 
         // 如果有连接对话框，添加到根元素（作为覆盖层）
         if let Some(ref dialog) = *self.connection_dialog.lock() {
+            root = root.child(dialog.clone());
+        }
+
+        // 如果有删除确认对话框，添加到根元素（作为覆盖层）
+        if let Some(ref dialog) = self.delete_dialog {
             root = root.child(dialog.clone());
         }
 

@@ -114,6 +114,19 @@ enum LoadResult {
     Error { path: String, message: String },
 }
 
+/// 右键菜单状态
+#[derive(Debug, Clone)]
+struct ContextMenuState {
+    /// 文件路径
+    path: String,
+    /// 文件名
+    filename: String,
+    /// 是否为目录
+    is_directory: bool,
+    /// 菜单位置
+    position: (f32, f32),
+}
+
 /// SFTP 视图组件
 ///
 /// 整合路径栏、文件列表和传输队列，提供完整的 SFTP 文件管理界面。
@@ -148,6 +161,8 @@ pub struct SftpView {
     pending_load_result: Arc<RwLock<Option<LoadResult>>>,
     /// 传输任务映射（用于控制暂停/恢复/取消）
     transfer_tasks: Arc<RwLock<HashMap<TransferTaskId, TransferTask>>>,
+    /// 右键菜单状态
+    context_menu: Option<ContextMenuState>,
 }
 
 impl SftpView {
@@ -174,6 +189,7 @@ impl SftpView {
             connected: false,
             pending_load_result: Arc::new(RwLock::new(None)),
             transfer_tasks: Arc::new(RwLock::new(HashMap::new())),
+            context_menu: None,
         };
 
         // 订阅路径栏事件
@@ -385,8 +401,8 @@ impl SftpView {
                 // 多选不触发事件，等待操作
             },
             FileListEvent::ContextMenu { path, position } => {
-                // TODO: 显示右键菜单
-                let _ = (path, position);
+                // 显示右键菜单
+                self.show_context_menu(path.clone(), *position, cx);
             },
             FileListEvent::SortChanged { column, order } => {
                 // 排序在文件列表内部处理
@@ -589,6 +605,215 @@ impl SftpView {
         id: TransferTaskId,
     ) -> Option<std::sync::Arc<std::sync::atomic::AtomicBool>> {
         self.transfer_tasks.read().get(&id).map(|t| t.cancel_flag())
+    }
+
+    /// 显示右键菜单
+    fn show_context_menu(&mut self, path: String, position: (f32, f32), cx: &mut Context<Self>) {
+        // 从路径提取文件名
+        let filename = path.rsplit('/').next().unwrap_or(&path).to_string();
+
+        // 判断是否为目录（简单判断：以 / 结尾或无扩展名）
+        let is_directory = path.ends_with('/') || !filename.contains('.');
+
+        self.context_menu = Some(ContextMenuState {
+            path,
+            filename,
+            is_directory,
+            position,
+        });
+        cx.notify();
+    }
+
+    /// 隐藏右键菜单
+    fn hide_context_menu(&mut self, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        cx.notify();
+    }
+
+    /// 处理右键菜单操作：下载
+    fn context_menu_download(&mut self, cx: &mut Context<Self>) {
+        if let Some(ref menu) = self.context_menu {
+            let path = menu.path.clone();
+            tracing::info!("Context menu: Download {}", path);
+            cx.emit(SftpViewEvent::DownloadRequested {
+                remote_path: path,
+                local_path: None,
+            });
+        }
+        self.hide_context_menu(cx);
+    }
+
+    /// 处理右键菜单操作：删除
+    fn context_menu_delete(&mut self, cx: &mut Context<Self>) {
+        if let Some(ref menu) = self.context_menu {
+            let path = menu.path.clone();
+            tracing::info!("Context menu: Delete {}", path);
+            // TODO: 显示删除确认对话框，然后执行删除
+            // 目前只记录日志
+        }
+        self.hide_context_menu(cx);
+    }
+
+    /// 处理右键菜单操作：重命名
+    fn context_menu_rename(&mut self, cx: &mut Context<Self>) {
+        if let Some(ref menu) = self.context_menu {
+            let path = menu.path.clone();
+            tracing::info!("Context menu: Rename {}", path);
+            // TODO: 显示重命名对话框
+        }
+        self.hide_context_menu(cx);
+    }
+
+    /// 处理右键菜单操作：复制路径
+    fn context_menu_copy_path(&mut self, cx: &mut Context<Self>) {
+        if let Some(ref menu) = self.context_menu {
+            let path = menu.path.clone();
+            tracing::info!("Context menu: Copy path {}", path);
+            // TODO: 复制到剪贴板
+        }
+        self.hide_context_menu(cx);
+    }
+
+    /// 处理右键菜单操作：查看属性
+    fn context_menu_properties(&mut self, cx: &mut Context<Self>) {
+        if let Some(ref menu) = self.context_menu {
+            let path = menu.path.clone();
+            tracing::info!("Context menu: Properties {}", path);
+            // TODO: 显示属性对话框
+        }
+        self.hide_context_menu(cx);
+    }
+
+    /// 渲染右键菜单
+    fn render_context_menu(&self, cx: &Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+
+        let Some(ref menu) = self.context_menu else {
+            return div().into_any_element();
+        };
+
+        let is_dir = menu.is_directory;
+
+        div()
+            .id("sftp-context-menu")
+            .absolute()
+            .left(px(menu.position.0))
+            .top(px(menu.position.1))
+            .w_48()
+            .py_1()
+            .rounded_md()
+            .bg(theme.background)
+            .border_1()
+            .border_color(theme.border)
+            .shadow_lg()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    // 打开/进入
+                    .child(
+                        div()
+                            .id("ctx-open")
+                            .px_3()
+                            .py_2()
+                            .cursor_pointer()
+                            .hover(|el| el.bg(theme.muted))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(if is_dir { "📂" } else { "📄" })
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme.foreground)
+                                            .child(if is_dir { "打开" } else { "查看" }),
+                                    ),
+                            ),
+                    )
+                    // 下载
+                    .child(
+                        div()
+                            .id("ctx-download")
+                            .px_3()
+                            .py_2()
+                            .cursor_pointer()
+                            .hover(|el| el.bg(theme.muted))
+                            .child(
+                                div().flex().items_center().gap_2().child("⬇️").child(
+                                    div().text_sm().text_color(theme.foreground).child("下载"),
+                                ),
+                            ),
+                    )
+                    // 分隔线
+                    .child(div().h_px().my_1().mx_2().bg(theme.border))
+                    // 重命名
+                    .child(
+                        div()
+                            .id("ctx-rename")
+                            .px_3()
+                            .py_2()
+                            .cursor_pointer()
+                            .hover(|el| el.bg(theme.muted))
+                            .child(div().flex().items_center().gap_2().child("✏️").child(
+                                div().text_sm().text_color(theme.foreground).child("重命名"),
+                            )),
+                    )
+                    // 复制路径
+                    .child(
+                        div()
+                            .id("ctx-copy-path")
+                            .px_3()
+                            .py_2()
+                            .cursor_pointer()
+                            .hover(|el| el.bg(theme.muted))
+                            .child(
+                                div().flex().items_center().gap_2().child("📋").child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(theme.foreground)
+                                        .child("复制路径"),
+                                ),
+                            ),
+                    )
+                    // 分隔线
+                    .child(div().h_px().my_1().mx_2().bg(theme.border))
+                    // 删除
+                    .child(
+                        div()
+                            .id("ctx-delete")
+                            .px_3()
+                            .py_2()
+                            .cursor_pointer()
+                            .hover(|el| el.bg(gpui::hsla(0.0, 0.7, 0.5, 0.1)))
+                            .child(
+                                div().flex().items_center().gap_2().child("🗑️").child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(gpui::hsla(0.0, 0.7, 0.5, 1.0))
+                                        .child("删除"),
+                                ),
+                            ),
+                    )
+                    // 分隔线
+                    .child(div().h_px().my_1().mx_2().bg(theme.border))
+                    // 属性
+                    .child(
+                        div()
+                            .id("ctx-properties")
+                            .px_3()
+                            .py_2()
+                            .cursor_pointer()
+                            .hover(|el| el.bg(theme.muted))
+                            .child(
+                                div().flex().items_center().gap_2().child("ℹ️").child(
+                                    div().text_sm().text_color(theme.foreground).child("属性"),
+                                ),
+                            ),
+                    ),
+            )
+            .into_any_element()
     }
 
     /// 渲染工具栏
@@ -881,10 +1106,24 @@ impl Render for SftpView {
                     .flex()
                     .flex_col()
                     .overflow_hidden()
+                    .relative()
                     .child(if connected {
                         self.render_content(cx).into_any_element()
                     } else {
                         self.render_disconnected(cx).into_any_element()
+                    })
+                    // 右键菜单
+                    .when(self.context_menu.is_some(), |el| {
+                        el.child(self.render_context_menu(cx))
+                    })
+                    // 点击其他区域关闭右键菜单
+                    .when(self.context_menu.is_some(), |el| {
+                        el.on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(|this, _, _, cx| {
+                                this.hide_context_menu(cx);
+                            }),
+                        )
                     }),
             )
             // 传输队列（可选）

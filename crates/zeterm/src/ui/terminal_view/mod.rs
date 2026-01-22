@@ -17,6 +17,7 @@
 
 use std::sync::Arc;
 
+use alacritty_terminal::grid::Dimensions;
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
     KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render,
@@ -587,11 +588,67 @@ impl TerminalView {
 
     /// 在指定位置选择单词
     fn select_word_at(&mut self, cell_pos: CellPosition) {
-        // 简化实现：选择当前位置的单词
-        // TODO: 从终端内容中提取单词边界
+        // 从终端内容中提取单词边界
+        let word_bounds = self.detect_word_bounds_at(cell_pos);
+
         let point = cell_pos.to_selection_point();
-        self.selection.start_word(point, None);
+        self.selection.start_word(point, word_bounds);
         self.selection.finish();
+
+        if let Some((start, end)) = word_bounds {
+            tracing::debug!(
+                "Word selected at ({}, {}): columns {} to {}",
+                cell_pos.line,
+                cell_pos.col,
+                start,
+                end
+            );
+        }
+    }
+
+    /// 检测指定位置的单词边界
+    ///
+    /// 从终端内容获取指定行的文本，然后使用 WordBoundaryDetector 检测单词边界
+    fn detect_word_bounds_at(&self, cell_pos: CellPosition) -> Option<(i32, i32)> {
+        // 获取指定行的文本
+        let line_text = self.extract_line_text_at(cell_pos.line);
+
+        if line_text.is_empty() {
+            return None;
+        }
+
+        // 使用 WordBoundaryDetector 检测单词边界
+        WordBoundaryDetector::detect(&line_text, cell_pos.col as usize)
+    }
+
+    /// 从终端中提取指定行的文本
+    fn extract_line_text_at(&self, line: i32) -> String {
+        use alacritty_terminal::index::{Column, Line};
+
+        // 获取终端并锁定
+        let term = self.coordinator.terminal().term();
+        let term_guard = term.lock();
+
+        // 获取 grid
+        let grid = term_guard.grid();
+        let term_line = Line(line);
+
+        // 检查行是否在有效范围内
+        if term_line.0 < 0 || term_line.0 >= grid.screen_lines() as i32 {
+            return String::new();
+        }
+
+        // 获取行内容并转换为字符串
+        let mut line_text = String::new();
+        let cols = grid.columns();
+
+        for col in 0..cols {
+            let cell = &grid[term_line][Column(col)];
+            line_text.push(cell.c);
+        }
+
+        // 去除尾部空格但保留内部结构
+        line_text.trim_end().to_string()
     }
 
     /// 滚动终端

@@ -384,9 +384,89 @@ impl SshConnection {
                     .await
             },
             AuthMethod::Agent => self.authenticate_agent(session).await,
-            AuthMethod::KeyboardInteractive => Err(ConnectionError::Authentication(
-                "Keyboard interactive authentication not yet implemented".into(),
-            )),
+            AuthMethod::KeyboardInteractive => {
+                self.authenticate_keyboard_interactive(session).await
+            },
+        }
+    }
+
+    /// Keyboard Interactive 认证
+    ///
+    /// 支持基于提示的交互式认证，常用于：
+    /// - 双因素认证 (2FA)
+    /// - 一次性密码 (OTP)
+    /// - 挑战-响应认证
+    ///
+    /// 注意：当前实现使用密码作为响应，适用于简单的密码提示场景。
+    /// 对于复杂的多轮交互，可能需要用户界面支持。
+    async fn authenticate_keyboard_interactive(
+        &self,
+        session: &mut Handle<SshHandler>,
+    ) -> Result<(), ConnectionError> {
+        debug!(
+            "Attempting keyboard-interactive authentication for user: {}",
+            self.config.username
+        );
+
+        // 获取密码用于响应（如果配置了密码）
+        let password = match &self.config.auth_method {
+            AuthMethod::Password(pwd) => Some(pwd.clone()),
+            _ => {
+                // 检查回退方法中是否有密码
+                self.config.fallback_auth_methods.iter().find_map(|m| {
+                    if let AuthMethod::Password(pwd) = m {
+                        Some(pwd.clone())
+                    } else {
+                        None
+                    }
+                })
+            },
+        };
+
+        // 尝试使用 keyboard-interactive 认证
+        // 对于简单的密码提示场景，我们提供密码作为响应
+        match password {
+            Some(pwd) => {
+                // 使用密码进行 keyboard-interactive 认证
+                // russh 0.56 的 API：authenticate_keyboard_interactive_start 开始认证
+                // 然后通过 authenticate_keyboard_interactive_respond 响应提示
+
+                // 首先尝试启动 keyboard-interactive 认证
+                use russh::client::KeyboardInteractiveAuthResponse;
+
+                let auth_start = session
+                    .authenticate_keyboard_interactive_start(&self.config.username, None)
+                    .await
+                    .map_err(|e| ConnectionError::Authentication(e.to_string()))?;
+
+                if matches!(auth_start, KeyboardInteractiveAuthResponse::Success) {
+                    info!("Keyboard-interactive authentication successful (no prompts needed)");
+                    return Ok(());
+                }
+
+                // 如果需要响应提示，提供密码
+                let auth_result = session
+                    .authenticate_keyboard_interactive_respond(vec![pwd])
+                    .await
+                    .map_err(|e| ConnectionError::Authentication(e.to_string()))?;
+
+                if matches!(auth_result, KeyboardInteractiveAuthResponse::Success) {
+                    info!("Keyboard-interactive authentication successful");
+                    Ok(())
+                } else {
+                    Err(ConnectionError::Authentication(
+                        "Keyboard-interactive authentication failed".into(),
+                    ))
+                }
+            },
+            None => {
+                // 没有可用的密码，无法进行 keyboard-interactive 认证
+                warn!("No password available for keyboard-interactive authentication");
+                Err(ConnectionError::Authentication(
+                    "Keyboard-interactive authentication requires a password but none was provided"
+                        .into(),
+                ))
+            },
         }
     }
 
