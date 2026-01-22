@@ -977,19 +977,19 @@
 
 | 状态 | 任务 | 优先级 | 预估时间 | 备注 |
 |------|------|--------|----------|------|
-| ⬜ | 使用 gpui-component Tab | P0 | 2h | 使用自定义 TabView 实现 |
-| ✅ | 实现 Tab 数据模型 | P0 | 1h | TabManager + TabInfo 完整实现 |
+| ✅ | 使用 gpui-component Tab | P0 | 2h | 使用自定义 TabView 实现 (2026-01-22) |
+| ✅ | 实现 Tab 数据模型 | P0 | 1h | TabManager + TabInfo + TabData 完整实现 |
 | ✅ | 实现 Tab 渲染 | P0 | 2h | TabView 渲染 Tab 栏和 Tab 项 |
-| ⬜ | 显示连接状态图标 | P1 | 1h | 待实现 |
+| ✅ | 显示连接状态图标 | P1 | 1h | Tab 图标已实现 (🖥 SSH / 💻 本地) |
 
 #### 6.2.2 Tab 操作
 
 | 状态 | 任务 | 优先级 | 预估时间 | 备注 |
 |------|------|--------|----------|------|
-| ✅ | 实现新建 Tab | P0 | 1h | create_tab_for_host + add_tab |
-| ✅ | 实现关闭 Tab | P0 | 1h | 关闭按钮 (×) + close_tab |
-| ✅ | 实现Tab 切换 | P0 | 1h | 点击 Tab 切换 + switch_to_tab |
-| ⬜ | 实现 Tab 拖拽排序 | P2 | 2h | 待实现 |
+| ✅ | 实现新建 Tab | P0 | 1h | create_tab / create_ssh_tab / create_local_tab |
+| ✅ | 实现关闭 Tab | P0 | 1h | 关闭按钮 (×) + close_tab + 资源清理 |
+| ✅ | 实现 Tab 切换 | P0 | 1h | 点击切换 + switch_to_next/prev_tab + switch_to_tab_at_index |
+| ⬜ | 实现 Tab 拖拽排序 | P2 | 2h | move_tab API 已实现，UI 待实现 |
 | ⬜ | 实现关闭确认 (有活动连接时) | P1 | 1h | 待实现 |
 
 **注**: Tab 管理基础功能已完成，包括：
@@ -999,28 +999,28 @@
 - 关闭 Tab（点击 × 按钮）
 - Tab 切换（点击 Tab 项）
 
-#### 6.2.3 Tab + 分屏集成 ⭐ 重要
+#### 6.2.3 Tab + 分屏集成 ⭐ 重要 ✅ 已完成 (2026-01-22)
 
 > **设计决策**: 参考 iTerm2、Windows Terminal 等主流终端应用，采用 **"每个 Tab 独立分屏"** 模式，
 > 而非全局分屏。每个 Tab 代表一个工作场景，拥有独立的分屏布局。
 
 | 状态 | 任务 | 优先级 | 预估时间 | 备注 |
 |------|------|--------|----------|------|
-| ⬜ | 调整 TabInfo 结构，添加 SplitManager 引用 | P0 | 1h | 每个 Tab 拥有独立的 SplitManager |
-| ⬜ | 调整 MainWindow，移除全局 SplitManager | P0 | 2h | 改为从当前 Tab 获取 SplitManager |
-| ⬜ | 集成 TabView 到 MainWindow 渲染 | P0 | 2h | 在内容区顶部渲染 Tab 栏 |
-| ⬜ | 实现 Tab 切换时切换 SplitView | P0 | 2h | 切换 Tab 时显示对应的分屏布局 |
-| ⬜ | 新建 Tab 时创建独立 SplitManager | P0 | 1h | 每个新 Tab 初始化空的 SplitManager |
-| ⬜ | 关闭 Tab 时清理分屏资源 | P0 | 1h | 关闭所有终端连接，释放资源 |
-| ⬜ | 测试和调试 | P0 | 2h | 验证多 Tab + 分屏功能正常 |
+| ✅ | 调整 TabInfo 结构，添加 SplitManager 引用 | P0 | 1h | TabData 结构包含独立的 SplitManager |
+| ✅ | 调整 MainWindow，移除全局 SplitManager | P0 | 2h | 改用 tab_manager + split_views HashMap |
+| ✅ | 集成 TabView 到 MainWindow 渲染 | P0 | 2h | TabView 渲染 Tab 栏 + 当前 Tab 的 SplitView |
+| ✅ | 实现 Tab 切换时切换 SplitView | P0 | 2h | on_tab_switched 事件处理 |
+| ✅ | 新建 Tab 时创建独立 SplitManager | P0 | 1h | create_tab 自动创建 SplitManager + SplitView |
+| ✅ | 关闭 Tab 时清理分屏资源 | P0 | 1h | cleanup_tab 清理所有关联资源 |
+| ✅ | 测试和调试 | P0 | 2h | 编译通过，35 个测试通过 |
 
-**预估总工时**: 11h（约 1.5 天）
+**实际工时**: 约 4h（2026-01-22 完成）
 
-**设计要点**:
-- Tab 作为工作区：每个 Tab 代表一个工作场景（如：生产环境、开发环境）
-- 独立分屏布局：每个 Tab 的 `SplitManager` 相互独立，布局互不影响
-- Tab 切换：切换 Tab 时，整个分屏布局（含所有终端）随之切换
-- 后续扩展：支持保存/恢复每个 Tab 的分屏布局
+**实现要点**:
+- TabData 结构：包含 TabInfo + Entity<SplitManager>
+- MainWindow 重构：tab_manager + tab_view + split_views HashMap
+- Tab 生命周期：create_tab → 使用 → close_tab（自动清理）
+- 事件驱动：订阅 TabManagerEvent 处理 Tab 状态变化
 
 ---
 

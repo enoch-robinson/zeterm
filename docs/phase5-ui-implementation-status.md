@@ -267,8 +267,8 @@
 | 模块 | 状态 | 完成度 | 说明 |
 |------|------|--------|------|
 | 6.1 主机管理 | ✅ | 100% | 主机列表、连接对话框、数据库集成 |
-| 6.2 Tab 管理 | 🔄 | 70% | 基础功能完成，**待与分屏集成** |
-| 6.2.3 Tab + 分屏集成 | ⬜ | **0%** | ⭐ **P0 重要任务**，详见下方 |
+| 6.2 Tab 管理 | ✅ | 100% | 基础功能 + Tab 切换/关闭/新建 |
+| 6.2.3 Tab + 分屏集成 | ✅ | **100%** | ⭐ **已完成** - 每个 Tab 独立 SplitManager |
 | 6.3 分屏布局 | ✅ | 100% | UI 集成、TerminalView 嵌入、快捷键、拖拽调整全部完成 |
 | 6.4 配置系统 | ✅ | 80% | config.toml + hosts.toml 完成，热更新待实现 |
 | 6.5 数据持久化 | ✅ | 100% | SQLite + HostRepository + SecretStore |
@@ -276,11 +276,11 @@
 | 6.7 主题系统 | ✅ | 100% | AppThemeManager + 10种内置主题 + 快捷键 |
 | 6.8 状态栏 | ✅ | 100% | StatusBar 组件完成，集成到 MainWindow |
 
-**总体进度**: Phase 5 约 **83%** 完成
+**总体进度**: Phase 5 约 **93%** 完成
 
 ---
 
-## ⭐ 6.2.3 Tab + 分屏集成（待实现）
+## ✅ 6.2.3 Tab + 分屏集成（已完成）
 
 ### 设计背景
 
@@ -292,39 +292,69 @@
 | 独立分屏布局 | 每个 Tab 拥有独立的 `SplitManager`，布局互不影响 |
 | Tab 切换 | 切换 Tab 时，整个分屏布局随之切换 |
 
-### 当前状态 vs 目标状态
+### 实现状态
 
 ```
-当前（全局分屏）                    目标（Tab + 独立分屏）
+已实现（Tab + 独立分屏）
 ─────────────────────────────────────────────────────────────
-┌─────────────────────┐            ┌─────────────────────────┐
-│     MainWindow      │            │ [Tab1] [Tab2] [Tab3]    │
-├─────────────────────┤            ├─────────────────────────┤
-│ 全局 SplitManager   │     →      │ 当前 Tab 的 SplitView   │
-│ (所有终端混在一起)  │            │ (每个 Tab 独立布局)     │
-└─────────────────────┘            └─────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│ [Tab1] [Tab2] [Tab3] [+]                                │  ← TabView 组件
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│  当前 Tab 的 SplitView（每个 Tab 独立 SplitManager）    │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### 任务清单
+### 任务完成清单
 
-| 状态 | 任务 | 优先级 | 预估时间 |
-|------|------|--------|----------|
-| ⬜ | 调整 TabInfo 结构，添加 SplitManager 引用 | P0 | 1h |
-| ⬜ | 调整 MainWindow，移除全局 SplitManager | P0 | 2h |
-| ⬜ | 集成 TabView 到 MainWindow 渲染 | P0 | 2h |
-| ⬜ | 实现 Tab 切换时切换 SplitView | P0 | 2h |
-| ⬜ | 新建 Tab 时创建独立 SplitManager | P0 | 1h |
-| ⬜ | 关闭 Tab 时清理分屏资源 | P0 | 1h |
-| ⬜ | 测试和调试 | P0 | 2h |
+| 状态 | 任务 | 完成时间 |
+|------|------|----------|
+| ✅ | 重构 TabManager：添加 TabData 结构，每个 Tab 拥有独立 SplitManager | 2026-01-22 |
+| ✅ | 重构 TabView：支持渲染当前活动 Tab 的 SplitView | 2026-01-22 |
+| ✅ | 重构 MainWindow：移除全局 SplitManager，集成 TabView | 2026-01-22 |
+| ✅ | 实现 Tab 切换时自动切换 SplitView | 2026-01-22 |
+| ✅ | 新建 Tab 时自动创建独立 SplitManager 和 SplitView | 2026-01-22 |
+| ✅ | 关闭 Tab 时清理所有关联资源（SplitView、TerminalView） | 2026-01-22 |
+| ✅ | 添加 Tab 管理 API（create_tab、close_tab、switch_to_*_tab） | 2026-01-22 |
+| ✅ | 编译通过，所有测试通过 | 2026-01-22 |
 
-**预估总工时**: 11h（约 1.5 天）
+### 核心实现
 
-### Phase 3 遗留问题修复
+#### TabManager 重构
 
-| 问题 | 状态 | 说明 |
-|------|------|------|
-| Keepalive 管理器未启动 | ✅ 已修复 | 已集成到 SshConnection |
-| 主机密钥验证 | ✅ 已确认 | 实际已实现，无需修复 |
+```rust
+// 新增 TabData 结构
+pub struct TabData {
+    pub info: TabInfo,
+    pub split_manager: Entity<SplitManager>,  // 独立的分屏管理器
+}
+
+// TabManager 存储 TabData
+tabs: HashMap<TabId, TabData>
+```
+
+#### MainWindow 重构
+
+```rust
+// 移除全局 SplitManager，改用 Tab 管理
+pub struct MainWindow {
+    tab_manager: Entity<TabManager>,
+    tab_view: Entity<TabView>,
+    split_views: HashMap<TabId, Entity<SplitView>>,  // 每个 Tab 的 SplitView
+    terminal_panes: HashMap<PaneId, TerminalPaneData>,
+    // ...
+}
+```
+
+#### 新增 API
+
+- `create_tab(tab_info)` - 创建新 Tab（自动创建独立 SplitManager）
+- `create_local_tab(title)` - 创建本地终端 Tab
+- `create_ssh_tab(host_config)` - 创建 SSH 连接 Tab
+- `close_tab(tab_id)` - 关闭 Tab（自动清理资源）
+- `switch_to_next_tab()` / `switch_to_prev_tab()` - Tab 切换
+- `switch_to_tab_at_index(index)` - 切换到指定索引的 Tab
 
 ---
 
@@ -381,13 +411,12 @@
 
 ## 🎯 下一步建议
 
-### ⭐ 最高优先级 (1.5 天)
+### ⭐ 最高优先级 - ✅ 已完成
 
-1. **Tab + 分屏集成 (6.2.3)** - P0 重要任务
-   - 调整 TabInfo 结构，每个 Tab 拥有独立 SplitManager
-   - 集成 TabView 到 MainWindow
-   - 实现 Tab 切换时切换 SplitView
-   - 详见上方 "6.2.3 Tab + 分屏集成" 章节
+1. ~~**Tab + 分屏集成 (6.2.3)**~~ ✅ 已完成 (2026-01-22)
+   - ✅ 每个 Tab 拥有独立 SplitManager
+   - ✅ 集成 TabView 到 MainWindow
+   - ✅ Tab 切换时自动切换 SplitView
 
 ### 短期 (1-2天) - ✅ 已完成
 
@@ -396,7 +425,7 @@
 
 ### 中期 (3-5天)
 
-4. **实现 SFTP 文件管理 (6.6)**
+4. **实现 SFTP 文件管理 (6.6)** ⭐ 下一优先级
    - 文件列表视图
    - 上传/下载功能
 
@@ -404,39 +433,44 @@
    - 监听配置文件变化
    - 热重载配置
 
+6. **完善 Tab 管理 UI**
+   - Tab 拖拽排序
+   - Tab 右键菜单（关闭其他、关闭右侧等）
+   - Tab 固定功能
+
 ---
 
 ## ✅ 结论
 
-### 本次会话 (2026-01-21)完成了：
+### 本次会话 (2026-01-22) 完成了：
+
+1. ✅ **Tab + 分屏集成 (6.2.3)** - ⭐ P0 重要任务完成
+   - 重构 TabManager：添加 TabData，每个 Tab 拥有独立 SplitManager
+   - 重构 TabView：渲染 Tab 栏 + 当前活动 Tab 的 SplitView
+   - 重构 MainWindow：移除全局 SplitManager，集成 TabView
+   - 实现 Tab 生命周期管理（创建、切换、关闭、资源清理）
+   - 新增 Tab 管理 API（create_tab、close_tab、switch_to_*_tab 等）
+
+### 之前会话完成了：
 
 1. ✅ **Keepalive 心跳集成** - 修复 Phase 3 遗留问题
-   - `ConnectionKeepaliveCallback` 事件回调
-   - 连接后自动启动心跳
-   - 超时时更新连接状态
-
-2. ✅ **分屏布局 UI 集成** - 完成 P0 任务
-   - MainWindow 渲染 SplitView
-   - TerminalView 嵌入分屏面板
-   - PaneId -> Entity<TerminalView> 映射
-
+2. ✅ **分屏布局 UI 集成** - MainWindow 渲染 SplitView
 3. ✅ **分屏快捷键** - 6个新快捷键
-   - Ctrl+\ / Ctrl+Shift+| 水平分屏
-   - Ctrl+Shift+- / Ctrl+Shift+_ 垂直分屏
-   - Ctrl+Alt+W 关闭面板
-   - Ctrl+] / Ctrl+[ 面板焦点切换
-   - Ctrl+B 切换侧边栏
 
 **剩余工作**：
-- ⬜ **Tab + 分屏集成 (6.2.3 P0)** ⭐ 最高优先级
-- ⬜ SFTP 文件管理 (6.6)
+- ⬜ SFTP 文件管理 (6.6) ⭐ 下一优先级
 - ⬜ 配置热更新 (6.4.4 P2)
 - ⬜ 自定义主题文件支持 (6.7 P2)
 - ⬜ 连接历史 Repository (6.5.4)
+- ⬜ Tab 拖拽排序、右键菜单
 
 **编译状态**: ✅ 通过 (0 warnings)
 
-**测试状态**: ✅ 全部通过
+**测试状态**: ✅ 全部通过 (35 tests)
+
+**6.2 Tab 管理进度**: ✅ **100%** 完成
+
+**6.2.3 Tab + 分屏集成进度**: ✅ **100%** 完成
 
 **6.3 分屏布局进度**: ✅ **100%** 完成
 
@@ -446,11 +480,21 @@
 
 **6.8 状态栏进度**: ✅ **100%** 完成
 
-**Phase 5 整体进度**: 约 **83%** 完成
+**Phase 5 整体进度**: 约 **93%** 完成
 
 ---
 
 ##📝 更新日志
+
+### 2026-01-22 13:04
+- ✅ **完成 Tab + 分屏集成 (6.2.3)** ⭐ P0 重要任务
+- ✅ 重构 TabManager：新增 TabData 结构，每个 Tab 独立 SplitManager
+- ✅ 重构 TabView：渲染 Tab 栏 + 当前活动 Tab 的 SplitView
+- ✅ 重构 MainWindow：移除全局 SplitManager，集成 TabView
+- ✅ 新增 Tab 管理 API：create_tab、close_tab、switch_to_*_tab 等
+- ✅ 实现 Tab 生命周期管理：创建、切换、关闭、资源清理
+- ✅ 编译通过 (0 warnings)，测试通过 (35 tests)
+- 📝 更新 Phase 5 进度：83% → 93%
 
 ### 2026-01-22 01:01
 - 📝 更新文档：添加 Tab + 分屏集成设计

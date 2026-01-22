@@ -79,10 +79,8 @@ fn main() {
         // 创建窗口
         let window = cx
             .open_window(window_options, |_window, cx| {
-                // 先创建 SplitManager
-                let split_manager = cx.new(|_cx| crate::ui::split_pane::SplitManager::new());
-                // 创建 MainWindow Entity
-                cx.new(|cx| MainWindow::new(split_manager, cx))
+                // 创建 MainWindow Entity（内部自动管理 Tab 和 SplitManager）
+                cx.new(|cx| MainWindow::new(cx))
             })
             .expect("Failed to create main window");
 

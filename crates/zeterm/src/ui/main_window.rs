@@ -1,6 +1,7 @@
 //! 主窗口模块
 //!
-//! 管理应用程序的主窗口，包括主机列表、终端视图、分屏功能、状态栏和主题。
+//! 管理应用程序的主窗口，包括 Tab 管理、分屏布局、状态栏和主题。
+//! 采用 "每个 Tab 独立分屏" 模式，参考 iTerm2 和 Windows Terminal 设计。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,36 +17,61 @@ use crate::app::session::SessionCoordinator;
 use crate::ui::app_theme::{AppThemeManager, BuiltinTheme, ThemeMode};
 use crate::ui::split_pane::{Pane, PaneId, SplitManager, SplitView};
 use crate::ui::status_bar::{ConnectionStatus, StatusBar, StatusInfo};
+use crate::ui::tab_manager::{TabId, TabInfo, TabManager, TabManagerEvent};
+use crate::ui::tab_view::TabView;
 use crate::ui::terminal_view::TerminalView;
+
+/// 终端面板数据（关联 Tab）
+struct TerminalPaneData {
+    /// 终端视图实体
+    terminal_view: Entity<TerminalView>,
+    /// 会话协调器
+    coordinator: Arc<SessionCoordinator>,
+    /// 所属 Tab ID
+    tab_id: TabId,
+}
 
 /// 主窗口
 pub struct MainWindow {
     /// 焦点句柄
     focus_handle: FocusHandle,
+
     /// 主机列表视图
     host_list_view: Option<SharedString>,
-    /// 终端视图映射 (PaneId -> TerminalView Entity)
-    terminal_views: HashMap<PaneId, Entity<TerminalView>>,
-    /// 会话协调器映射 (PaneId -> SessionCoordinator)
-    coordinators: HashMap<PaneId, Arc<SessionCoordinator>>,
-    /// 分屏管理器
-    split_manager: Entity<SplitManager>,
-    /// 分屏视图
-    split_view: Entity<SplitView>,
+
+    /// Tab 管理器
+    tab_manager: Entity<TabManager>,
+
+    /// Tab 视图
+    tab_view: Entity<TabView>,
+
+    /// 每个 Tab 的 SplitView（TabId -> SplitView）
+    split_views: HashMap<TabId, Entity<SplitView>>,
+
+    /// 终端面板数据（PaneId -> TerminalPaneData）
+    terminal_panes: HashMap<PaneId, TerminalPaneData>,
+
     /// 状态栏
     status_bar: Entity<StatusBar>,
+
     /// 主题管理器
     theme_manager: AppThemeManager,
+
     /// 是否显示侧边栏
     show_sidebar: bool,
+
+    /// 是否显示 Tab 栏
+    show_tab_bar: bool,
 }
 
 impl std::fmt::Debug for MainWindow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MainWindow")
             .field("host_list_view", &self.host_list_view)
-            .field("terminal_views", &self.terminal_views)
+            .field("terminal_panes_count", &self.terminal_panes.len())
+            .field("split_views_count", &self.split_views.len())
             .field("show_sidebar", &self.show_sidebar)
+            .field("show_tab_bar", &self.show_tab_bar)
             .finish_non_exhaustive()
     }
 }
@@ -53,35 +79,434 @@ impl std::fmt::Debug for MainWindow {
 impl MainWindow {
     /// 构建主窗口（工厂方法，供 open_window 使用）
     pub fn build(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-        // 先创建 SplitManager
-        let split_manager = cx.new(|_cx| SplitManager::new());
-        Self::new(split_manager, cx)
+        Self::new(cx)
     }
 
     /// 创建新的主窗口
-    pub fn new(split_manager: Entity<SplitManager>, cx: &mut Context<Self>) -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
-        let split_view = cx.new(|cx| SplitView::new(split_manager.clone(), cx));
+
+        // 创建 Tab 管理器
+        let tab_manager = cx.new(|_cx| TabManager::new());
+
+        // 创建 Tab 视图
+        let tab_view = cx.new(|cx| TabView::new(tab_manager.clone(), cx));
+
+        // 创建状态栏
         let status_bar = cx.new(|cx| StatusBar::new(cx));
+
+        // 主题管理器
         let theme_manager = AppThemeManager::new();
+
+        // 订阅 Tab 管理器事件
+        cx.subscribe(&tab_manager, Self::on_tab_manager_event)
+            .detach();
 
         Self {
             focus_handle,
             host_list_view: None,
-            terminal_views: HashMap::new(),
-            coordinators: HashMap::new(),
-            split_manager,
-            split_view,
+            tab_manager,
+            tab_view,
+            split_views: HashMap::new(),
+            terminal_panes: HashMap::new(),
             status_bar,
             theme_manager,
             show_sidebar: true,
+            show_tab_bar: true,
         }
+    }
+
+    /// 处理 Tab 管理器事件
+    fn on_tab_manager_event(
+        &mut self,
+        _tab_manager: Entity<TabManager>,
+        event: &TabManagerEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            TabManagerEvent::TabAdded(tab_id, _info) => {
+                info!("Tab added: {}", tab_id);
+                // Tab 添加时 SplitManager 和 SplitView 已在 add_tab 中创建
+            },
+            TabManagerEvent::TabClosed(tab_id) => {
+                info!("Tab closed: {}", tab_id);
+                self.cleanup_tab(*tab_id, cx);
+            },
+            TabManagerEvent::TabSwitched(tab_id) => {
+                info!("Tab switched to: {}", tab_id);
+                self.on_tab_switched(*tab_id, cx);
+            },
+            TabManagerEvent::TabUpdated(tab_id) => {
+                info!("Tab updated: {}", tab_id);
+            },
+            TabManagerEvent::TabMoved(tab_id, new_index) => {
+                info!("Tab moved: {} to index {}", tab_id, new_index);
+            },
+        }
+        cx.notify();
+    }
+
+    /// Tab 切换时的处理
+    fn on_tab_switched(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
+        // 更新状态栏显示当前 Tab 的连接信息
+        if let Some(tab_info) = self.tab_manager.read(cx).get_tab(tab_id) {
+            if let Some(host_config) = &tab_info.host_config {
+                self.update_user_host(
+                    Some(host_config.username.clone()),
+                    Some(host_config.host.clone()),
+                    cx,
+                );
+                self.update_connection_status(ConnectionStatus::Connected, cx);
+            } else {
+                // 本地终端或无连接
+                self.update_user_host(None, None, cx);
+                self.update_connection_status(ConnectionStatus::Disconnected, cx);
+            }
+        }
+    }
+
+    /// 清理 Tab 相关资源
+    fn cleanup_tab(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
+        // 移除 SplitView
+        if let Some(_split_view) = self.split_views.remove(&tab_id) {
+            // 从 TabView 中移除
+            self.tab_view.update(cx, |view, _cx| {
+                view.unregister_split_view(tab_id);
+            });
+        }
+
+        // 移除该 Tab 下的所有终端面板
+        let pane_ids_to_remove: Vec<PaneId> = self
+            .terminal_panes
+            .iter()
+            .filter(|(_, data)| data.tab_id == tab_id)
+            .map(|(id, _)| *id)
+            .collect();
+
+        for pane_id in pane_ids_to_remove {
+            self.terminal_panes.remove(&pane_id);
+        }
+
+        // 从 TabView 中移除所有终端视图
+        self.tab_view.update(cx, |view, _cx| {
+            view.unregister_all_terminal_views(tab_id);
+        });
+
+        // 如果没有更多 Tab，更新状态栏
+        if !self.tab_manager.read(cx).has_tabs() {
+            self.update_connection_status(ConnectionStatus::Disconnected, cx);
+            self.update_user_host(None, None, cx);
+        }
+    }
+
+    // ==================== Tab 管理 ====================
+
+    /// 创建新的 Tab（带独立 SplitManager）
+    pub fn create_tab(&mut self, tab_info: TabInfo, cx: &mut Context<Self>) -> Option<TabId> {
+        // 创建独立的 SplitManager
+        let split_manager = cx.new(|_cx| SplitManager::new());
+
+        // 创建 SplitView
+        let split_view = cx.new(|cx| SplitView::new(split_manager.clone(), cx));
+
+        // 添加到 Tab 管理器
+        let tab_id = self.tab_manager.update(cx, |manager, cx| {
+            manager.add_tab(tab_info, split_manager, cx)
+        })?;
+
+        // 存储 SplitView
+        self.split_views.insert(tab_id, split_view.clone());
+
+        // 注册到 TabView
+        self.tab_view.update(cx, |view, _cx| {
+            view.register_split_view(tab_id, split_view);
+        });
+
+        info!("Created new tab: {}", tab_id);
+        cx.notify();
+
+        Some(tab_id)
+    }
+
+    /// 创建新的本地终端 Tab
+    pub fn create_local_tab(
+        &mut self,
+        title: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) -> Option<TabId> {
+        let tab_info = TabInfo::new_local(title);
+        self.create_tab(tab_info, cx)
+    }
+
+    /// 创建新的 SSH 连接 Tab
+    pub fn create_ssh_tab(
+        &mut self,
+        host_config: &zeterm_core::entities::HostConfig,
+        cx: &mut Context<Self>,
+    ) -> Option<TabId> {
+        let tab_info = TabInfo::new_ssh(host_config.clone());
+        self.create_tab(tab_info, cx)
+    }
+
+    /// 关闭指定 Tab
+    pub fn close_tab(&mut self, tab_id: TabId, cx: &mut Context<Self>) -> bool {
+        self.tab_manager
+            .update(cx, |manager, cx| manager.close_tab(tab_id, cx))
+    }
+
+    /// 关闭当前活动 Tab
+    pub fn close_active_tab(&mut self, cx: &mut Context<Self>) -> bool {
+        if let Some(tab_id) = self.tab_manager.read(cx).active_tab_id() {
+            self.close_tab(tab_id, cx)
+        } else {
+            false
+        }
+    }
+
+    /// 切换到下一个 Tab
+    pub fn switch_to_next_tab(&mut self, cx: &mut Context<Self>) -> bool {
+        self.tab_manager
+            .update(cx, |manager, cx| manager.switch_to_next_tab(cx))
+    }
+
+    /// 切换到上一个 Tab
+    pub fn switch_to_prev_tab(&mut self, cx: &mut Context<Self>) -> bool {
+        self.tab_manager
+            .update(cx, |manager, cx| manager.switch_to_prev_tab(cx))
+    }
+
+    /// 切换到指定索引的 Tab
+    pub fn switch_to_tab_at_index(&mut self, index: usize, cx: &mut Context<Self>) -> bool {
+        self.tab_manager
+            .update(cx, |manager, cx| manager.switch_to_tab_at_index(index, cx))
+    }
+
+    /// 获取当前活动 Tab ID
+    pub fn active_tab_id(&self, cx: &Context<Self>) -> Option<TabId> {
+        self.tab_manager.read(cx).active_tab_id()
+    }
+
+    /// 获取当前活动 Tab 的 SplitManager
+    pub fn active_split_manager(&self, cx: &Context<Self>) -> Option<Entity<SplitManager>> {
+        let tab_id = self.tab_manager.read(cx).active_tab_id()?;
+        self.tab_manager.read(cx).get_split_manager(tab_id).cloned()
+    }
+
+    /// 获取 Tab 数量
+    pub fn tab_count(&self, cx: &Context<Self>) -> usize {
+        self.tab_manager.read(cx).tab_count()
+    }
+
+    /// 是否有 Tab
+    pub fn has_tabs(&self, cx: &Context<Self>) -> bool {
+        self.tab_manager.read(cx).has_tabs()
+    }
+
+    // ==================== 终端面板管理 ====================
+
+    /// 在当前活动 Tab 中添加终端面板
+    pub fn add_terminal_pane(
+        &mut self,
+        title: impl Into<String>,
+        coordinator: Arc<SessionCoordinator>,
+        cx: &mut Context<Self>,
+    ) -> Option<PaneId> {
+        let title = title.into();
+
+        // 获取当前活动 Tab
+        let tab_id = self.tab_manager.read(cx).active_tab_id()?;
+
+        // 获取该 Tab 的 SplitManager
+        let split_manager = self.tab_manager.read(cx).get_split_manager(tab_id)?.clone();
+
+        // 创建新的终端面板
+        let new_pane = Pane::new_terminal(&title);
+        let pane_id = new_pane.id;
+
+        // 创建 TerminalView 实体
+        let terminal_view = cx.new(|cx| TerminalView::new(coordinator.clone(), cx));
+
+        // 存储终端面板数据
+        self.terminal_panes.insert(
+            pane_id,
+            TerminalPaneData {
+                terminal_view: terminal_view.clone(),
+                coordinator,
+                tab_id,
+            },
+        );
+
+        // 注册到对应的 SplitView
+        if let Some(split_view) = self.split_views.get(&tab_id) {
+            split_view.update(cx, |view, _cx| {
+                view.register_terminal_view(pane_id, terminal_view.clone());
+            });
+        }
+
+        // 注册到 TabView
+        self.tab_view.update(cx, |view, _cx| {
+            view.register_terminal_view(tab_id, pane_id, terminal_view);
+        });
+
+        // 添加到 SplitManager
+        let has_panes = split_manager.read(cx).has_panes();
+        if !has_panes {
+            // 没有面板，设置为根面板
+            split_manager.update(cx, |manager, cx| {
+                manager.set_root(new_pane, cx);
+                manager.focus_pane(pane_id, cx);
+            });
+        } else {
+            // 已有面板，在当前焦点面板旁边水平分屏
+            if let Some(focused_id) = split_manager.read(cx).focused_pane() {
+                split_manager.update(cx, |manager, cx| {
+                    manager.split_horizontal(focused_id, cx);
+                });
+            }
+        }
+
+        // 更新状态栏
+        self.update_connection_status(ConnectionStatus::Connected, cx);
+
+        info!(
+            "Added terminal pane: {} (id: {}) to tab: {}",
+            title, pane_id, tab_id
+        );
+        cx.notify();
+
+        Some(pane_id)
+    }
+
+    /// 在当前活动 Tab 中添加 SSH 终端面板
+    pub fn add_ssh_terminal_pane(
+        &mut self,
+        host_config: &zeterm_core::entities::HostConfig,
+        coordinator: Arc<SessionCoordinator>,
+        cx: &mut Context<Self>,
+    ) -> Option<PaneId> {
+        let title = format!("{}@{}", host_config.username, host_config.host);
+
+        // 更新状态栏用户主机信息
+        self.update_user_host(
+            Some(host_config.username.clone()),
+            Some(host_config.host.clone()),
+            cx,
+        );
+
+        self.add_terminal_pane(title, coordinator, cx)
+    }
+
+    /// 关闭指定终端面板
+    pub fn close_terminal_pane(&mut self, pane_id: PaneId, cx: &mut Context<Self>) {
+        if let Some(pane_data) = self.terminal_panes.remove(&pane_id) {
+            let tab_id = pane_data.tab_id;
+
+            // 从 SplitView 中移除
+            if let Some(split_view) = self.split_views.get(&tab_id) {
+                split_view.update(cx, |view, _cx| {
+                    view.unregister_terminal_view(pane_id);
+                });
+            }
+
+            // 从 TabView 中移除
+            self.tab_view.update(cx, |view, _cx| {
+                view.unregister_terminal_view(tab_id, pane_id);
+            });
+
+            // 从 SplitManager 中移除
+            let split_manager = self.tab_manager.read(cx).get_split_manager(tab_id).cloned();
+            if let Some(split_manager) = split_manager {
+                split_manager.update(cx, |manager, cx| {
+                    manager.close_pane(pane_id, cx);
+                });
+            }
+
+            info!("Closed terminal pane: {}", pane_id);
+        }
+
+        // 如果当前 Tab 没有更多面板，更新状态
+        if let Some(tab_id) = self.active_tab_id(cx) {
+            let has_panes = self
+                .terminal_panes
+                .values()
+                .any(|data| data.tab_id == tab_id);
+
+            if !has_panes {
+                self.update_connection_status(ConnectionStatus::Disconnected, cx);
+                self.update_user_host(None, None, cx);
+            }
+        }
+
+        cx.notify();
+    }
+
+    /// 获取指定面板的 TerminalView
+    pub fn get_terminal_view(&self, pane_id: PaneId) -> Option<&Entity<TerminalView>> {
+        self.terminal_panes.get(&pane_id).map(|d| &d.terminal_view)
+    }
+
+    /// 获取指定面板的 SessionCoordinator
+    pub fn get_coordinator(&self, pane_id: PaneId) -> Option<&Arc<SessionCoordinator>> {
+        self.terminal_panes.get(&pane_id).map(|d| &d.coordinator)
     }
 
     /// 检查是否已连接
     pub fn is_connected(&self) -> bool {
-        !self.coordinators.is_empty()
+        !self.terminal_panes.is_empty()
     }
+
+    // ==================== 分屏操作 ====================
+
+    /// 在当前活动 Tab 中水平分屏
+    pub fn split_horizontal(&mut self, cx: &mut Context<Self>) {
+        if let Some(split_manager) = self.active_split_manager(cx) {
+            if let Some(pane_id) = split_manager.read(cx).focused_pane() {
+                split_manager.update(cx, |manager, cx| {
+                    manager.split_horizontal(pane_id, cx);
+                });
+            }
+        }
+    }
+
+    /// 在当前活动 Tab 中垂直分屏
+    pub fn split_vertical(&mut self, cx: &mut Context<Self>) {
+        if let Some(split_manager) = self.active_split_manager(cx) {
+            if let Some(pane_id) = split_manager.read(cx).focused_pane() {
+                split_manager.update(cx, |manager, cx| {
+                    manager.split_vertical(pane_id, cx);
+                });
+            }
+        }
+    }
+
+    /// 关闭当前焦点面板
+    pub fn close_focused_pane(&mut self, cx: &mut Context<Self>) {
+        if let Some(split_manager) = self.active_split_manager(cx) {
+            if let Some(pane_id) = split_manager.read(cx).focused_pane() {
+                self.close_terminal_pane(pane_id, cx);
+            }
+        }
+    }
+
+    /// 切换到下一个面板
+    pub fn focus_next_pane(&mut self, cx: &mut Context<Self>) {
+        if let Some(split_manager) = self.active_split_manager(cx) {
+            split_manager.update(cx, |manager, cx| {
+                manager.focus_next_pane(cx);
+            });
+        }
+    }
+
+    /// 切换到上一个面板
+    pub fn focus_prev_pane(&mut self, cx: &mut Context<Self>) {
+        if let Some(split_manager) = self.active_split_manager(cx) {
+            split_manager.update(cx, |manager, cx| {
+                manager.focus_prev_pane(cx);
+            });
+        }
+    }
+
+    // ==================== 状态栏管理 ====================
 
     /// 获取状态栏实体
     pub fn status_bar(&self) -> &Entity<StatusBar> {
@@ -148,7 +573,6 @@ impl MainWindow {
     /// 设置主题
     pub fn set_theme(&mut self, theme: BuiltinTheme, cx: &mut Context<Self>) {
         self.theme_manager.set_theme(theme);
-        // 同步终端视图的主题
         self.sync_terminal_themes(cx);
         info!("Theme changed to: {:?}", theme);
         cx.notify();
@@ -209,8 +633,8 @@ impl MainWindow {
     /// 同步终端视图的主题
     fn sync_terminal_themes(&mut self, cx: &mut Context<Self>) {
         let terminal_theme = self.theme_manager.terminal_theme().clone();
-        for terminal_view in self.terminal_views.values() {
-            terminal_view.update(cx, |view, _cx| {
+        for pane_data in self.terminal_panes.values() {
+            pane_data.terminal_view.update(cx, |view, _cx| {
                 view.set_theme(terminal_theme.clone());
             });
         }
@@ -224,148 +648,39 @@ impl MainWindow {
         cx.notify();
     }
 
-    /// 水平分屏
-    pub fn split_horizontal(&mut self, cx: &mut Context<Self>) {
-        if let Some(pane_id) = self.split_manager.read(cx).focused_pane() {
-            self.split_manager.update(cx, |manager, cx| {
-                manager.split_horizontal(pane_id, cx);
-            });
-        }
+    /// 是否显示侧边栏
+    pub fn is_sidebar_visible(&self) -> bool {
+        self.show_sidebar
     }
 
-    /// 垂直分屏
-    pub fn split_vertical(&mut self, cx: &mut Context<Self>) {
-        if let Some(pane_id) = self.split_manager.read(cx).focused_pane() {
-            self.split_manager.update(cx, |manager, cx| {
-                manager.split_vertical(pane_id, cx);
-            });
-        }
-    }
-
-    /// 关闭面板
-    pub fn close_pane(&mut self, cx: &mut Context<Self>) {
-        if let Some(pane_id) = self.split_manager.read(cx).focused_pane() {
-            self.split_manager.update(cx, |manager, cx| {
-                manager.close_pane(pane_id, cx);
-            });
-        }
-    }
-
-    /// 添加终端面板
-    ///
-    /// 创建一个新的终端面板并添加到分屏管理器。
-    /// 如果当前没有面板，则设置为根面板；
-    /// 如果已有面板，则在当前焦点面板旁边水平分屏。
-    pub fn add_terminal_pane(
-        &mut self,
-        title: impl Into<String>,
-        coordinator: Arc<SessionCoordinator>,
-        cx: &mut Context<Self>,
-    ) -> PaneId {
-        let title = title.into();
-        let new_pane = Pane::new_terminal(&title);
-        let pane_id = new_pane.id;
-
-        // 创建 TerminalView 实体
-        let terminal_view = cx.new(|cx| TerminalView::new(coordinator.clone(), cx));
-
-        // 存储映射关系
-        self.terminal_views.insert(pane_id, terminal_view.clone());
-        self.coordinators.insert(pane_id, coordinator);
-
-        // 同步到 SplitView
-        self.split_view.update(cx, |view, _cx| {
-            view.register_terminal_view(pane_id, terminal_view);
-        });
-
-        let has_panes = self.split_manager.read(cx).has_panes();
-
-        if !has_panes {
-            // 没有面板，设置为根面板
-            self.split_manager.update(cx, |manager, cx| {
-                manager.set_root(new_pane, cx);
-                manager.focus_pane(pane_id, cx);
-            });
-        } else {
-            // 已有面板，在当前焦点面板旁边水平分屏
-            if let Some(focused_id) = self.split_manager.read(cx).focused_pane() {
-                self.split_manager.update(cx, |manager, cx| {
-                    manager.split_horizontal(focused_id, cx);
-                });
-            }
-        }
-
-        // 更新状态栏为已连接状态
-        self.update_connection_status(ConnectionStatus::Connected, cx);
-
-        info!("Added terminal pane: {} (id: {})", title, pane_id);
-        cx.notify();
-        pane_id
-    }
-
-    /// 添加 SSH 终端面板
-    ///
-    /// 使用主机配置创建一个新的终端面板
-    pub fn add_ssh_terminal_pane(
-        &mut self,
-        host_config: &zeterm_core::entities::HostConfig,
-        coordinator: Arc<SessionCoordinator>,
-        cx: &mut Context<Self>,
-    ) -> PaneId {
-        let title = format!("{}@{}", host_config.username, host_config.host);
-
-        // 更新状态栏用户主机信息
-        self.update_user_host(
-            Some(host_config.username.clone()),
-            Some(host_config.host.clone()),
-            cx,
-        );
-
-        self.add_terminal_pane(title, coordinator, cx)
-    }
-
-    /// 获取指定面板的 TerminalView
-    pub fn get_terminal_view(&self, pane_id: PaneId) -> Option<&Entity<TerminalView>> {
-        self.terminal_views.get(&pane_id)
-    }
-
-    /// 获取指定面板的 SessionCoordinator
-    pub fn get_coordinator(&self, pane_id: PaneId) -> Option<&Arc<SessionCoordinator>> {
-        self.coordinators.get(&pane_id)
-    }
-
-    /// 关闭指定面板的终端
-    pub fn close_terminal_pane(&mut self, pane_id: PaneId, cx: &mut Context<Self>) {
-        // 移除终端视图和协调器
-        self.terminal_views.remove(&pane_id);
-        self.coordinators.remove(&pane_id);
-
-        // 从 SplitView 中移除
-        self.split_view.update(cx, |view, _cx| {
-            view.unregister_terminal_view(pane_id);
-        });
-
-        // 从分屏管理器中移除
-        self.split_manager.update(cx, |manager, cx| {
-            manager.close_pane(pane_id, cx);
-        });
-
-        // 如果没有更多连接，更新状态栏
-        if self.coordinators.is_empty() {
-            self.update_connection_status(ConnectionStatus::Disconnected, cx);
-            self.update_user_host(None, None, cx);
-        }
-
-        info!("Closed terminal pane: {}", pane_id);
+    /// 设置侧边栏可见性
+    pub fn set_sidebar_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        self.show_sidebar = visible;
         cx.notify();
     }
 
-    /// 获取所有终端视图
-    pub fn terminal_views(&self) -> &HashMap<PaneId, Entity<TerminalView>> {
-        &self.terminal_views
+    // ==================== Tab 栏管理 ====================
+
+    /// 切换 Tab 栏
+    pub fn toggle_tab_bar(&mut self, cx: &mut Context<Self>) {
+        self.show_tab_bar = !self.show_tab_bar;
+        cx.notify();
     }
 
-    /// 渲染欢迎界面
+    /// 是否显示 Tab 栏
+    pub fn is_tab_bar_visible(&self) -> bool {
+        self.show_tab_bar
+    }
+
+    /// 设置 Tab 栏可见性
+    pub fn set_tab_bar_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        self.show_tab_bar = visible;
+        cx.notify();
+    }
+
+    // ==================== 渲染 ====================
+
+    /// 渲染欢迎界面（无 Tab 时显示）
     fn render_welcome(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
@@ -376,6 +691,7 @@ impl MainWindow {
             .items_center()
             .w_full()
             .h_full()
+            .child(div().text_2xl().mb_6().child("🚀"))
             .child(
                 div()
                     .text_3xl()
@@ -387,11 +703,60 @@ impl MainWindow {
             )
             .child(
                 div()
-                    .text_xl()
+                    .text_lg()
                     .text_center()
                     .text_color(theme.muted_foreground)
-                    .child("选择左侧主机列表中的主机开始连接"),
+                    .mb_6()
+                    .child("现代化的 SSH 终端管理器"),
             )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child("• 从左侧主机列表选择主机连接")
+                    .child("• 按 Ctrl+T 新建标签页")
+                    .child("• 按 Ctrl+\\ 水平分屏")
+                    .child("• 按 Ctrl+Shift+- 垂直分屏"),
+            )
+    }
+
+    /// 渲染 Tab 区域
+    fn render_tab_area(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.show_tab_bar {
+            div()
+                .id("tab-area")
+                .flex_1()
+                .w_full()
+                .h_full()
+                .flex()
+                .flex_col()
+                .child(self.tab_view.clone())
+                .into_any_element()
+        } else {
+            // 不显示 Tab 栏时，直接渲染当前活动 Tab 的内容
+            if let Some(tab_id) = self.active_tab_id(cx) {
+                if let Some(split_view) = self.split_views.get(&tab_id) {
+                    return div()
+                        .id("content-area")
+                        .flex_1()
+                        .w_full()
+                        .h_full()
+                        .child(split_view.clone())
+                        .into_any_element();
+                }
+            }
+            // 无内容时显示欢迎界面
+            div()
+                .id("welcome-area")
+                .flex_1()
+                .w_full()
+                .h_full()
+                .child(self.render_welcome(cx))
+                .into_any_element()
+        }
     }
 }
 
@@ -403,37 +768,14 @@ impl Focusable for MainWindow {
 
 impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.render_content(cx)
-    }
-}
+        let has_tabs = self.has_tabs(cx);
 
-impl MainWindow {
-    /// 渲染主内容区域
-    fn render_content(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let secondary = theme.secondary;
-        let border = theme.border;
-
-        // 右侧主区域容器
-        let main_area = div().id("main-area").flex_1().flex().flex_col();
-
-        // 使用 SplitView 渲染终端区域
-        // 如果有面板则渲染 SplitView，否则渲染欢迎界面
-        let has_panes = self.split_manager.read(cx).has_panes();
-
-        let content_area = if has_panes {
-            // 渲染分屏视图
-            div()
-                .id("split-panel")
-                .flex_1()
-                .w_full()
-                .h_full()
-                .flex()
-                .flex_col()
-                .child(self.split_view.clone())
-                .into_any_element()
+        // 主内容区域
+        let main_content = if has_tabs {
+            // 有 Tab 时渲染 Tab 区域
+            self.render_tab_area(cx).into_any_element()
         } else {
-            // 渲染欢迎界面
+            // 无 Tab 时渲染欢迎界面
             div()
                 .id("welcome-panel")
                 .flex_1()
@@ -443,6 +785,12 @@ impl MainWindow {
                 .child(self.render_welcome(cx))
                 .into_any_element()
         };
+
+        // 获取主题颜色（在可变借用之后）
+        let theme = cx.theme();
+        let secondary = theme.secondary;
+        let border = theme.border;
+        let muted_foreground = theme.muted_foreground;
 
         // 构建主布局（垂直布局：内容区 + 状态栏）
         div()
@@ -473,13 +821,40 @@ impl MainWindow {
                                     .child(host_list_view.clone())
                                     .into_any_element()
                             } else {
-                                div().into_any_element()
+                                // 侧边栏占位
+                                div()
+                                    .id("sidebar-placeholder")
+                                    .w(px(280.0))
+                                    .h_full()
+                                    .flex_shrink_0()
+                                    .border_r_1()
+                                    .border_color(border)
+                                    .bg(secondary)
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(
+                                        div()
+                                            .text_color(muted_foreground)
+                                            .text_sm()
+                                            .child("主机列表"),
+                                    )
+                                    .into_any_element()
                             }
                         } else {
                             div().into_any_element()
                         }
                     })
-                    .child(main_area.child(content_area)),
+                    .child(
+                        // 右侧主区域
+                        div()
+                            .id("main-area")
+                            .flex_1()
+                            .h_full()
+                            .flex()
+                            .flex_col()
+                            .child(main_content),
+                    ),
             )
             .child(
                 // 底部状态栏
