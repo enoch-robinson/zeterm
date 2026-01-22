@@ -272,11 +272,11 @@
 | 6.3 分屏布局 | ✅ | 100% | UI 集成、TerminalView 嵌入、快捷键、拖拽调整全部完成 |
 | 6.4 配置系统 | ✅ | 80% | config.toml + hosts.toml 完成，热更新待实现 |
 | 6.5 数据持久化 | ✅ | 100% | SQLite + HostRepository + SecretStore |
-| 6.6 SFTP 文件管理 | ⬜ | 0% | 待实现 |
+| 6.6 SFTP 文件管理 | ✅ | 100% | SftpClient + SftpView + TransferQueue (2026-01-22) |
 | 6.7 主题系统 | ✅ | 100% | AppThemeManager + 10种内置主题 + 快捷键 |
 | 6.8 状态栏 | ✅ | 100% | StatusBar 组件完成，集成到 MainWindow |
 
-**总体进度**: Phase 5 约 **93%** 完成
+**总体进度**: Phase 5 约 **98%** 完成
 
 ---
 
@@ -458,7 +458,7 @@ pub struct MainWindow {
 3. ✅ **分屏快捷键** - 6个新快捷键
 
 **剩余工作**：
-- ⬜ SFTP 文件管理 (6.6) ⭐ 下一优先级
+- ✅ SFTP 文件管理 (6.6) ⭐ **已完成** (2026-01-22)
 - ⬜ 配置热更新 (6.4.4 P2)
 - ⬜ 自定义主题文件支持 (6.7 P2)
 - ⬜ 连接历史 Repository (6.5.4)
@@ -480,11 +480,30 @@ pub struct MainWindow {
 
 **6.8 状态栏进度**: ✅ **100%** 完成
 
-**Phase 5 整体进度**: 约 **93%** 完成
+**6.6 SFTP 文件管理进度**: ✅ **100%** 完成
+
+**Phase 5 整体进度**: 约 **98%** 完成
 
 ---
 
 ##📝 更新日志
+
+### 2026-01-22 13:49 - SFTP 文件管理完成 🎉
+- ✅ **完成 SFTP 文件管理 (6.6)** ⭐ 重要功能
+- ✅ 创建 `zeterm-ssh/src/sftp.rs` - SFTP 客户端核心模块
+  - SftpClient 结构体 (from_ssh_session, list_dir, stat, mkdir, rmdir, remove, rename 等)
+  - DirEntry/EntryType/FilePermissions 数据结构
+  - TransferProgress/TransferTask/TransferTaskId 传输管理
+  - download_file/upload_file 支持进度回调和取消
+  - 17 个单元测试通过
+- ✅ 创建 `zeterm/src/ui/sftp/` UI 模块
+  - SftpView - 主视图组件，整合所有子组件
+  - PathBar - 路径导航栏（面包屑 + 编辑模式 + 历史导航）
+  - FileListView - 文件列表表格（排序 + 多选 + 图标）
+  - TransferQueueView - 传输队列（进度条 + 速度 + ETA + 过滤器）
+- ✅ 导出 SFTP 模块到 zeterm-ssh/lib.rs 和 zeterm/ui/mod.rs
+- ✅ 编译通过 (0 errors, 0 warnings)
+- 📝 更新 Phase 5 进度：93% → 98%
 
 ### 2026-01-22 13:04
 - ✅ **完成 Tab + 分屏集成 (6.2.3)** ⭐ P0 重要任务

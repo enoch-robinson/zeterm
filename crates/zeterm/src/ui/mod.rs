@@ -14,6 +14,7 @@
 //! - `host_list` - 主机列表视图
 //! - `dialogs` - 对话框组件
 //! - `components` - 通用 UI 组件
+//! - `sftp` - SFTP 文件管理视图
 
 // 允许暂时未使用但将来会用到的代码
 #![allow(dead_code)]
@@ -23,6 +24,7 @@ mod components;
 mod dialogs;
 mod host_list;
 mod main_window;
+pub mod sftp;
 pub mod split_pane;
 mod status_bar;
 mod tab_manager;
@@ -53,3 +55,10 @@ pub use status_bar::{ConnectionStatus, StatusBar, StatusInfo};
 // ==================== 终端视图 ====================
 #[allow(unused_imports)]
 pub use terminal_view::TerminalView;
+
+// ==================== SFTP 文件管理 ====================
+#[allow(unused_imports)]
+pub use sftp::{
+    FileListEvent, FileListView, PathBar, PathBarEvent, SftpView, SftpViewEvent, SftpViewMode,
+    SortColumn, SortOrder, TransferQueueEvent, TransferQueueView,
+};

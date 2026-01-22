@@ -41,6 +41,7 @@ mod handler;
 mod keepalive;
 mod known_hosts;
 mod reconnect;
+mod sftp;
 
 // 重新导出主要类型
 pub use agent::{
@@ -72,6 +73,12 @@ pub use keepalive::{
 pub use known_hosts::{
     HostKeyEntry, KNOWN_HOSTS_FILENAME, KeyType, KnownHostsError, KnownHostsStore,
     VerificationResult,
+};
+
+pub use sftp::{
+    DirEntry, EntryType, FilePermissions, ProgressCallback, SftpClient, SftpConfig, SftpError,
+    SftpResult, TransferDirection, TransferProgress, TransferState, TransferTask, TransferTaskId,
+    format_duration, format_file_size, format_time,
 };
 
 // 重新导出常量

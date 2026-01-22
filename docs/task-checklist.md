@@ -1177,53 +1177,78 @@
 
 ---
 
-### 6.6SFTP 文件管理
+### 6.6 SFTP 文件管理 ✅ 已完成 (2026-01-22)
 
 #### 6.6.1 SFTP 客户端
 
-| 状态 | 任务 | 优先级 | 预估时间 |
-|------|------|--------|----------|
-| ⬜ | 创建 `sftp.rs` 文件 | P1 | 0.25h |
-| ⬜ | 定义 `SftpClient` 结构体 | P1 | 1h |
-| ⬜ | 从 SSH 连接创建 SFTP 会话 | P1 | 2h |
-| ⬜ | 实现目录列表 | P1 | 2h |
-| ⬜ | 实现文件读取 | P1 | 2h |
-| ⬜ | 实现文件写入 | P1 | 2h |
-| ⬜ | 实现目录创建 | P1 | 1h |
-| ⬜ | 实现文件/目录删除 | P1 | 1h |
-| ⬜ | 实现重命名 | P1 | 1h |
+| 状态 | 任务 | 优先级 | 预估时间 | 备注 |
+|------|------|--------|----------|------|
+| ✅ | 创建 `sftp.rs` 文件 | P1 | 0.25h | zeterm-ssh/src/sftp.rs (2026-01-22) |
+| ✅ | 定义 `SftpClient` 结构体 | P1 | 1h | 完整的 SFTP 客户端实现 |
+| ✅ | 从 SSH 连接创建 SFTP 会话 | P1 | 2h | from_ssh_session() 方法 |
+| ✅ | 实现目录列表 | P1 | 2h | list_dir() + DirEntry 结构 |
+| ✅ | 实现文件读取 | P1 | 2h | read_file() + download_file() |
+| ✅ | 实现文件写入 | P1 | 2h | write_file() + upload_file() |
+| ✅ | 实现目录创建 | P1 | 1h | mkdir() + mkdir_all() |
+| ✅ | 实现文件/目录删除 | P1 | 1h | remove() + rmdir() + rmdir_all() |
+| ✅ | 实现重命名 | P1 | 1h | rename() 方法 |
+
+**额外实现**:
+- `symlink()` / `read_link()` - 符号链接支持
+- `realpath()` - 路径规范化
+- `chmod()` - 权限修改
+- `download_file_cancellable()` / `upload_file_cancellable()` - 支持取消的传输
+- 17 个单元测试通过
 
 #### 6.6.2 SFTP 视图
 
-| 状态 | 任务 | 优先级 | 预估时间 |
-|------|------|--------|----------|
-| ⬜ | 创建 `ui/sftp_view.rs` 文件 | P1 | 0.25h |
-| ⬜ | 定义 `SftpView` 结构体 | P1 | 1h |
-| ⬜ | 使用 gpui-component Table 显示文件列表 | P1 | 2h |
-| ⬜ | 实现路径导航栏 | P1 | 1h |
-| ⬜ | 实现文件图标显示 | P2 | 1h |
-| ⬜ | 实现文件大小格式化 | P1 | 0.5h |
-| ⬜ | 实现修改时间格式化 | P1 | 0.5h |
+| 状态 | 任务 | 优先级 | 预估时间 | 备注 |
+|------|------|--------|----------|------|
+| ✅ | 创建 `ui/sftp/` 模块 | P1 | 0.25h | 完整的 UI 模块结构 (2026-01-22) |
+| ✅ | 定义 `SftpView` 结构体 | P1 | 1h | sftp_view.rs - 主视图组件 |
+| ✅ | 定义 `FileListView` 组件 | P1 | 2h | file_list.rs - 文件列表表格 |
+| ✅ | 实现路径导航栏 | P1 | 1h | path_bar.rs - PathBar 组件 |
+| ✅ | 实现文件图标显示 | P2 | 1h | 按扩展名显示不同图标 (20+种) |
+| ✅ | 实现文件大小格式化 | P1 | 0.5h | format_file_size() 函数 |
+| ✅ | 实现修改时间格式化 | P1 | 0.5h | format_time() 函数 |
+
+**额外实现**:
+- 排序功能 (SortColumn/SortOrder)
+- 多选支持
+- 隐藏文件过滤
+- 空目录/加载中/错误状态显示
 
 #### 6.6.3 文件传输
 
-| 状态 | 任务 | 优先级 | 预估时间 |
-|------|------|--------|----------|
-| ⬜ | 定义 `TransferTask` 结构体 | P1 | 1h |
-| ⬜ | 定义 `TransferState` 枚举 | P1 | 0.5h |
-| ⬜ | 实现上传功能 | P1 | 2h |
-| ⬜ | 实现下载功能 | P1 | 2h |
-| ⬜ | 实现进度回调 | P1 | 1h |
-| ⬜ | 实现传输取消 | P1 | 1h |
+| 状态 | 任务 | 优先级 | 预估时间 | 备注 |
+|------|------|--------|----------|------|
+| ✅ | 定义 `TransferTask` 结构体 | P1 | 1h | 完整的传输任务管理 |
+| ✅ | 定义 `TransferState` 枚举 | P1 | 0.5h | 6种状态 (Pending/InProgress/Paused/Completed/Failed/Cancelled) |
+| ✅ | 实现上传功能 | P1 | 2h | upload_file() + upload_file_cancellable() |
+| ✅ | 实现下载功能 | P1 | 2h | download_file() + download_file_cancellable() |
+| ✅ | 实现进度回调 | P1 | 1h | ProgressCallback + TransferProgress |
+| ✅ | 实现传输取消 | P1 | 1h | cancel_flag (AtomicBool) |
+
+**额外实现**:
+- TransferTaskId - 任务 ID 管理
+- TransferDirection - 上传/下载方向
+- 速度计算和 ETA 估算
+- formatted_progress/formatted_speed/formatted_eta
 
 #### 6.6.4 传输队列 UI
 
-| 状态 | 任务 | 优先级 | 预估时间 |
-|------|------|--------|----------|
-| ⬜ | 使用 gpui-component Progress | P1 | 1h |
-| ⬜ | 显示传输进度 | P1 | 1h |
-| ⬜ | 显示传输速度 | P1 | 1h |
-| ⬜ | 实现暂停/恢复按钮 | P2 | 1h |
+| 状态 | 任务 | 优先级 | 预估时间 | 备注 |
+|------|------|--------|----------|------|
+| ✅ | 创建 TransferQueueView 组件 | P1 | 1h | transfer_queue.rs (2026-01-22) |
+| ✅ | 显示传输进度 | P1 | 1h | 进度条 + 百分比 |
+| ✅ | 显示传输速度 | P1 | 1h | 实时速度 + ETA |
+| ✅ | 实现暂停/恢复/取消按钮 | P2 | 1h | UI 按钮 + 事件处理 |
+
+**额外实现**:
+- TransferFilter - 过滤器 (All/Active/Completed/Failed)
+- 批量操作 (Clear Completed/Clear All)
+- 总体进度显示
+- 错误消息显示
 
 ---
 
