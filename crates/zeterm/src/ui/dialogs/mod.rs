@@ -8,10 +8,14 @@ mod host_connection_dialog;
 mod host_key_channel;
 mod host_key_dialog;
 
-pub use close_confirm_dialog::{
-    CloseConfirmDialog, CloseConfirmEvent, CloseConfirmType, create_close_confirm_dialog,
-};
+// CloseConfirmDialog is currently not used, keeping module for future use
+// pub use close_confirm_dialog::{
+//     CloseConfirmDialog, CloseConfirmEvent, CloseConfirmType, create_close_confirm_dialog,
+// };
 pub use delete_confirm_dialog::{
-    DeleteConfirmDialog, DeleteConfirmEvent, DeleteTarget, create_delete_confirm_dialog,
+    DeleteConfirmDialog,
+    DeleteConfirmEvent,
+    // DeleteTarget is only used internally in DeleteConfirmEvent
+    // create_delete_confirm_dialog is not used
 };
 pub use host_connection_dialog::HostConnectionDialog;

@@ -7,6 +7,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use tracing::warn;
 
 /// 主机配置文件
 ///
@@ -142,6 +143,30 @@ pub enum PasswordRef {
     None,
 }
 
+/// 密码引用解析错误
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
+pub enum PasswordRefParseError {
+    /// 空字符串
+    #[error("密码引用字符串为空")]
+    Empty,
+
+    /// 无效的前缀
+    #[error("无效的密码引用前缀: '{0}'，支持的格式: keychain:, env:, plain:")]
+    InvalidPrefix(String),
+
+    /// 值部分为空
+    #[error("密码引用值部分为空")]
+    EmptyValue,
+
+    /// 环境变量名称无效
+    #[error("环境变量名称 '{0}' 无效: {1}")]
+    InvalidEnvVar(String, String),
+
+    /// Keychain key 无效
+    #[error("Keychain key '{0}' 无效: {1}")]
+    InvalidKeychainKey(String, String),
+}
+
 impl PasswordRef {
     /// 解析密码引用字符串
     ///
@@ -149,20 +174,86 @@ impl PasswordRef {
     /// - `keychain:service_name` - 从系统密钥链读取
     /// - `env:VAR_NAME` - 从环境变量读取
     /// - `plain:password` - 明文密码（不推荐）
+    ///
+    /// 注意：此方法向后兼容，会将无效格式静默转为 Keychain 类型。
+    /// 建议使用 `parse_validated` 获取详细的错误信息。
     pub fn parse(s: &str) -> Self {
+        Self::parse_validated(s).unwrap_or_else(|_| Self::Keychain(s.to_string()))
+    }
+
+    /// 解析密码引用字符串（带验证）
+    ///
+    /// 支持的格式：
+    /// - `keychain:service_name` - 从系统密钥链读取（验证 key 不为空且只包含有效字符）
+    /// - `env:VAR_NAME` - 从环境变量读取（验证变量名符合 POSIX 标准）
+    /// - `plain:password` - 明文密码（不推荐）
+    /// - 空字符串返回 `PasswordRef::None`
+    ///
+    /// # 错误
+    ///
+    /// - `PasswordRefParseError::Empty` - 输入字符串为空
+    /// - `PasswordRefParseError::InvalidPrefix` - 使用了不支持的前缀
+    /// - `PasswordRefParseError::EmptyValue` - 值部分为空
+    /// - `PasswordRefParseError::InvalidEnvVar` - 环境变量名称无效
+    /// - `PasswordRefParseError::InvalidKeychainKey` - Keychain key 无效
+    pub fn parse_validated(s: &str) -> Result<Self, PasswordRefParseError> {
         if s.is_empty() {
-            return Self::None;
+            return Ok(Self::None);
         }
 
         if let Some(key) = s.strip_prefix("keychain:") {
-            Self::Keychain(key.to_string())
+            if key.is_empty() {
+                return Err(PasswordRefParseError::EmptyValue);
+            }
+            // 验证 key 只包含有效字符（字母、数字、下划线、连字符、点）
+            if !key
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
+            {
+                return Err(PasswordRefParseError::InvalidKeychainKey(
+                    key.to_string(),
+                    "只能包含字母、数字、下划线、连字符和点".to_string(),
+                ));
+            }
+            Ok(Self::Keychain(key.to_string()))
         } else if let Some(var) = s.strip_prefix("env:") {
-            Self::Env(var.to_string())
+            if var.is_empty() {
+                return Err(PasswordRefParseError::EmptyValue);
+            }
+            // 验证环境变量名符合 POSIX 标准（字母开头，只包含字母、数字、下划线）
+            if !var
+                .chars()
+                .next()
+                .map(|c| c.is_alphabetic() || c == '_')
+                .unwrap_or(false)
+            {
+                return Err(PasswordRefParseError::InvalidEnvVar(
+                    var.to_string(),
+                    "必须以字母或下划线开头".to_string(),
+                ));
+            }
+            if !var.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                return Err(PasswordRefParseError::InvalidEnvVar(
+                    var.to_string(),
+                    "只能包含字母、数字和下划线".to_string(),
+                ));
+            }
+            Ok(Self::Env(var.to_string()))
         } else if let Some(plain) = s.strip_prefix("plain:") {
-            Self::Plain(plain.to_string())
+            if plain.is_empty() {
+                return Err(PasswordRefParseError::EmptyValue);
+            }
+            warn!("使用明文密码（不推荐）");
+            Ok(Self::Plain(plain.to_string()))
         } else {
-            // 默认作为 keychain 引用处理
-            Self::Keychain(s.to_string())
+            // 无效的前缀
+            if s.contains(':') {
+                let prefix = s.split(':').next().unwrap_or("");
+                Err(PasswordRefParseError::InvalidPrefix(prefix.to_string()))
+            } else {
+                // 无前缀的字符串，不允许在新代码中直接使用
+                Err(PasswordRefParseError::InvalidPrefix(s.to_string()))
+            }
         }
     }
 
@@ -1262,5 +1353,126 @@ group = "production"
         );
         assert_eq!(config.hosts.len(), 1);
         assert_eq!(config.hosts[0].group, Some("production".to_string()));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_empty() {
+        let result = PasswordRef::parse_validated("");
+        assert!(matches!(result, Ok(PasswordRef::None)));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_keychain_valid() {
+        let result = PasswordRef::parse_validated("keychain:my-service");
+        assert!(matches!(result, Ok(PasswordRef::Keychain(key)) if key == "my-service"));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_keychain_with_dashes() {
+        let result = PasswordRef::parse_validated("keychain:my-service-name");
+        assert!(matches!(result, Ok(PasswordRef::Keychain(key)) if key == "my-service-name"));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_keychain_with_dots() {
+        let result = PasswordRef::parse_validated("keychain:my.service.name");
+        assert!(matches!(result, Ok(PasswordRef::Keychain(key)) if key == "my.service.name"));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_keychain_empty() {
+        let result = PasswordRef::parse_validated("keychain:");
+        assert!(matches!(result, Err(PasswordRefParseError::EmptyValue)));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_keychain_invalid_chars() {
+        let result = PasswordRef::parse_validated("keychain:my service");
+        assert!(matches!(
+            result,
+            Err(PasswordRefParseError::InvalidKeychainKey(_, _))
+        ));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_env_valid() {
+        let result = PasswordRef::parse_validated("env:MY_PASSWORD");
+        assert!(matches!(result, Ok(PasswordRef::Env(var)) if var == "MY_PASSWORD"));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_env_with_underscore() {
+        let result = PasswordRef::parse_validated("env:MY_PASSWORD_123");
+        assert!(matches!(result, Ok(PasswordRef::Env(var)) if var == "MY_PASSWORD_123"));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_env_underscore_start() {
+        let result = PasswordRef::parse_validated("env:_PRIVATE_VAR");
+        assert!(matches!(result, Ok(PasswordRef::Env(var)) if var == "_PRIVATE_VAR"));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_env_empty() {
+        let result = PasswordRef::parse_validated("env:");
+        assert!(matches!(result, Err(PasswordRefParseError::EmptyValue)));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_env_invalid_start() {
+        let result = PasswordRef::parse_validated("env:1_VAR");
+        assert!(matches!(
+            result,
+            Err(PasswordRefParseError::InvalidEnvVar(..))
+        ));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_env_invalid_chars() {
+        let result = PasswordRef::parse_validated("env:MY-PASSWORD");
+        assert!(matches!(
+            result,
+            Err(PasswordRefParseError::InvalidEnvVar(..))
+        ));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_plain_valid() {
+        let result = PasswordRef::parse_validated("plain:secret123");
+        assert!(matches!(result, Ok(PasswordRef::Plain(pwd)) if pwd == "secret123"));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_plain_empty() {
+        let result = PasswordRef::parse_validated("plain:");
+        assert!(matches!(result, Err(PasswordRefParseError::EmptyValue)));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_invalid_prefix() {
+        let result = PasswordRef::parse_validated("vault:my-password");
+        assert!(matches!(
+            result,
+            Err(PasswordRefParseError::InvalidPrefix(_))
+        ));
+    }
+
+    #[test]
+    fn test_password_ref_parse_validated_no_prefix() {
+        let result = PasswordRef::parse_validated("my-password");
+        assert!(matches!(
+            result,
+            Err(PasswordRefParseError::InvalidPrefix(_))
+        ));
+    }
+
+    #[test]
+    fn test_password_ref_parse_fallback() {
+        // 验证 parse 方法对无效格式会回退到 Keychain
+        let pr = PasswordRef::parse("invalid:format");
+        assert!(matches!(pr, PasswordRef::Keychain(key) if key == "invalid:format"));
+
+        let pr = PasswordRef::parse("simple-value");
+        assert!(matches!(pr, PasswordRef::Keychain(key) if key == "simple-value"));
     }
 }

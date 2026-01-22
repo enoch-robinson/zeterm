@@ -8,8 +8,5 @@ mod reconnect_controller;
 mod session_coordinator;
 
 pub use connection_manager::ConnectionManager;
-pub use reconnect_controller::{
-    ConnectionFactory, ReconnectController, ReconnectControllerConfig, ReconnectControllerEvent,
-    SshConnectionFactory,
-};
+pub use reconnect_controller::{ReconnectController, ReconnectControllerConfig};
 pub use session_coordinator::SessionCoordinator;

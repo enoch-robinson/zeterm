@@ -4,7 +4,7 @@
 
 use gpui::{
     App, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, Styled, Window, div, prelude::*,
+    KeyDownEvent, ParentElement, Render, Styled, Window, div,
 };
 use gpui_component::ActiveTheme;
 
@@ -366,8 +366,8 @@ mod tests {
 
     #[test]
     fn test_delete_target_host() {
-        let target = DeleteTarget::host(1, "test-host");
-        assert_eq!(target.host_id(), Some(1));
+        let target = DeleteTarget::host(HostId(1), "test-host");
+        assert_eq!(target.host_id(), Some(HostId(1)));
         assert_eq!(target.host_name(), Some("test-host"));
         assert_eq!(target.title(), "删除主机");
         assert!(target.description().contains("test-host"));
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn test_delete_target_hosts() {
-        let target = DeleteTarget::hosts(vec![1, 2, 3]);
+        let target = DeleteTarget::hosts(vec![HostId(1), HostId(2), HostId(3)]);
         assert_eq!(target.host_id(), None);
         assert_eq!(target.host_name(), None);
         assert_eq!(target.title(), "删除多个主机");
@@ -387,7 +387,7 @@ mod tests {
         let event = DeleteConfirmEvent::Cancelled;
         assert!(format!("{:?}", event).contains("Cancelled"));
 
-        let event = DeleteConfirmEvent::Confirmed(DeleteTarget::host(1, "test"));
+        let event = DeleteConfirmEvent::Confirmed(DeleteTarget::host(HostId(1), "test"));
         assert!(format!("{:?}", event).contains("Confirmed"));
     }
 }

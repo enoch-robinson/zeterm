@@ -3,9 +3,7 @@
 //! 显示和管理 SSH 主机列表。
 
 use crate::app::runtime;
-use crate::ui::dialogs::{
-    DeleteConfirmDialog, DeleteConfirmEvent, DeleteTarget, HostConnectionDialog,
-};
+use crate::ui::dialogs::{DeleteConfirmDialog, DeleteConfirmEvent, HostConnectionDialog};
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
     ParentElement, Render, Styled, Window, div, prelude::*,
