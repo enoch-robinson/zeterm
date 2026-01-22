@@ -8,5 +8,7 @@ mod reconnect_controller;
 mod session_coordinator;
 
 pub use connection_manager::ConnectionManager;
-pub use reconnect_controller::{ReconnectController, ReconnectControllerConfig};
+// ConnectionFactory 目前未被外部使用，但保留导出以支持自定义连接工厂
+#[allow(unused_imports)]
+pub use reconnect_controller::{ConnectionFactory, ReconnectController, ReconnectControllerConfig};
 pub use session_coordinator::SessionCoordinator;

@@ -161,10 +161,8 @@ pub enum PasswordRefParseError {
     /// 环境变量名称无效
     #[error("环境变量名称 '{0}' 无效: {1}")]
     InvalidEnvVar(String, String),
-
-    /// Keychain key 无效
-    #[error("Keychain key '{0}' 无效: {1}")]
-    InvalidKeychainKey(String, String),
+    // 注意：Keychain key 不再进行字符验证，因为不同平台的 Keychain 实现支持不同字符
+    // macOS Keychain 和 Windows Credential Manager 通常支持包含 : @ / 等特殊字符的 key
 }
 
 impl PasswordRef {
@@ -184,18 +182,16 @@ impl PasswordRef {
     /// 解析密码引用字符串（带验证）
     ///
     /// 支持的格式：
-    /// - `keychain:service_name` - 从系统密钥链读取（验证 key 不为空且只包含有效字符）
+    /// - `keychain:service_name` - 从系统密钥链读取（只验证非空）
     /// - `env:VAR_NAME` - 从环境变量读取（验证变量名符合 POSIX 标准）
     /// - `plain:password` - 明文密码（不推荐）
     /// - 空字符串返回 `PasswordRef::None`
     ///
     /// # 错误
     ///
-    /// - `PasswordRefParseError::Empty` - 输入字符串为空
     /// - `PasswordRefParseError::InvalidPrefix` - 使用了不支持的前缀
     /// - `PasswordRefParseError::EmptyValue` - 值部分为空
     /// - `PasswordRefParseError::InvalidEnvVar` - 环境变量名称无效
-    /// - `PasswordRefParseError::InvalidKeychainKey` - Keychain key 无效
     pub fn parse_validated(s: &str) -> Result<Self, PasswordRefParseError> {
         if s.is_empty() {
             return Ok(Self::None);
@@ -205,16 +201,10 @@ impl PasswordRef {
             if key.is_empty() {
                 return Err(PasswordRefParseError::EmptyValue);
             }
-            // 验证 key 只包含有效字符（字母、数字、下划线、连字符、点）
-            if !key
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.')
-            {
-                return Err(PasswordRefParseError::InvalidKeychainKey(
-                    key.to_string(),
-                    "只能包含字母、数字、下划线、连字符和点".to_string(),
-                ));
-            }
+            // 不验证 Keychain key 的字符，因为：
+            // 1. 不同平台的 Keychain 实现支持不同字符
+            // 2. 实际生成的 key 格式为 "zeterm:host:user@host:port"，包含 : 和 @
+            // 3. 让 Keychain 实现自己决定是否接受
             Ok(Self::Keychain(key.to_string()))
         } else if let Some(var) = s.strip_prefix("env:") {
             if var.is_empty() {
@@ -1386,12 +1376,20 @@ group = "production"
     }
 
     #[test]
-    fn test_password_ref_parse_validated_keychain_invalid_chars() {
+    fn test_password_ref_parse_validated_keychain_with_special_chars() {
+        // 测试实际使用的 key 格式：zeterm:host:user@host:port
+        let result = PasswordRef::parse_validated("keychain:zeterm:host:admin@192.168.1.100:22");
+        assert!(
+            matches!(result, Ok(PasswordRef::Keychain(key)) if key == "zeterm:host:admin@192.168.1.100:22")
+        );
+
+        // 测试包含空格的 key（某些 Keychain 实现可能支持）
         let result = PasswordRef::parse_validated("keychain:my service");
-        assert!(matches!(
-            result,
-            Err(PasswordRefParseError::InvalidKeychainKey(_, _))
-        ));
+        assert!(matches!(result, Ok(PasswordRef::Keychain(key)) if key == "my service"));
+
+        // 测试包含斜杠的 key
+        let result = PasswordRef::parse_validated("keychain:path/to/secret");
+        assert!(matches!(result, Ok(PasswordRef::Keychain(key)) if key == "path/to/secret"));
     }
 
     #[test]
