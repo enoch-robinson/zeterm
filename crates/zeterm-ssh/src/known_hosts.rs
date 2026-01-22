@@ -9,6 +9,8 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::process;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use tracing::{debug, info};
 
@@ -350,14 +352,26 @@ impl KnownHostsStore {
     /// 保存到文件
     ///
     /// 使用临时文件+原子重命名确保写入安全，避免写入过程中崩溃导致文件损坏。
+    /// 临时文件名包含 PID 和时间戳，确保在并发场景下的唯一性。
     pub fn save(&mut self) -> Result<(), KnownHostsError> {
         // 确保目录存在
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|e| KnownHostsError::IoError(e.to_string()))?;
         }
 
-        // 生成临时文件路径
-        let temp_path = self.path.with_extension("tmp");
+        // 生成唯一临时文件路径（包含 PID 和时间戳）
+        let pid = process::id();
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let temp_filename = format!(
+            "{}.tmp.{}.{}",
+            self.path.file_name().unwrap_or_default().to_string_lossy(),
+            pid,
+            timestamp
+        );
+        let temp_path = self.path.with_file_name(temp_filename);
 
         // 写入临时文件
         {
