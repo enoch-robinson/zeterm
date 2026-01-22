@@ -32,7 +32,11 @@ pub mod secret;
 
 // 导出常用类型
 pub use database::Database;
-pub use repository::{HostRepository, SqliteHostRepository};
+pub use repository::{
+    ConnectionHistoryError, ConnectionHistoryRecord, ConnectionHistoryRepository,
+    ConnectionHistoryResult, ConnectionHistoryWithHost, ConnectionStats, ConnectionStatus,
+    HostRepository, SqliteConnectionHistoryRepository, SqliteHostRepository,
+};
 pub use secret::{
     KeyringSecretStore, MemorySecretStore, PasswordResolver, SecretHelper, SecretKeyGenerator,
     SecretKeyType, SecretStore, default_password_resolver, default_secret_helper,

@@ -270,13 +270,13 @@
 | 6.2 Tab 管理 | ✅ | 100% | 基础功能 + Tab 切换/关闭/新建 |
 | 6.2.3 Tab + 分屏集成 | ✅ | **100%** | ⭐ **已完成** - 每个 Tab 独立 SplitManager |
 | 6.3 分屏布局 | ✅ | 100% | UI 集成、TerminalView 嵌入、快捷键、拖拽调整全部完成 |
-| 6.4 配置系统 | ✅ | 80% | config.toml + hosts.toml 完成，热更新待实现 |
-| 6.5 数据持久化 | ✅ | 100% | SQLite + HostRepository + SecretStore |
+| 6.4 配置系统 | ✅ | 100% | config.toml + hosts.toml + 热更新 ConfigWatcher (2026-01-22) |
+| 6.5 数据持久化 | ✅ | 100% | SQLite + HostRepository + SecretStore + ConnectionHistory (2026-01-22) |
 | 6.6 SFTP 文件管理 | ✅ | 100% | SftpClient + SftpView + TransferQueue (2026-01-22) |
 | 6.7 主题系统 | ✅ | 100% | AppThemeManager + 10种内置主题 + 快捷键 |
 | 6.8 状态栏 | ✅ | 100% | StatusBar 组件完成，集成到 MainWindow |
 
-**总体进度**: Phase 5 约 **98%** 完成
+**总体进度**: Phase 5 约 **100%** 完成 🎉
 
 ---
 
@@ -459,10 +459,11 @@ pub struct MainWindow {
 
 **剩余工作**：
 - ✅ SFTP 文件管理 (6.6) ⭐ **已完成** (2026-01-22)
-- ⬜ 配置热更新 (6.4.4 P2)
-- ⬜ 自定义主题文件支持 (6.7 P2)
-- ⬜ 连接历史 Repository (6.5.4)
-- ⬜ Tab 拖拽排序、右键菜单
+- ✅ 配置热更新 (6.4.4) ⭐ **已完成** (2026-01-22)
+- ✅ 连接历史 Repository (6.5.4) ⭐ **已完成** (2026-01-22)
+- ✅ 关闭确认对话框 (6.2.2) ⭐ **已完成** (2026-01-22)
+- ⬜ 自定义主题文件支持 (6.7 P2) - 可选功能
+- ⬜ Tab 拖拽排序 (6.2.2 P2) - 可选功能
 
 **编译状态**: ✅ 通过 (0 warnings)
 
@@ -482,11 +483,40 @@ pub struct MainWindow {
 
 **6.6 SFTP 文件管理进度**: ✅ **100%** 完成
 
-**Phase 5 整体进度**: 约 **98%** 完成
+**6.4.4 配置热更新进度**: ✅ **100%** 完成
+
+**6.5.4 连接历史进度**: ✅ **100%** 完成
+
+**Phase 5 整体进度**: 约 **100%** 完成 🎉
 
 ---
 
 ##📝 更新日志
+
+### 2026-01-22 14:44 - Phase 5 全部完成 🎉🎉🎉
+- ✅ **完成连接历史 Repository (6.5.4)**
+  - 新增 `connection_history.rs` (`zeterm-storage/src/repository/`)
+  - `ConnectionHistoryRepository` trait + `SqliteConnectionHistoryRepository`
+  - `ConnectionHistoryRecord` / `ConnectionHistoryWithHost` / `ConnectionStats`
+  - `ConnectionStatus` 枚举 (Success/Failed/Disconnected/Connecting)
+  - 记录连接生命周期 + 统计查询 + 清理旧数据
+  - 16 个单元测试通过
+
+- ✅ **完成关闭确认对话框 (6.2.2)**
+  - 新增 `close_confirm_dialog.rs` (`zeterm/src/ui/dialogs/`)
+  - `CloseConfirmDialog` - 关闭确认对话框组件
+  - `CloseConfirmType` - 支持 Tab/Tabs/Application/OtherTabs 四种关闭场景
+  - `TabInfo::has_active_session()` / `TabManager::has_active_sessions()`
+  - 5 个单元测试通过
+
+- ✅ **完成配置热更新 (6.4.4)**
+  - 新增 `watcher.rs` (`zeterm-core/src/config/`)
+  - `ConfigWatcher` - 基于 notify 7.0 的文件监视器
+  - `ConfigChangeEvent` - 配置变更事件 (AppConfigChanged/HostsConfigChanged/ConfigDeleted/ConfigCreated)
+  - 事件去抖动 + 全局单例 + 回调机制
+  - 11 个单元测试通过
+
+- 📝 更新 Phase 5 进度：98% → **100%** 🎉
 
 ### 2026-01-22 13:49 - SFTP 文件管理完成 🎉
 - ✅ **完成 SFTP 文件管理 (6.6)** ⭐ 重要功能

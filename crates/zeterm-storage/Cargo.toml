@@ -33,6 +33,7 @@ tracing.workspace = true
 # Utilities
 dirs.workspace = true
 chrono.workspace = true
+uuid.workspace = true
 
 # Secret storage
 keyring.workspace = true

@@ -4,6 +4,7 @@
 
 mod app_config;
 mod hosts_config;
+mod watcher;
 
 pub use app_config::{
     AppConfig, AppearanceConfig, CursorStyle, KeybindingsConfig, NetworkConfig, TerminalConfig,
@@ -12,6 +13,12 @@ pub use app_config::{
 pub use hosts_config::{
     AuthType, GroupConfig, HostEntry, HostsConfig, HostsConfigManager, PasswordRef,
     generate_example_hosts_toml,
+};
+
+pub use watcher::{
+    ConfigChangeCallback, ConfigChangeEvent, ConfigFileType, ConfigWatcher, ConfigWatcherConfig,
+    ConfigWatcherError, ConfigWatcherResult, global_config_watcher, start_global_config_watcher,
+    stop_global_config_watcher,
 };
 
 use anyhow::{Context, Result};

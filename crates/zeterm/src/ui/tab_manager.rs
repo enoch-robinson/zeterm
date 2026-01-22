@@ -120,6 +120,16 @@ impl TabInfo {
     pub fn set_modified(&mut self, modified: bool) {
         self.is_modified = modified;
     }
+
+    /// 检查是否有活动会话（已连接）
+    pub fn has_active_session(&self) -> bool {
+        self.session_id.is_some()
+    }
+
+    /// 检查是否为 SSH 连接
+    pub fn is_ssh(&self) -> bool {
+        self.host_config.is_some()
+    }
 }
 
 /// Tab 数据（包含 TabInfo 和独立的 SplitManager）
@@ -495,6 +505,35 @@ impl TabManager {
     pub fn contains_tab(&self, tab_id: TabId) -> bool {
         self.tabs.contains_key(&tab_id)
     }
+
+    /// 检查是否有任何活动会话
+    pub fn has_active_sessions(&self) -> bool {
+        self.tabs.values().any(|tab| tab.info.has_active_session())
+    }
+
+    /// 获取有活动会话的 Tab 列表
+    pub fn get_tabs_with_active_sessions(&self) -> Vec<&TabInfo> {
+        self.tabs
+            .values()
+            .filter(|tab| tab.info.has_active_session())
+            .map(|tab| &tab.info)
+            .collect()
+    }
+
+    /// 获取有活动会话的 Tab 数量
+    pub fn active_session_count(&self) -> usize {
+        self.tabs
+            .values()
+            .filter(|tab| tab.info.has_active_session())
+            .count()
+    }
+
+    /// 检查指定 Tab 是否有活动会话
+    pub fn tab_has_active_session(&self, tab_id: TabId) -> bool {
+        self.tabs
+            .get(&tab_id)
+            .is_some_and(|tab| tab.info.has_active_session())
+    }
 }
 
 impl Default for TabManager {
@@ -593,10 +632,35 @@ mod tests {
 
     #[test]
     fn test_tab_info_set_modified() {
-        let mut tab = TabInfo::new("Test");
-        assert!(!tab.is_modified);
-        tab.set_modified(true);
-        assert!(tab.is_modified);
+        let mut info = TabInfo::new("Test");
+        assert!(!info.is_modified);
+        info.set_modified(true);
+        assert!(info.is_modified);
+    }
+
+    #[test]
+    fn test_tab_info_has_active_session() {
+        let info = TabInfo::new("Test");
+        assert!(!info.has_active_session());
+
+        let info_with_session = info.with_session(SessionId::new());
+        assert!(info_with_session.has_active_session());
+    }
+
+    #[test]
+    fn test_tab_info_is_ssh() {
+        let local = TabInfo::new_local("Local");
+        assert!(!local.is_ssh());
+
+        let ssh = TabInfo::new_ssh(HostConfig::new(
+            "test".to_string(),
+            "example.com".to_string(),
+            "user".to_string(),
+            zeterm_core::entities::AuthConfig::Password {
+                password_ref: "keychain:test".to_string(),
+            },
+        ));
+        assert!(ssh.is_ssh());
     }
 
     #[test]

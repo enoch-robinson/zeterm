@@ -990,7 +990,16 @@
 | ✅ | 实现关闭 Tab | P0 | 1h | 关闭按钮 (×) + close_tab + 资源清理 |
 | ✅ | 实现 Tab 切换 | P0 | 1h | 点击切换 + switch_to_next/prev_tab + switch_to_tab_at_index |
 | ⬜ | 实现 Tab 拖拽排序 | P2 | 2h | move_tab API 已实现，UI 待实现 |
-| ⬜ | 实现关闭确认 (有活动连接时) | P1 | 1h | 待实现 |
+| ✅ | 实现关闭确认 (有活动连接时) | P1 | 1h | CloseConfirmDialog (2026-01-22) |
+
+**关闭确认对话框** (2026-01-22):
+- 新增 `close_confirm_dialog.rs` (`zeterm/src/ui/dialogs/`)
+- `CloseConfirmDialog` - 关闭确认对话框组件
+- `CloseConfirmType` - 关闭类型 (CloseTab/CloseTabs/CloseApplication/CloseOtherTabs)
+- `CloseConfirmEvent` - 确认/取消事件
+- `TabInfo::has_active_session()` / `TabInfo::is_ssh()` - 检查活动会话
+- `TabManager::has_active_sessions()` / `active_session_count()` - Tab 管理器会话检查
+- 5 个单元测试通过
 
 **注**: Tab 管理基础功能已完成，包括：
 - TabManager 数据模型和事件系统
@@ -1102,13 +1111,25 @@
 - `generate_example_hosts_toml()` - 生成示例配置
 - 29 个单元测试全部通过
 
-#### 6.4.4 配置热更新
+#### 6.4.4 配置热更新 ✅ 已完成 (2026-01-22)
 
-| 状态 | 任务 | 优先级 | 预估时间 |
-|------|------|--------|----------|
-| ⬜ | 实现文件变更监听 | P2 | 2h |
-| ⬜ | 实现配置重新加载 | P2 | 1h |
-| ⬜ | 通知相关组件更新 | P2 | 1h |
+| 状态 | 任务 | 优先级 | 预估时间 | 备注 |
+|------|------|--------|----------|------|
+| ✅ | 实现文件变更监听 | P2 | 2h | ConfigWatcher + notify crate (2026-01-22) |
+| ✅ | 实现配置重新加载 | P2 | 1h | ConfigChangeEvent 事件系统 |
+| ✅ | 通知相关组件更新 | P2 | 1h | ConfigChangeCallback 回调机制 |
+
+**实现说明** (2026-01-22):
+- 新增 `watcher.rs` 模块 (`zeterm-core/src/config/`)
+- `ConfigWatcher` - 配置文件监视器
+- `ConfigWatcherConfig` - 监视器配置（去抖动延迟等）
+- `ConfigChangeEvent` - 配置变更事件 (AppConfigChanged/HostsConfigChanged/ConfigDeleted/ConfigCreated)
+- `ConfigFileType` - 配置文件类型 (AppConfig/HostsConfig/Other)
+- `global_config_watcher()` - 全局单例监视器
+- `start_global_config_watcher()` / `stop_global_config_watcher()` - 启停控制
+- 基于 notify 7.0 crate 实现跨平台文件监视
+- 事件去抖动防止重复通知
+- 11 个单元测试通过
 
 ---
 
@@ -1146,13 +1167,25 @@
 | ✅ | 实现 `update()` 方法 | P0 | 1h | 更新时间戳自动管理 |
 | ✅ | 实现 `delete()` 方法 | P0 | 0.5h | 级联删除支持 |
 
-#### 6.5.4 连接历史
+#### 6.5.4 连接历史 ✅ 已完成 (2026-01-22)
 
 | 状态 | 任务 | 优先级 | 预估时间 | 备注 |
 |------|------|--------|----------|------|
-| ⬜ | 实现连接记录保存 | P1 | 1h | 表结构已创建，Repository 待实现 |
-| ⬜ | 实现最近连接查询 | P1 | 1h | 已有 recent_connections 视图 |
-| ⬜ | 实现连接统计 | P2 | 1h | 待实现 |
+| ✅ | 实现连接记录保存 | P1 | 1h | ConnectionHistoryRepository (2026-01-22) |
+| ✅ | 实现最近连接查询 | P1 | 1h | get_recent() + get_by_host_id() |
+| ✅ | 实现连接统计 | P2 | 1h | ConnectionStats + get_stats_by_host_id() |
+
+**实现说明** (2026-01-22):
+- 新增 `connection_history.rs` 模块 (`zeterm-storage/src/repository/`)
+- `ConnectionHistoryRepository` trait - 定义连接历史存储接口
+- `SqliteConnectionHistoryRepository` - SQLite 实现
+- `ConnectionHistoryRecord` - 连接历史记录数据结构
+- `ConnectionHistoryWithHost` - 带主机信息的连接历史
+- `ConnectionStats` - 连接统计信息
+- `ConnectionStatus` - 连接状态枚举 (Success/Failed/Disconnected/Connecting)
+- `record_connection_start()` / `record_connection_end()` - 记录连接生命周期
+- `mark_all_active_as_disconnected()` - 应用启动时清理
+- 16 个单元测试通过
 
 #### 6.5.5 敏感信息存储
 
