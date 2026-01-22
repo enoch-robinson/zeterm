@@ -117,27 +117,17 @@ impl SessionCoordinator {
     }
 
     /// 获取连接状态
-    pub async fn connection_state(&self) -> ConnectionState {
-        self.connection_manager.state().await
+    ///
+    /// 这是一个同步方法，可以在任何上下文中调用。
+    pub fn connection_state(&self) -> ConnectionState {
+        self.connection_manager.state()
     }
 
     /// 检查是否已连接
-    pub async fn is_connected(&self) -> bool {
-        self.connection_manager.is_connected().await
-    }
-
-    /// 检查是否已连接（同步版本，用于非异步上下文）
     ///
-    /// 注意：此方法会阻塞当前线程，仅在无法使用异步版本时使用。
-    pub fn is_connected_sync(&self) -> bool {
-        // 尝试立即获取锁状态，如果无法获取则返回 false
-        // 这是一个简化实现，用于兼容同步代码
-        futures::executor::block_on(self.connection_manager.is_connected())
-    }
-
-    /// 获取连接状态（同步版本）
-    pub fn connection_state_sync(&self) -> ConnectionState {
-        futures::executor::block_on(self.connection_manager.state())
+    /// 这是一个同步方法，可以在任何上下文中调用。
+    pub fn is_connected(&self) -> bool {
+        self.connection_manager.is_connected()
     }
 
     /// 获取终端尺寸
@@ -221,17 +211,17 @@ impl SessionCoordinator {
                             error!("Data pump error: {}", e);
                             // 根据错误类型决定是否继续
                             if !e.is_retryable() {
-                                // 标记连接已断开
-                                self.connection_manager.mark_disconnected(
-                                    zeterm_core::DisconnectReason::NetworkError,
-                                ).await;
+                                // 标记连接已断开（同步操作）
+                                    self.connection_manager.mark_disconnected(
+                                        zeterm_core::DisconnectReason::NetworkError,
+                                    );
                                 break;
                             }
                         }
                         None => {
                             info!("Data stream ended");
-                            // 流结束，标记连接已断开（服务器关闭）
-                            self.connection_manager.mark_disconnected_by_server().await;
+                            // 流结束，标记连接已断开（服务器关闭，同步操作）
+                            self.connection_manager.mark_disconnected_by_server();
                             break;
                         }
                     }
@@ -290,7 +280,7 @@ impl SessionCoordinator {
     /// coordinator.send_input(&[0x03]).await?;
     /// ```
     pub async fn send_input(&self, data: &[u8]) -> Result<(), ConnectionError> {
-        if !self.is_connected().await {
+        if !self.is_connected() {
             return Err(ConnectionError::Disconnected);
         }
 
@@ -300,14 +290,15 @@ impl SessionCoordinator {
 
     /// 同步发送用户输入到后端连接
     ///
-    ///这是`send_input` 的同步版本，用于在 GPUI 事件处理器中调用。
-    /// 内部使用后台线程执行异步操作。
+    /// 这是 `send_input` 的同步版本，用于在 GPUI 事件处理器中调用。
+    /// 内部使用后台线程执行异步 I/O 操作。
     ///
     /// # Arguments
     ///
     /// * `data` - 要发送的字节数据
     pub fn send_input_sync(&self, data: &[u8]) {
-        if !self.is_connected_sync() {
+        // 连接检查是同步的，无需 block_on
+        if !self.is_connected() {
             warn!("Cannot send input: not connected");
             return;
         }
@@ -315,6 +306,7 @@ impl SessionCoordinator {
         let data = data.to_vec();
         let connection_manager = self.connection_manager.clone();
 
+        // 只有实际的 I/O 写入需要异步执行
         std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -347,8 +339,8 @@ impl SessionCoordinator {
         self.terminal.resize(rows, cols);
         info!("Local terminal resized to {}x{}", cols, rows);
 
-        // 如果已连接，同步到远端
-        if self.is_connected().await {
+        // 如果已连接，同步到远端（连接检查是同步的）
+        if self.is_connected() {
             self.connection_manager.resize(rows, cols).await?;
             info!("Remote terminal resized to {}x{}", cols, rows);
         }
@@ -477,14 +469,15 @@ mod tests {
     use super::*;
     use zeterm_core::ConnectionState;
 
-    #[tokio::test]
-    async fn test_session_coordinator_new() {
+    #[test]
+    fn test_session_coordinator_new() {
         let coordinator = SessionCoordinator::with_defaults();
 
-        assert!(!coordinator.is_connected().await);
+        // is_connected 和 connection_state 现在是同步方法
+        assert!(!coordinator.is_connected());
         assert!(!coordinator.is_data_pump_running());
         assert!(matches!(
-            coordinator.connection_state().await,
+            coordinator.connection_state(),
             ConnectionState::Idle
         ));
     }
