@@ -54,8 +54,8 @@ pub struct MockConnection {
     connected_at: AsyncMutex<Option<Instant>>,
     /// 终端尺寸
     size: AsyncMutex<(u16, u16)>,
-    /// 自动输出任务取消标志
-    cancel_auto_output: AtomicBool,
+    /// 自动输出任务取消标志（使用 Arc 以便在异步任务中共享）
+    cancel_auto_output: Arc<AtomicBool>,
 }
 
 impl MockConnection {
@@ -70,7 +70,7 @@ impl MockConnection {
             connected: AtomicBool::new(false),
             connected_at: AsyncMutex::new(None),
             size: AsyncMutex::new((24, 80)),
-            cancel_auto_output: AtomicBool::new(false),
+            cancel_auto_output: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -110,12 +110,12 @@ impl MockConnection {
     async fn start_auto_output(&self, interval_ms: u64) {
         let tx = self.data_tx.clone();
         let content = self.config.auto_output_content.clone();
-        let cancel_flag = Arc::new(AtomicBool::new(false));
 
-        // 保存取消标志的引用
+        // 重置取消标志
         self.cancel_auto_output.store(false, Ordering::SeqCst);
 
-        let cancel = cancel_flag.clone();
+        // 克隆 Arc 以便在任务中使用
+        let cancel = self.cancel_auto_output.clone();
         tokio::spawn(async move {
             let mut interval =
                 tokio::time::interval(tokio::time::Duration::from_millis(interval_ms));

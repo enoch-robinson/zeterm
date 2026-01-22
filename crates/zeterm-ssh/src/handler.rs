@@ -8,7 +8,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use russh::ChannelId;
 use russh::client::{Handler, Session};
-use russh::keys::{Algorithm, EcdsaCurve, PublicKey};
+use russh::keys::{Algorithm, EcdsaCurve, HashAlg, PublicKey, PublicKeyBase64};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -172,27 +172,23 @@ impl SshHandler {
     }
 
     /// 将 PublicKey 编码为字符串（用于存储和比较）
+    ///
+    /// 使用 base64 编码的公钥数据，与 OpenSSH known_hosts 格式兼容。
+    /// 这比 Debug 格式更稳定，不会因库版本升级而改变。
     fn encode_public_key(public_key: &PublicKey) -> String {
-        // 使用 Debug 格式作为唯一标识
-        // 这不是标准的 SSH 公钥格式，但足以用于比较
-        format!("{:?}", public_key)
+        // 使用 PublicKeyBase64 trait 获取 base64 编码的公钥数据
+        // 这与 OpenSSH 的 known_hosts 文件格式兼容
+        public_key.public_key_base64()
     }
 
     /// 获取公钥的指纹（用于显示）
+    ///
+    /// 使用 russh 内置的 fingerprint 方法生成 SHA256 指纹，
+    /// 与 OpenSSH 的 `ssh-keygen -l` 输出格式兼容。
     fn get_key_fingerprint(public_key: &PublicKey) -> String {
-        // 使用简单的哈希作为指纹
-        let key_str = format!("{:?}", public_key);
-        let hash = Self::simple_hash(&key_str);
-        format!("HASH:{:016x}", hash)
-    }
-
-    /// 简单的哈希函数（用于生成指纹）
-    fn simple_hash(s: &str) -> u64 {
-        let mut hash: u64 = 5381;
-        for byte in s.bytes() {
-            hash = hash.wrapping_mul(33).wrapping_add(byte as u64);
-        }
-        hash
+        // 使用 SHA256 算法生成指纹，与 OpenSSH 默认行为一致
+        let fingerprint = public_key.fingerprint(HashAlg::Sha256);
+        fingerprint.to_string()
     }
 
     /// 验证主机密钥
