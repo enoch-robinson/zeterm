@@ -15,7 +15,7 @@ use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use super::ConnectionManager;
+use super::{ConnectionManager, ReconnectController, ReconnectControllerConfig};
 use crate::app::runtime;
 use crate::app::terminal::{EventProxy, TerminalConfig, TerminalEvent, TerminalState};
 use zeterm_core::{ConnectionError, ConnectionState, TerminalConnection, TerminalSize};
@@ -50,6 +50,8 @@ pub struct SessionCoordinator {
     terminal: Arc<TerminalState>,
     /// 连接管理器
     connection_manager: Arc<ConnectionManager>,
+    /// 重连控制器
+    reconnect_controller: Arc<ReconnectController>,
     /// 终端事件接收器
     event_rx: RwLock<Option<mpsc::UnboundedReceiver<TerminalEvent>>>,
     /// 数据泵是否正在运行
@@ -62,6 +64,8 @@ pub struct SessionCoordinator {
     last_render_time: AtomicU64,
     /// 程序启动时间（用于计算相对时间戳）
     start_instant: Instant,
+    /// 上一次连接状态（用于检测状态变化）
+    last_connection_state: RwLock<ConnectionState>,
 }
 
 /// 最小重绘间隔（毫秒），约60fps
@@ -70,23 +74,76 @@ const MIN_RENDER_INTERVAL_MS: u64 = 16;
 impl SessionCoordinator {
     /// 创建新的会话协调器
     pub fn new(config: TerminalConfig) -> Self {
+        Self::with_reconnect_config(config, ReconnectControllerConfig::default())
+    }
+
+    /// 创建带有重连配置的会话协调器
+    pub fn with_reconnect_config(
+        config: TerminalConfig,
+        reconnect_config: ReconnectControllerConfig,
+    ) -> Self {
         let (terminal, event_rx) = TerminalState::new(config);
 
         Self {
             terminal: Arc::new(terminal),
             connection_manager: Arc::new(ConnectionManager::new()),
+            reconnect_controller: Arc::new(ReconnectController::new(reconnect_config)),
             event_rx: RwLock::new(Some(event_rx)),
             data_pump_running: RwLock::new(false),
             data_pump_cancel: RwLock::new(false),
             dirty: AtomicBool::new(false),
             last_render_time: AtomicU64::new(0),
             start_instant: Instant::now(),
+            last_connection_state: RwLock::new(ConnectionState::Idle),
         }
     }
 
     /// 使用默认配置创建会话协调器
     pub fn with_defaults() -> Self {
         Self::new(TerminalConfig::default())
+    }
+
+    /// 获取重连控制器引用
+    pub fn reconnect_controller(&self) -> Arc<ReconnectController> {
+        Arc::clone(&self.reconnect_controller)
+    }
+
+    /// 检查连接状态变化并触发重连
+    ///
+    /// 应在连接状态可能变化后调用（如数据泵检测到连接断开时）
+    pub fn check_connection_state_change(&self) {
+        let current_state = self.connection_state();
+        let last_state = {
+            let mut last = self.last_connection_state.write();
+            let old = last.clone();
+            *last = current_state.clone();
+            old
+        };
+
+        // 通知重连控制器状态变化
+        if last_state != current_state {
+            debug!(
+                "Connection state changed: {:?} -> {:?}",
+                last_state, current_state
+            );
+            self.reconnect_controller
+                .on_connection_state_changed(&last_state, &current_state);
+        }
+    }
+
+    /// 取消重连
+    pub fn cancel_reconnect(&self) {
+        self.reconnect_controller.cancel();
+    }
+
+    /// 重置重连状态
+    pub fn reset_reconnect(&self) {
+        self.reconnect_controller.reset();
+    }
+
+    /// 是否正在重连
+    pub fn is_reconnecting(&self) -> bool {
+        self.reconnect_controller.is_reconnecting()
     }
 
     /// 获取终端状态机引用
@@ -241,6 +298,9 @@ impl SessionCoordinator {
         {
             *self.data_pump_running.write() = false;
         }
+
+        // 检查连接状态变化，可能触发重连
+        self.check_connection_state_change();
 
         info!("Data pump stopped");
     }
@@ -493,6 +553,49 @@ mod tests {
         // 应该不会 panic
         coordinator.advance_bytes(b"Hello, World!");
         coordinator.advance_bytes(b"\x1b[31mRed\x1b[0m");
+    }
+
+    #[test]
+    fn test_session_coordinator_reconnect_controller() {
+        let coordinator = SessionCoordinator::with_defaults();
+
+        // 验证重连控制器存在且启用
+        let reconnect_controller = coordinator.reconnect_controller();
+        assert!(reconnect_controller.is_enabled());
+        assert!(!coordinator.is_reconnecting());
+    }
+
+    #[test]
+    fn test_session_coordinator_with_reconnect_config() {
+        use zeterm_ssh::ReconnectPolicy;
+
+        let reconnect_config = ReconnectControllerConfig {
+            policy: ReconnectPolicy::aggressive(),
+            reconnect_on_initial_failure: true,
+        };
+
+        let coordinator =
+            SessionCoordinator::with_reconnect_config(TerminalConfig::default(), reconnect_config);
+
+        assert!(coordinator.reconnect_controller().is_enabled());
+    }
+
+    #[test]
+    fn test_session_coordinator_cancel_reconnect() {
+        let coordinator = SessionCoordinator::with_defaults();
+
+        // 取消重连不应该 panic
+        coordinator.cancel_reconnect();
+        assert!(!coordinator.is_reconnecting());
+    }
+
+    #[test]
+    fn test_session_coordinator_reset_reconnect() {
+        let coordinator = SessionCoordinator::with_defaults();
+
+        // 重置重连状态不应该 panic
+        coordinator.reset_reconnect();
+        assert!(!coordinator.is_reconnecting());
     }
 
     #[test]

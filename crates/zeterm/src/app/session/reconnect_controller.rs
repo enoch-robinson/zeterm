@@ -14,7 +14,7 @@ use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use zeterm_core::state::{ConnectionEvent, ConnectionState};
+use zeterm_core::state::ConnectionState;
 use zeterm_ssh::{
     ExponentialBackoff, ReconnectCallback, ReconnectEvent, ReconnectPolicy, ReconnectState,
     SshConfig,
@@ -206,6 +206,7 @@ impl ReconnectController {
         if self.is_reconnecting() {
             info!("Cancelling reconnection");
             self.cancelled.store(true, Ordering::SeqCst);
+            self.reconnecting.store(false, Ordering::SeqCst);
             self.set_state(ReconnectState::Idle);
             self.emit_event(ReconnectControllerEvent::Cancelled);
             self.notify_callbacks(ReconnectEvent::Cancelled);
@@ -390,7 +391,7 @@ impl ReconnectController {
     /// 通知回调
     fn notify_callbacks(&self, event: ReconnectEvent) {
         for callback in self.callbacks.read().iter() {
-            callback.on_event(&event);
+            callback.on_event(event.clone());
         }
     }
 

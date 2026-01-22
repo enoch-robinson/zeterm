@@ -43,11 +43,11 @@
   - [x] 取消功能
   - [x] 重试功能
 
-- [ ] **P2** 重连逻辑集成
-  - [ ] 创建 ReconnectController
-  - [ ] 实现连接工厂模式
-  - [ ] 监听 ConnectionLost 事件
-  - [ ] 重启数据泵
+- [x] **P2** 重连逻辑集成 (2026-01-22)
+  - [x] 创建 ReconnectController
+  - [x] 实现连接工厂模式 (ConnectionFactory trait)
+  - [x] 监听 ConnectionLost 事件
+  - [x] 在数据泵中检查状态变化
 
 - [x] **P3** 状态机补充转换 (2026-01-22)
   - 添加 `(Connecting, ConnectionLost) => Disconnected` 处理
@@ -78,10 +78,10 @@
 |------|------|------|------|
 | 已完成 | 2 | 2 | 100% |
 | Phase 1 | 4 | 4 | 100% |
-| Phase 2 | 4 | 3 | 75% |
+| Phase 2 | 4 | 4 | 100% |
 | Phase 3 | 5 | 0 | 0% |
 | Phase 4 | 3 | 0 | 0% |
-| **总计** | **18** | **9** | **50%** |
+| **总计** | **18** | **10** | **56%** |
 
 ---
 
