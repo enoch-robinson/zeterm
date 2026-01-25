@@ -777,7 +777,13 @@ impl MainWindow {
             .items_center()
             .w_full()
             .h_full()
-            .child(div().text_2xl().mb_6().child("🚀"))
+            .child(
+                div()
+                    .text_2xl()
+                    .mb_6()
+                    .text_color(theme.foreground)
+                    .child("🚀"),
+            )
             .child(
                 div()
                     .text_3xl()
@@ -856,6 +862,13 @@ impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_tabs = self.has_tabs(cx);
 
+        // 先获取主题颜色（Hsla 是 Copy 类型，获取后释放借用）
+        let theme = cx.theme();
+        let background = theme.background;
+        let secondary = theme.secondary;
+        let border = theme.border;
+        let muted_foreground = theme.muted_foreground;
+
         // 主内容区域
         let main_content = if has_tabs {
             // 有 Tab 时渲染 Tab 区域
@@ -868,15 +881,10 @@ impl Render for MainWindow {
                 .h_full()
                 .flex()
                 .flex_col()
+                .bg(background)
                 .child(self.render_welcome(cx))
                 .into_any_element()
         };
-
-        // 获取主题颜色（在可变借用之后）
-        let theme = cx.theme();
-        let secondary = theme.secondary;
-        let border = theme.border;
-        let muted_foreground = theme.muted_foreground;
 
         // 构建主布局（垂直布局：内容区 + 状态栏）
         div()
@@ -939,6 +947,7 @@ impl Render for MainWindow {
                             .h_full()
                             .flex()
                             .flex_col()
+                            .bg(background)
                             .child(main_content),
                     ),
             )
