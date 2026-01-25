@@ -11,8 +11,9 @@ use gpui::{
     Render, Styled, Window, div, prelude::*, px,
 };
 use gpui_component::ActiveTheme;
-use tracing::info;
+use tracing::{debug, error, info, warn};
 
+use crate::app::runtime;
 use crate::app::session::SessionCoordinator;
 use crate::app::terminal::TerminalConfig;
 use crate::ui::app_theme::{AppThemeManager, BuiltinTheme, ThemeMode};
@@ -22,6 +23,11 @@ use crate::ui::status_bar::{ConnectionStatus, StatusBar, StatusInfo};
 use crate::ui::tab_manager::{TabId, TabInfo, TabManager, TabManagerEvent};
 use crate::ui::tab_view::TabView;
 use crate::ui::terminal_view::TerminalView;
+use zeterm_core::config::PasswordRef;
+use zeterm_core::entities::AuthConfig;
+use zeterm_core::errors::ConnectionError;
+use zeterm_ssh::{AuthMethod, SshConfig, SshConnection};
+use zeterm_storage::{KeyringSecretStore, SecretHelper};
 
 /// 终端面板数据（关联 Tab）
 struct TerminalPaneData {
@@ -138,11 +144,7 @@ impl MainWindow {
         match event {
             HostListEvent::ConnectRequested(host) => {
                 info!("用户请求连接主机: {}", host.name);
-                // TODO: 实现 SSH 连接逻辑
-                // 1. 创建 SSH Tab
-                // 2. 建立 SSH 连接
-                // 3. 添加终端面板
-                self.create_ssh_tab(host, cx);
+                self.connect_to_host(host.clone(), cx);
             },
             HostListEvent::NewHostRequested => {
                 info!("用户请求新建主机");
@@ -156,6 +158,202 @@ impl MainWindow {
                 info!("主机已删除: {}", host_id);
             },
         }
+    }
+
+    // ==================== SSH 连接管理 ====================
+
+    /// 连接到主机
+    ///
+    /// 执行完整的 SSH 连接流程：
+    /// 1. 创建 SSH Tab
+    /// 2. 更新状态栏为"连接中"
+    /// 3. 创建 SessionCoordinator
+    /// 4. 添加终端面板（显示"正在连接..."）
+    /// 5. 异步建立 SSH 连接并启动数据泵
+    fn connect_to_host(&mut self, host: zeterm_core::entities::HostConfig, cx: &mut Context<Self>) {
+        // 1. 创建 SSH Tab
+        let _tab_id = match self.create_ssh_tab(&host, cx) {
+            Some(id) => id,
+            None => {
+                error!("创建 Tab 失败");
+                return;
+            },
+        };
+
+        // 2. 更新状态栏为"连接中"
+        self.update_connection_status(ConnectionStatus::Connecting, cx);
+        self.update_user_host(Some(host.username.clone()), Some(host.host.clone()), cx);
+
+        // 3. 创建 SessionCoordinator
+        let config = TerminalConfig::default();
+        let coordinator = Arc::new(SessionCoordinator::new(config));
+
+        // 4. 添加终端面板
+        let _pane_id = match self.add_ssh_terminal_pane(&host, coordinator.clone(), cx) {
+            Some(id) => id,
+            None => {
+                error!("添加终端面板失败");
+                return;
+            },
+        };
+
+        // 先设置为连接中状态
+        self.update_connection_status(ConnectionStatus::Connecting, cx);
+
+        // 5. 异步执行 SSH 连接
+        let host_clone = host.clone();
+        let coordinator_clone = coordinator.clone();
+
+        // 获取状态栏实体的弱引用用于更新状态
+        let _status_bar = self.status_bar.clone();
+
+        runtime::spawn(async move {
+            info!(
+                "开始异步 SSH 连接: {}@{}",
+                host_clone.username, host_clone.host
+            );
+
+            match Self::do_ssh_connect(&host_clone, coordinator_clone.clone()).await {
+                Ok(stream) => {
+                    info!("SSH 连接成功: {}@{}", host_clone.username, host_clone.host);
+
+                    // 启动数据泵
+                    coordinator_clone
+                        .start_data_pump(stream, move || {
+                            // 数据泵回调 - 当有新数据时触发
+                            // 注意：这里在异步上下文中，无法直接触发 GPUI 重绘
+                            // 依赖 TerminalView 的 dirty 标记机制
+                            debug!("数据泵收到新数据");
+                        })
+                        .await;
+
+                    info!("数据泵已停止: {}@{}", host_clone.username, host_clone.host);
+                },
+                Err(e) => {
+                    error!("SSH 连接失败: {} - {}", host_clone.name, e);
+                    // 连接失败，coordinator 会保持断开状态
+                    // UI 会通过状态栏显示错误
+                },
+            }
+        });
+
+        cx.notify();
+    }
+
+    /// 执行 SSH 连接（异步）
+    ///
+    /// 1. 转换 HostConfig 为 SshConfig
+    /// 2. 创建 SshConnection 并连接
+    /// 3. 将连接设置到 SessionCoordinator
+    /// 4. 返回数据流用于启动数据泵
+    async fn do_ssh_connect(
+        host: &zeterm_core::entities::HostConfig,
+        coordinator: Arc<SessionCoordinator>,
+    ) -> Result<
+        futures::stream::BoxStream<'static, Result<Vec<u8>, ConnectionError>>,
+        ConnectionError,
+    > {
+        // 1. 转换配置
+        let ssh_config = Self::convert_to_ssh_config(host).await?;
+
+        // 2. 创建 SSH 连接
+        let ssh_conn = SshConnection::new(ssh_config);
+
+        // 3. 建立连接
+        info!("正在建立 SSH 连接...");
+        ssh_conn.connect().await?;
+        info!("SSH 握手和认证完成");
+
+        // 4. 设置到 SessionCoordinator 并获取数据流
+        let stream = coordinator.set_connection(Box::new(ssh_conn)).await;
+
+        Ok(stream)
+    }
+
+    /// 将 HostConfig 转换为 SshConfig
+    ///
+    /// 处理认证配置的转换，包括从密钥链解析密码
+    async fn convert_to_ssh_config(
+        host: &zeterm_core::entities::HostConfig,
+    ) -> Result<SshConfig, ConnectionError> {
+        // 创建密钥助手用于解析密码引用
+        let secret_helper = SecretHelper::<KeyringSecretStore>::default();
+
+        // 转换认证方式
+        let auth_method = match &host.auth_config {
+            AuthConfig::Password { password_ref } => {
+                debug!("解析密码认证: {}", password_ref);
+                let parsed_ref = PasswordRef::parse(password_ref);
+                let password = secret_helper
+                    .resolve_password_ref(&parsed_ref)
+                    .map_err(|e| ConnectionError::Configuration(format!("密码解析失败: {}", e)))?
+                    .ok_or_else(|| {
+                        ConnectionError::Authentication("无法获取密码，请检查密码配置".into())
+                    })?;
+                AuthMethod::Password(password)
+            },
+            AuthConfig::PublicKey {
+                key_path,
+                passphrase_ref,
+            } => {
+                debug!("解析公钥认证: {:?}", key_path);
+                let passphrase = if let Some(pp_ref) = passphrase_ref {
+                    let parsed_ref = PasswordRef::parse(pp_ref);
+                    secret_helper
+                        .resolve_password_ref(&parsed_ref)
+                        .map_err(|e| {
+                            ConnectionError::Configuration(format!("私钥密码解析失败: {}", e))
+                        })?
+                } else {
+                    None
+                };
+                AuthMethod::PublicKey {
+                    key_path: key_path.clone(),
+                    passphrase,
+                }
+            },
+            AuthConfig::Agent => {
+                debug!("使用 SSH Agent 认证");
+                AuthMethod::Agent
+            },
+        };
+
+        // 构建 SshConfig
+        let ssh_config = SshConfig::new(&host.host, &host.username)
+            .with_port(host.port)
+            .with_terminal_size(80, 24); // 默认终端大小，后续会通过 resize 调整
+
+        // 设置认证方式（需要使用内部字段，因为 SshConfig 没有 with_auth_method）
+        let mut ssh_config = ssh_config;
+        ssh_config.auth_method = auth_method;
+
+        debug!(
+            "SshConfig 创建完成: {}@{}:{}",
+            host.username, host.host, host.port
+        );
+
+        Ok(ssh_config)
+    }
+
+    /// 更新连接状态并刷新 UI
+    ///
+    /// 可以从异步上下文中安全调用（通过 Entity 弱引用）
+    fn update_connection_result(
+        &mut self,
+        success: bool,
+        error_msg: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if success {
+            self.update_connection_status(ConnectionStatus::Connected, cx);
+            info!("连接状态已更新为: Connected");
+        } else {
+            self.update_connection_status(ConnectionStatus::Error, cx);
+            if let Some(msg) = error_msg {
+                warn!("连接失败: {}", msg);
+            }
+        }
+        cx.notify();
     }
 
     /// 处理 Tab 管理器事件

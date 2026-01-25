@@ -146,10 +146,36 @@ mod documentation {
     //!
     //! **测试**: 通过编译验证 (GPUI 事件系统需要运行时测试)
     //!
+    //! ## 修复 4: SSH 连接逻辑实现
+    //!
+    //! **问题**: 双击主机后只创建了空 Tab，没有实际建立 SSH 连接
+    //!
+    //! **解决方案**:
+    //! - 实现 `connect_to_host()` 方法，完整的 SSH 连接流程
+    //! - 实现 `do_ssh_connect()` 异步方法，建立 SSH 连接并返回数据流
+    //! - 实现 `convert_to_ssh_config()` 方法，将 HostConfig 转换为 SshConfig
+    //! - 支持密码认证、公钥认证和 SSH Agent 认证
+    //! - 从密钥链解析密码引用 (keychain:xxx, env:XXX, plain:xxx)
+    //!
+    //! **连接流程**:
+    //! 1. 创建 SSH Tab
+    //! 2. 更新状态栏为"连接中"
+    //! 3. 创建 SessionCoordinator
+    //! 4. 添加终端面板
+    //! 5. 异步建立 SSH 连接
+    //! 6. 启动数据泵处理终端数据
+    //!
+    //! **涉及文件**:
+    //! - `ui/main_window.rs`: 添加 connect_to_host, do_ssh_connect, convert_to_ssh_config
+    //! - 依赖: zeterm_ssh::SshConfig, zeterm_ssh::SshConnection, zeterm_storage::SecretHelper
+    //!
+    //! **测试**: 需要实际 SSH 服务器进行端到端测试
+    //!
     //! ## 结果
     //!
     //! - ✅ 编译通过，无错误
     //! - ✅ 所有现有测试通过 (47 passed)
     //! - ✅ 类型系统正确约束
     //! - ✅ 主机列表可以正常显示和交互
+    //! - ✅ SSH 连接逻辑已实现（待端到端测试验证）
 }
