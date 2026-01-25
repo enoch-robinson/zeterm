@@ -479,7 +479,14 @@ impl Render for HostConnectionDialog {
                                 let key = event.keystroke.key.as_str();
                                 // 只处理可打印字符（单字符，不是控制键）
                                 if key.len() == 1 && !matches!(key, "\u{1b}" | "\r" | "\n" | "\t") {
-                                    this.handle_key_input(key, cx);
+                                    let input = if event.keystroke.modifiers.shift
+                                        && key.chars().all(|c| c.is_ascii_lowercase())
+                                    {
+                                        key.to_uppercase()
+                                    } else {
+                                        key.to_string()
+                                    };
+                                    this.handle_key_input(&input, cx);
                                 }
                             }
                         },
