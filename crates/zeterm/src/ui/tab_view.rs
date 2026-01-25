@@ -32,9 +32,6 @@ pub type TabTerminalViewMap = HashMap<TabId, HashMap<PaneId, Entity<TerminalView
 /// 3. 确定放置目标位置
 #[derive(Clone, Debug)]
 pub struct DraggedTab {
-    /// Tab 管理器引用
-    pub tab_manager: Entity<TabManager>,
-
     /// 被拖拽的 Tab ID
     pub tab_id: TabId,
 
@@ -232,17 +229,29 @@ impl TabView {
     }
 
     /// 处理 Tab 放置
+    ///
+    /// # Arguments
+    /// * `dragged_tab` - 被拖拽的 Tab 数据
+    /// * `target_tab_id` - 目标 Tab ID（如果放置到某个 Tab 上）
+    /// * `fallback_index` - 备用索引（用于末尾放置区域或 target_tab_id 无效时）
     fn handle_tab_drop(
         &mut self,
         dragged_tab: &DraggedTab,
-        target_index: usize,
+        target_tab_id: Option<TabId>,
+        fallback_index: usize,
         cx: &mut Context<Self>,
     ) {
-        let tab_id = dragged_tab.tab_id;
+        let source_tab_id = dragged_tab.tab_id;
 
-        // 使用 TabManager 的 move_tab 方法，它会正确处理索引边界
         self.tab_manager.update(cx, |manager, cx| {
-            manager.move_tab(tab_id, target_index, cx);
+            // 如果提供了目标 Tab ID，实时查询其当前索引（确保索引一致性）
+            let target_index = if let Some(target_id) = target_tab_id {
+                manager.get_tab_index(target_id).unwrap_or(fallback_index)
+            } else {
+                fallback_index
+            };
+
+            manager.move_tab(source_tab_id, target_index, cx);
         });
 
         cx.notify();
@@ -288,13 +297,14 @@ impl TabView {
                 .min_w(px(40.0))
                 .h(px(32.0))
                 .drag_over::<DraggedTab>(|style, _dragged_tab, _window, cx| {
-                    let theme = cx.theme();
-                    style.bg(theme.list_active)
+                    // 显示左边框指示器，与普通 Tab 风格一致
+                    let border_color = cx.theme().link;
+                    style.border_l_2().border_color(border_color)
                 })
                 .on_drop(
                     cx.listener(move |this, dragged_tab: &DraggedTab, _window, cx| {
-                        // 放置到末尾
-                        this.handle_tab_drop(dragged_tab, tab_count, cx);
+                        // 放置到末尾，无目标 Tab ID，使用 tab_count 作为索引
+                        this.handle_tab_drop(dragged_tab, None, tab_count, cx);
                     }),
                 ),
         );
@@ -326,7 +336,6 @@ impl TabView {
 
         // 为拖拽准备数据
         let dragged_tab_data = DraggedTab {
-            tab_manager: self.tab_manager.clone(),
             tab_id,
             source_index: ix,
             title: tab_title.clone(),
@@ -374,7 +383,9 @@ impl TabView {
             // 3. 处理放置
             .on_drop(
                 cx.listener(move |this, dragged_tab: &DraggedTab, _window, cx| {
-                    this.handle_tab_drop(dragged_tab, ix, cx);
+                    // 传递目标 tab_id，在 handle_tab_drop 中实时查询索引
+                    // 这样即使拖拽过程中有其他 Tab 操作，索引也能保持正确
+                    this.handle_tab_drop(dragged_tab, Some(tab_id), ix, cx);
                 }),
             )
             // ========== 样式 ==========
