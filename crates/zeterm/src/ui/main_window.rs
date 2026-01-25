@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, RwLock};
 
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
@@ -18,6 +19,7 @@ use crate::app::runtime;
 use crate::app::session::SessionCoordinator;
 use crate::app::terminal::TerminalConfig;
 use crate::ui::app_theme::{AppThemeManager, BuiltinTheme, ThemeMode};
+use crate::ui::dialogs::HostConnectionDialog;
 use crate::ui::host_list::{HostListEvent, HostListView};
 use crate::ui::split_pane::{Pane, PaneId, SplitDirection, SplitManager, SplitView};
 use crate::ui::status_bar::{ConnectionStatus, StatusBar, StatusInfo};
@@ -25,10 +27,10 @@ use crate::ui::tab_manager::{TabId, TabInfo, TabManager, TabManagerEvent};
 use crate::ui::tab_view::TabView;
 use crate::ui::terminal_view::TerminalView;
 use zeterm_core::config::PasswordRef;
-use zeterm_core::entities::AuthConfig;
+use zeterm_core::entities::{AuthConfig, HostConfig};
 use zeterm_core::errors::ConnectionError;
 use zeterm_ssh::{AuthMethod, SshConfig, SshConnection};
-use zeterm_storage::{KeyringSecretStore, SecretHelper};
+use zeterm_storage::{HostRepository, KeyringSecretStore, SecretHelper, SqliteHostRepository};
 
 /// 终端面板数据（关联 Tab）
 struct TerminalPaneData {
@@ -65,6 +67,9 @@ pub struct MainWindow {
 
     /// 主题管理器
     theme_manager: AppThemeManager,
+
+    /// 连接对话框（新建或编辑主机）- 使用共享引用以便在回调中关闭
+    connection_dialog: Arc<Mutex<Option<Entity<HostConnectionDialog>>>>,
 
     /// 是否显示侧边栏
     show_sidebar: bool,
@@ -145,6 +150,7 @@ impl MainWindow {
             terminal_panes: HashMap::new(),
             status_bar,
             theme_manager,
+            connection_dialog: Arc::new(Mutex::new(None)),
             show_sidebar: true,
             show_tab_bar: true,
             new_tab_requested,
@@ -165,11 +171,11 @@ impl MainWindow {
             },
             HostListEvent::NewHostRequested => {
                 info!("用户请求新建主机");
-                // 主机列表视图内部已处理对话框显示
+                self.show_new_host_dialog(cx);
             },
             HostListEvent::EditHostRequested(host) => {
                 info!("用户请求编辑主机: {}", host.name);
-                // 主机列表视图内部已处理对话框显示
+                self.show_edit_host_dialog(host.clone(), cx);
             },
             HostListEvent::HostDeleted(host_id) => {
                 info!("主机已删除: {}", host_id);
@@ -1106,6 +1112,135 @@ impl MainWindow {
                 .into_any_element()
         }
     }
+    /// 显示新建主机对话框
+    fn show_new_host_dialog(&mut self, cx: &mut Context<Self>) {
+        tracing::info!("显示新建主机对话框");
+
+        // 获取全局数据库实例
+        let database = crate::app::global_database();
+
+        // 创建 SqliteHostRepository
+        let repository = Arc::new(SqliteHostRepository::new(database.pool().clone()));
+
+        // 获取主机列表的共享状态
+        let hosts = self.host_list_view.read(cx).hosts().clone();
+
+        let dialog_ref = self.connection_dialog.clone();
+        let dialog_ref_for_cancel = self.connection_dialog.clone();
+
+        let dialog = cx.new(|cx| {
+            HostConnectionDialog::new_create(cx)
+                .with_on_save(move |config| {
+                    Self::save_host_async(repository.clone(), hosts.clone(), config, true);
+                    // 关闭对话框
+                    *dialog_ref.lock().unwrap() = None;
+                })
+                .with_on_cancel(move || {
+                    tracing::info!("取消新建主机");
+                    // 关闭对话框
+                    *dialog_ref_for_cancel.lock().unwrap() = None;
+                })
+        });
+
+        // 存储对话框引用
+        *self.connection_dialog.lock().unwrap() = Some(dialog);
+
+        cx.notify();
+    }
+
+    /// 显示编辑主机对话框
+    fn show_edit_host_dialog(&mut self, host: HostConfig, cx: &mut Context<Self>) {
+        tracing::info!("显示编辑主机对话框: {}", host.name);
+
+        // 获取全局数据库实例
+        let database = crate::app::global_database();
+
+        // 创建 SqliteHostRepository
+        let repository = Arc::new(SqliteHostRepository::new(database.pool().clone()));
+
+        // 获取主机列表的共享状态
+        let hosts = self.host_list_view.read(cx).hosts().clone();
+
+        let host_clone = host.clone();
+        let dialog_ref = self.connection_dialog.clone();
+        let dialog_ref_for_cancel = self.connection_dialog.clone();
+
+        let dialog = cx.new(|cx| {
+            HostConnectionDialog::new_edit(host_clone, cx)
+                .with_on_save(move |config| {
+                    Self::save_host_async(repository.clone(), hosts.clone(), config, false);
+                    // 关闭对话框
+                    *dialog_ref.lock().unwrap() = None;
+                })
+                .with_on_cancel(move || {
+                    tracing::info!("取消编辑主机");
+                    // 关闭对话框
+                    *dialog_ref_for_cancel.lock().unwrap() = None;
+                })
+        });
+
+        // 存储对话框引用
+        *self.connection_dialog.lock().unwrap() = Some(dialog);
+
+        cx.notify();
+    }
+
+    /// 异步保存主机配置（静态方法）
+    fn save_host_async(
+        repository: Arc<SqliteHostRepository>,
+        hosts: Arc<RwLock<Vec<HostConfig>>>,
+        config: HostConfig,
+        is_new: bool,
+    ) {
+        let host_name = config.name.clone();
+
+        if is_new {
+            tracing::info!("保存新主机: {}", host_name);
+        } else {
+            tracing::info!("更新主机: {}", host_name);
+        }
+
+        // 使用共享 Runtime 执行异步保存
+        runtime::spawn_blocking(async move {
+            if is_new {
+                // 新建主机
+                match repository.create(&config).await {
+                    Ok(new_id) => {
+                        tracing::info!("成功创建主机: {} (ID: {})", host_name, new_id);
+
+                        // 创建包含新 ID 的配置
+                        let mut saved_config = config.clone();
+                        saved_config.id = Some(new_id);
+
+                        // 添加到内存列表
+                        if let Ok(mut hosts_guard) = hosts.write() {
+                            hosts_guard.push(saved_config);
+                        }
+                    },
+                    Err(e) => {
+                        tracing::error!("创建主机失败: {:?}", e);
+                    },
+                }
+            } else {
+                // 更新主机
+                match repository.update(&config).await {
+                    Ok(_) => {
+                        tracing::info!("成功更新主机: {}", host_name);
+
+                        // 更新内存中的配置
+                        if let Ok(mut hosts_guard) = hosts.write() {
+                            if let Some(pos) = hosts_guard.iter().position(|h| h.id == config.id) {
+                                hosts_guard[pos] = config.clone();
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        tracing::error!("更新主机失败: {:?}", e);
+                    },
+                }
+            }
+        });
+    }
 }
 
 impl Focusable for MainWindow {
@@ -1147,7 +1282,7 @@ impl Render for MainWindow {
         };
 
         // 构建主布局（垂直布局：内容区 + 状态栏）
-        div()
+        let mut root = div()
             .id("main-window")
             .size_full()
             .flex()
@@ -1192,6 +1327,13 @@ impl Render for MainWindow {
             .child(
                 // 底部状态栏
                 self.status_bar.clone(),
-            )
+            );
+
+        // 如果有连接对话框，添加到根元素（作为覆盖层）
+        if let Some(ref dialog) = *self.connection_dialog.lock().unwrap() {
+            root = root.child(dialog.clone());
+        }
+
+        root
     }
 }

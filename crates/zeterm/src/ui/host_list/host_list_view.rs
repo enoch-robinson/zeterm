@@ -3,12 +3,12 @@
 //! 显示和管理 SSH 主机列表。
 
 use crate::app::runtime;
-use crate::ui::dialogs::{DeleteConfirmDialog, DeleteConfirmEvent, HostConnectionDialog};
+use crate::ui::dialogs::{DeleteConfirmDialog, DeleteConfirmEvent};
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
     ParentElement, Render, Styled, Window, div, prelude::*,
 };
-use parking_lot::Mutex;
+
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -44,9 +44,6 @@ pub struct HostListView {
     /// 焦点句柄
     focus_handle: FocusHandle,
 
-    /// 连接对话框（新建或编辑主机）- 使用共享引用以便在回调中关闭
-    connection_dialog: Arc<Mutex<Option<Entity<HostConnectionDialog>>>>,
-
     /// 删除确认对话框
     delete_dialog: Option<Entity<DeleteConfirmDialog>>,
 
@@ -74,7 +71,6 @@ impl HostListView {
             expanded_groups,
             context_menu_host: None,
             focus_handle,
-            connection_dialog: Arc::new(Mutex::new(None)),
             delete_dialog: None,
             pending_delete: None,
         };
@@ -130,6 +126,11 @@ impl HostListView {
         let hosts = self.hosts.read().ok()?;
         self.selected_host_id
             .and_then(|id| hosts.iter().find(|h| h.id == Some(id)).cloned())
+    }
+
+    /// 获取主机列表的共享引用
+    pub fn hosts(&self) -> &Arc<RwLock<Vec<HostConfig>>> {
+        &self.hosts
     }
 
     /// 处理主机点击（包含双击检测）
@@ -192,61 +193,14 @@ impl HostListView {
 
     /// 处理新建主机
     fn handle_new_host(&mut self, cx: &mut Context<Self>) {
-        tracing::info!("打开新建主机对话框");
-
-        let repository = self.repository.clone();
-        let hosts = self.hosts.clone();
-        let dialog_ref = self.connection_dialog.clone();
-        let dialog_ref_for_cancel = self.connection_dialog.clone();
-
-        let dialog = cx.new(|cx| {
-            HostConnectionDialog::new_create(cx)
-                .with_on_save(move |config| {
-                    Self::save_host_async(repository.clone(), hosts.clone(), config, true);
-                    // 关闭对话框
-                    *dialog_ref.lock() = None;
-                })
-                .with_on_cancel(move || {
-                    tracing::info!("取消新建主机");
-                    // 关闭对话框
-                    *dialog_ref_for_cancel.lock() = None;
-                })
-        });
-
-        // 存储对话框引用
-        *self.connection_dialog.lock() = Some(dialog);
-
-        cx.notify();
+        tracing::info!("请求新建主机");
+        cx.emit(HostListEvent::NewHostRequested);
     }
 
     /// 处理编辑主机
     fn handle_edit_host(&mut self, host: &HostConfig, cx: &mut Context<Self>) {
-        tracing::info!("打开编辑主机对话框: {}", host.name);
-
-        let repository = self.repository.clone();
-        let hosts = self.hosts.clone();
-        let host_clone = host.clone();
-        let dialog_ref = self.connection_dialog.clone();
-        let dialog_ref_for_cancel = self.connection_dialog.clone();
-
-        let dialog = cx.new(|cx| {
-            HostConnectionDialog::new_edit(host_clone, cx)
-                .with_on_save(move |config| {
-                    Self::save_host_async(repository.clone(), hosts.clone(), config, false);
-                    // 关闭对话框
-                    *dialog_ref.lock() = None;
-                })
-                .with_on_cancel(move || {
-                    tracing::info!("取消编辑主机");
-                    // 关闭对话框
-                    *dialog_ref_for_cancel.lock() = None;
-                })
-        });
-
-        // 存储对话框引用
-        *self.connection_dialog.lock() = Some(dialog);
-
-        cx.notify();
+        tracing::info!("请求编辑主机: {}", host.name);
+        cx.emit(HostListEvent::EditHostRequested(host.clone()));
     }
 
     /// 处理删除主机 - 显示确认对话框
@@ -685,11 +639,6 @@ impl Render for HostListView {
         // 如果有右键菜单，添加到根元素
         if let Some(ref host) = self.context_menu_host {
             root = root.child(self.render_context_menu(host, cx));
-        }
-
-        // 如果有连接对话框，添加到根元素（作为覆盖层）
-        if let Some(ref dialog) = *self.connection_dialog.lock() {
-            root = root.child(dialog.clone());
         }
 
         // 如果有删除确认对话框，添加到根元素（作为覆盖层）
