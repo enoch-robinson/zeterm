@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
@@ -70,6 +71,9 @@ pub struct MainWindow {
 
     /// 是否显示 Tab 栏
     show_tab_bar: bool,
+
+    /// 新建 Tab 请求标志（用于 TabView 回调通知）
+    new_tab_requested: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for MainWindow {
@@ -103,8 +107,20 @@ impl MainWindow {
         // 创建 Tab 管理器
         let tab_manager = cx.new(|_cx| TabManager::new());
 
+        // 创建新建 Tab 请求标志
+        let new_tab_requested = Arc::new(AtomicBool::new(false));
+
         // 创建 Tab 视图
         let tab_view = cx.new(|cx| TabView::new(tab_manager.clone(), cx));
+
+        // 设置新建 Tab 回调
+        let new_tab_flag = new_tab_requested.clone();
+        tab_view.update(cx, |view, _cx| {
+            view.set_on_new_tab(move |_cx| {
+                // 设置标志，在下次 render 时创建 Tab
+                new_tab_flag.store(true, Ordering::SeqCst);
+            });
+        });
 
         // 创建状态栏
         let status_bar = cx.new(|cx| StatusBar::new(cx));
@@ -131,6 +147,7 @@ impl MainWindow {
             theme_manager,
             show_sidebar: true,
             show_tab_bar: true,
+            new_tab_requested,
         }
     }
 
@@ -1099,6 +1116,11 @@ impl Focusable for MainWindow {
 
 impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 检查是否有新建 Tab 请求（来自 TabView 的 "+" 按钮）
+        if self.new_tab_requested.swap(false, Ordering::SeqCst) {
+            self.create_local_tab("新终端", cx);
+        }
+
         let has_tabs = self.has_tabs(cx);
 
         // 获取主题颜色（在可变借用之后）

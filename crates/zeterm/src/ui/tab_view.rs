@@ -135,6 +135,16 @@ impl TabView {
         self
     }
 
+    /// 设置新建 Tab 回调（可变引用版本）
+    ///
+    /// 用于在 Entity 创建后设置回调
+    pub fn set_on_new_tab<F>(&mut self, callback: F)
+    where
+        F: Fn(&mut Context<Self>) + Send + Sync + 'static,
+    {
+        self.on_new_tab = Some(Box::new(callback));
+    }
+
     /// 设置是否显示新建 Tab 按钮
     pub fn with_new_tab_button(mut self, show: bool) -> Self {
         self.show_new_tab_button = show;
