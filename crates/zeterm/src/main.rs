@@ -38,7 +38,11 @@ const MIN_WINDOW_HEIGHT: f32 = 480.0;
 /// 1. 创建/连接数据库
 /// 2. 运行数据库迁移
 /// 3. 清理上次崩溃遗留的"连接中"状态记录
-fn init_database() {
+///
+/// # Returns
+///
+/// 返回初始化完成的数据库实例，如果失败则 panic
+fn init_database() -> std::sync::Arc<Database> {
     info!("Initializing database...");
 
     // 使用共享 Runtime 执行异步初始化
@@ -51,14 +55,14 @@ fn init_database() {
             },
             Err(e) => {
                 error!("Failed to connect to database: {}", e);
-                return;
+                panic!("Failed to connect to database: {}", e);
             },
         };
 
         // 2. 运行数据库迁移
         if let Err(e) = db.init().await {
             error!("Failed to initialize database: {}", e);
-            return;
+            panic!("Failed to initialize database: {}", e);
         }
         info!("Database migrations completed");
 
@@ -81,7 +85,10 @@ fn init_database() {
         }
 
         info!("Database initialization completed");
-    });
+
+        // 返回数据库实例
+        std::sync::Arc::new(db)
+    })
 }
 
 fn main() {
@@ -96,7 +103,9 @@ fn main() {
     info!("Shared Tokio runtime initialized");
 
     // 初始化数据库（在 GPUI 启动前完成）
-    init_database();
+    let database = init_database();
+    app::init_global_database(database);
+    info!("Global database initialized and ready for use");
 
     // 初始化 GPUI 应用
     Application::new().run(|cx| {

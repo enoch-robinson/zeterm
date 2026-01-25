@@ -38,6 +38,10 @@ pub use app_theme::{AppThemeManager, BuiltinTheme, ThemeConfig, ThemeEvent, Them
 // ==================== 主窗口 ====================
 pub use main_window::MainWindow;
 
+// ==================== 主机列表 ====================
+#[allow(unused_imports)]
+pub use host_list::{HostListEvent, HostListView};
+
 // ==================== Tab 管理 ====================
 #[allow(unused_imports)]
 pub use tab_manager::{TabData, TabId, TabInfo, TabManager, TabManagerEvent};

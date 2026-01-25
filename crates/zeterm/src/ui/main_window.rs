@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    Render, SharedString, Styled, Window, div, prelude::*, px,
+    Render, Styled, Window, div, prelude::*, px,
 };
 use gpui_component::ActiveTheme;
 use tracing::info;
@@ -16,6 +16,7 @@ use tracing::info;
 use crate::app::session::SessionCoordinator;
 use crate::app::terminal::TerminalConfig;
 use crate::ui::app_theme::{AppThemeManager, BuiltinTheme, ThemeMode};
+use crate::ui::host_list::{HostListEvent, HostListView};
 use crate::ui::split_pane::{Pane, PaneId, SplitDirection, SplitManager, SplitView};
 use crate::ui::status_bar::{ConnectionStatus, StatusBar, StatusInfo};
 use crate::ui::tab_manager::{TabId, TabInfo, TabManager, TabManagerEvent};
@@ -38,7 +39,7 @@ pub struct MainWindow {
     focus_handle: FocusHandle,
 
     /// 主机列表视图
-    host_list_view: Option<SharedString>,
+    host_list_view: Entity<HostListView>,
 
     /// Tab 管理器
     tab_manager: Entity<TabManager>,
@@ -87,6 +88,12 @@ impl MainWindow {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
 
+        // 获取全局数据库实例
+        let database = crate::app::global_database();
+
+        // 创建主机列表视图
+        let host_list_view = cx.new(|cx| HostListView::new(database, cx));
+
         // 创建 Tab 管理器
         let tab_manager = cx.new(|_cx| TabManager::new());
 
@@ -103,9 +110,13 @@ impl MainWindow {
         cx.subscribe(&tab_manager, Self::on_tab_manager_event)
             .detach();
 
+        // 订阅主机列表视图事件
+        cx.subscribe(&host_list_view, Self::on_host_list_event)
+            .detach();
+
         Self {
             focus_handle,
-            host_list_view: None,
+            host_list_view,
             tab_manager,
             tab_view,
             split_views: HashMap::new(),
@@ -114,6 +125,36 @@ impl MainWindow {
             theme_manager,
             show_sidebar: true,
             show_tab_bar: true,
+        }
+    }
+
+    /// 处理主机列表视图事件
+    fn on_host_list_event(
+        &mut self,
+        _view: Entity<HostListView>,
+        event: &HostListEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            HostListEvent::ConnectRequested(host) => {
+                info!("用户请求连接主机: {}", host.name);
+                // TODO: 实现 SSH 连接逻辑
+                // 1. 创建 SSH Tab
+                // 2. 建立 SSH 连接
+                // 3. 添加终端面板
+                self.create_ssh_tab(host, cx);
+            },
+            HostListEvent::NewHostRequested => {
+                info!("用户请求新建主机");
+                // 主机列表视图内部已处理对话框显示
+            },
+            HostListEvent::EditHostRequested(host) => {
+                info!("用户请求编辑主机: {}", host.name);
+                // 主机列表视图内部已处理对话框显示
+            },
+            HostListEvent::HostDeleted(host_id) => {
+                info!("主机已删除: {}", host_id);
+            },
         }
     }
 
@@ -862,12 +903,11 @@ impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let has_tabs = self.has_tabs(cx);
 
-        // 先获取主题颜色（Hsla 是 Copy 类型，获取后释放借用）
+        // 获取主题颜色（在可变借用之后）
         let theme = cx.theme();
         let background = theme.background;
         let secondary = theme.secondary;
         let border = theme.border;
-        let muted_foreground = theme.muted_foreground;
 
         // 主内容区域
         let main_content = if has_tabs {
@@ -903,38 +943,16 @@ impl Render for MainWindow {
                     .child({
                         // 左侧面板：主机列表
                         if self.show_sidebar {
-                            if let Some(ref host_list_view) = self.host_list_view {
-                                div()
-                                    .id("sidebar")
-                                    .w(px(280.0))
-                                    .h_full()
-                                    .flex_shrink_0()
-                                    .border_r_1()
-                                    .border_color(border)
-                                    .bg(secondary)
-                                    .child(host_list_view.clone())
-                                    .into_any_element()
-                            } else {
-                                // 侧边栏占位
-                                div()
-                                    .id("sidebar-placeholder")
-                                    .w(px(280.0))
-                                    .h_full()
-                                    .flex_shrink_0()
-                                    .border_r_1()
-                                    .border_color(border)
-                                    .bg(secondary)
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(
-                                        div()
-                                            .text_color(muted_foreground)
-                                            .text_sm()
-                                            .child("主机列表"),
-                                    )
-                                    .into_any_element()
-                            }
+                            div()
+                                .id("sidebar")
+                                .w(px(280.0))
+                                .h_full()
+                                .flex_shrink_0()
+                                .border_r_1()
+                                .border_color(border)
+                                .bg(secondary)
+                                .child(self.host_list_view.clone())
+                                .into_any_element()
                         } else {
                             div().into_any_element()
                         }

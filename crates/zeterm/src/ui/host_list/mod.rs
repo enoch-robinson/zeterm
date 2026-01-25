@@ -4,3 +4,4 @@
 
 mod host_list_view;
 
+pub use host_list_view::{HostListEvent, HostListView};
