@@ -17,6 +17,9 @@ use zeterm_storage::{ConnectionHistoryRepository, Database, SqliteConnectionHist
 // 引入共享 Runtime 模块
 use app::runtime;
 
+// 引入 GPUI Component
+use gpui_component;
+
 // 定义应用程序 Actions
 actions!(zeterm, [Quit]);
 
@@ -98,6 +101,9 @@ fn main() {
     // 初始化 GPUI 应用
     Application::new().run(|cx| {
         info!("GPUI App initialized");
+
+        // 初始化 GPUI Component 主题系统（必须在使用任何 GPUI Component 功能之前调用）
+        gpui_component::init(cx);
 
         // 注册全局快捷键绑定
         cx.bind_keys([
