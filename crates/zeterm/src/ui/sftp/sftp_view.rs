@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::app::runtime;
 use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
+    App, AppContext as _, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Window, div,
     prelude::FluentBuilder, px,
 };
@@ -19,7 +19,8 @@ use gpui_component::ActiveTheme;
 
 use parking_lot::RwLock;
 use zeterm_ssh::{
-    DirEntry, SftpClient, TransferProgress, TransferState, TransferTask, TransferTaskId,
+    DirEntry, SftpClient, TransferDirection, TransferProgress, TransferState, TransferTask,
+    TransferTaskId,
 };
 
 use super::file_list::{FileListEvent, FileListView};
@@ -127,6 +128,52 @@ struct ContextMenuState {
     position: (f32, f32),
 }
 
+/// 待处理的操作结果
+#[derive(Debug, Clone)]
+enum PendingOperationResult {
+    /// 删除成功
+    DeleteSuccess { path: String },
+    /// 删除失败
+    DeleteError { path: String, message: String },
+    /// 重命名成功
+    RenameSuccess { old_path: String, new_path: String },
+    /// 重命名失败
+    RenameError { path: String, message: String },
+    /// 获取属性成功
+    PropertiesLoaded { entry: DirEntry },
+    /// 获取属性失败
+    PropertiesError { path: String, message: String },
+}
+
+/// 重命名对话框状态
+#[derive(Debug, Clone)]
+struct RenameDialogState {
+    /// 原路径
+    old_path: String,
+    /// 原文件名
+    old_name: String,
+    /// 新文件名（用户输入）
+    new_name: String,
+}
+
+/// 属性对话框状态
+#[derive(Debug, Clone)]
+struct PropertiesDialogState {
+    /// 文件条目信息
+    entry: DirEntry,
+}
+
+/// 删除确认对话框状态
+#[derive(Debug, Clone)]
+struct DeleteConfirmState {
+    /// 文件路径
+    path: String,
+    /// 文件名
+    filename: String,
+    /// 是否为目录
+    is_directory: bool,
+}
+
 /// SFTP 视图组件
 ///
 /// 整合路径栏、文件列表和传输队列，提供完整的 SFTP 文件管理界面。
@@ -163,6 +210,14 @@ pub struct SftpView {
     transfer_tasks: Arc<RwLock<HashMap<TransferTaskId, TransferTask>>>,
     /// 右键菜单状态
     context_menu: Option<ContextMenuState>,
+    /// 待处理的操作结果
+    pending_operation: Arc<RwLock<Option<PendingOperationResult>>>,
+    /// 重命名对话框状态
+    rename_dialog: Option<RenameDialogState>,
+    /// 属性对话框状态
+    properties_dialog: Option<PropertiesDialogState>,
+    /// 删除确认对话框状态
+    delete_confirm: Option<DeleteConfirmState>,
 }
 
 impl SftpView {
@@ -190,6 +245,10 @@ impl SftpView {
             pending_load_result: Arc::new(RwLock::new(None)),
             transfer_tasks: Arc::new(RwLock::new(HashMap::new())),
             context_menu: None,
+            pending_operation: Arc::new(RwLock::new(None)),
+            rename_dialog: None,
+            properties_dialog: None,
+            delete_confirm: None,
         };
 
         // 订阅路径栏事件
@@ -564,19 +623,67 @@ impl SftpView {
                 let new_id = client.next_task_id();
                 let new_task = TransferTask::new(new_id, direction.clone(), &source, &dest, total);
 
+                // 获取控制标志
+                let cancel_flag = new_task.cancel_flag();
+
                 // 添加到任务映射
                 self.transfer_tasks.write().insert(new_id, new_task);
 
                 // 添加到传输队列 UI
                 let progress =
-                    TransferProgress::new(direction, source.clone(), dest.clone(), total);
+                    TransferProgress::new(direction.clone(), source.clone(), dest.clone(), total);
                 self.transfer_queue.update(cx, |queue, cx| {
                     queue.add_transfer(new_id, progress.clone(), cx);
                 });
 
-                // TODO: 启动实际的传输操作
-                // 这需要根据传输方向调用 download_file_cancellable 或 upload_file_cancellable
                 tracing::info!("Created new transfer task: {} (retry of {})", new_id, id);
+
+                // 启动实际的传输操作
+                let client_clone = client.clone();
+                let transfer_tasks = self.transfer_tasks.clone();
+                let source_clone = source.clone();
+                let dest_clone = dest.clone();
+                let direction_clone = direction.clone();
+
+                runtime::spawn_blocking(async move {
+                    let result = match direction_clone {
+                        TransferDirection::Download => {
+                            client_clone
+                                .download_file_cancellable(
+                                    &source_clone,
+                                    &dest_clone,
+                                    cancel_flag,
+                                    None,
+                                )
+                                .await
+                        },
+                        TransferDirection::Upload => {
+                            client_clone
+                                .upload_file_cancellable(
+                                    &source_clone,
+                                    &dest_clone,
+                                    cancel_flag,
+                                    None,
+                                )
+                                .await
+                        },
+                    };
+
+                    // 更新任务状态
+                    if let Some(task) = transfer_tasks.write().get_mut(&new_id) {
+                        match result {
+                            Ok(progress) => {
+                                task.progress = progress;
+                                task.mark_completed();
+                                tracing::info!("Transfer {} completed successfully", new_id);
+                            },
+                            Err(e) => {
+                                task.set_error(e.to_string());
+                                tracing::error!("Transfer {} failed: {}", new_id, e);
+                            },
+                        }
+                    }
+                });
 
                 cx.emit(SftpViewEvent::TransferStarted(new_id));
             }
@@ -646,22 +753,147 @@ impl SftpView {
     /// 处理右键菜单操作：删除
     fn context_menu_delete(&mut self, cx: &mut Context<Self>) {
         if let Some(ref menu) = self.context_menu {
-            let path = menu.path.clone();
-            tracing::info!("Context menu: Delete {}", path);
-            // TODO: 显示删除确认对话框，然后执行删除
-            // 目前只记录日志
+            // 显示删除确认对话框
+            self.delete_confirm = Some(DeleteConfirmState {
+                path: menu.path.clone(),
+                filename: menu.filename.clone(),
+                is_directory: menu.is_directory,
+            });
+            tracing::info!("Context menu: Show delete confirm for {}", menu.path);
         }
         self.hide_context_menu(cx);
+    }
+
+    /// 执行删除操作
+    fn do_delete(&mut self, cx: &mut Context<Self>) {
+        let Some(confirm) = self.delete_confirm.take() else {
+            return;
+        };
+
+        let Some(client) = self.sftp_client.clone() else {
+            self.error_message = Some("未连接到 SFTP 服务器".to_string());
+            cx.notify();
+            return;
+        };
+
+        let path = confirm.path.clone();
+        let is_directory = confirm.is_directory;
+        let pending = self.pending_operation.clone();
+
+        tracing::info!("Executing delete: {} (is_dir: {})", path, is_directory);
+
+        runtime::spawn_blocking(async move {
+            let result = if is_directory {
+                client.rmdir_all(&path).await
+            } else {
+                client.remove(&path).await
+            };
+
+            let op_result = match result {
+                Ok(_) => {
+                    tracing::info!("Successfully deleted: {}", path);
+                    PendingOperationResult::DeleteSuccess { path }
+                },
+                Err(e) => {
+                    tracing::error!("Failed to delete {}: {}", path, e);
+                    PendingOperationResult::DeleteError {
+                        path,
+                        message: e.to_string(),
+                    }
+                },
+            };
+
+            *pending.write() = Some(op_result);
+        });
+
+        cx.notify();
+    }
+
+    /// 取消删除操作
+    fn cancel_delete(&mut self, cx: &mut Context<Self>) {
+        self.delete_confirm = None;
+        cx.notify();
     }
 
     /// 处理右键菜单操作：重命名
     fn context_menu_rename(&mut self, cx: &mut Context<Self>) {
         if let Some(ref menu) = self.context_menu {
-            let path = menu.path.clone();
-            tracing::info!("Context menu: Rename {}", path);
-            // TODO: 显示重命名对话框
+            // 显示重命名对话框
+            self.rename_dialog = Some(RenameDialogState {
+                old_path: menu.path.clone(),
+                old_name: menu.filename.clone(),
+                new_name: menu.filename.clone(),
+            });
+            tracing::info!("Context menu: Show rename dialog for {}", menu.path);
         }
         self.hide_context_menu(cx);
+    }
+
+    /// 更新重命名对话框的新名称
+    fn update_rename_input(&mut self, new_name: String, cx: &mut Context<Self>) {
+        if let Some(ref mut dialog) = self.rename_dialog {
+            dialog.new_name = new_name;
+            cx.notify();
+        }
+    }
+
+    /// 执行重命名操作
+    fn do_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(dialog) = self.rename_dialog.take() else {
+            return;
+        };
+
+        if dialog.new_name.is_empty() || dialog.new_name == dialog.old_name {
+            // 名称为空或未改变，取消操作
+            cx.notify();
+            return;
+        }
+
+        let Some(client) = self.sftp_client.clone() else {
+            self.error_message = Some("未连接到 SFTP 服务器".to_string());
+            cx.notify();
+            return;
+        };
+
+        // 构建新路径
+        let old_path = dialog.old_path.clone();
+        let new_path = if let Some(parent) = old_path.rsplit_once('/') {
+            format!("{}/{}", parent.0, dialog.new_name)
+        } else {
+            dialog.new_name.clone()
+        };
+
+        let pending = self.pending_operation.clone();
+
+        tracing::info!("Executing rename: {} -> {}", old_path, new_path);
+
+        runtime::spawn_blocking(async move {
+            let result = client.rename(&old_path, &new_path).await;
+
+            let op_result = match result {
+                Ok(_) => {
+                    tracing::info!("Successfully renamed: {} -> {}", old_path, new_path);
+                    PendingOperationResult::RenameSuccess { old_path, new_path }
+                },
+                Err(e) => {
+                    tracing::error!("Failed to rename {}: {}", old_path, e);
+                    PendingOperationResult::RenameError {
+                        path: old_path,
+                        message: e.to_string(),
+                    }
+                },
+            };
+
+            *pending.write() = Some(op_result);
+        });
+
+        cx.notify();
+    }
+
+    /// 取消重命名操作
+    fn cancel_rename(&mut self, cx: &mut Context<Self>) {
+        self.rename_dialog = None;
+        cx.notify();
     }
 
     /// 处理右键菜单操作：复制路径
@@ -669,7 +901,12 @@ impl SftpView {
         if let Some(ref menu) = self.context_menu {
             let path = menu.path.clone();
             tracing::info!("Context menu: Copy path {}", path);
-            // TODO: 复制到剪贴板
+
+            // 复制到剪贴板
+            let item = ClipboardItem::new_string(path.clone());
+            cx.write_to_clipboard(item);
+
+            tracing::info!("Path copied to clipboard: {}", path);
         }
         self.hide_context_menu(cx);
     }
@@ -679,13 +916,48 @@ impl SftpView {
         if let Some(ref menu) = self.context_menu {
             let path = menu.path.clone();
             tracing::info!("Context menu: Properties {}", path);
-            // TODO: 显示属性对话框
+
+            let Some(client) = self.sftp_client.clone() else {
+                self.error_message = Some("未连接到 SFTP 服务器".to_string());
+                self.hide_context_menu(cx);
+                cx.notify();
+                return;
+            };
+
+            let pending = self.pending_operation.clone();
+
+            // 异步获取文件属性
+            runtime::spawn_blocking(async move {
+                let result = client.stat(&path).await;
+
+                let op_result = match result {
+                    Ok(entry) => {
+                        tracing::info!("Loaded properties for: {}", path);
+                        PendingOperationResult::PropertiesLoaded { entry }
+                    },
+                    Err(e) => {
+                        tracing::error!("Failed to get properties for {}: {}", path, e);
+                        PendingOperationResult::PropertiesError {
+                            path,
+                            message: e.to_string(),
+                        }
+                    },
+                };
+
+                *pending.write() = Some(op_result);
+            });
         }
         self.hide_context_menu(cx);
     }
 
+    /// 关闭属性对话框
+    fn close_properties_dialog(&mut self, cx: &mut Context<Self>) {
+        self.properties_dialog = None;
+        cx.notify();
+    }
+
     /// 渲染右键菜单
-    fn render_context_menu(&self, cx: &Context<Self>) -> impl IntoElement {
+    fn render_context_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
 
         let Some(ref menu) = self.context_menu else {
@@ -706,6 +978,8 @@ impl SftpView {
             .border_1()
             .border_color(theme.border)
             .shadow_lg()
+            // 阻止点击事件冒泡
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {})
             .child(
                 div()
                     .flex()
@@ -718,6 +992,21 @@ impl SftpView {
                             .py_2()
                             .cursor_pointer()
                             .hover(|el| el.bg(theme.muted))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    if let Some(ref menu) = this.context_menu {
+                                        let path = menu.path.clone();
+                                        let is_dir = menu.is_directory;
+                                        this.hide_context_menu(cx);
+                                        if is_dir {
+                                            this.navigate_to(&path, cx);
+                                        } else {
+                                            cx.emit(SftpViewEvent::FileOpened(path));
+                                        }
+                                    }
+                                }),
+                            )
                             .child(
                                 div()
                                     .flex()
@@ -740,6 +1029,12 @@ impl SftpView {
                             .py_2()
                             .cursor_pointer()
                             .hover(|el| el.bg(theme.muted))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.context_menu_download(cx);
+                                }),
+                            )
                             .child(
                                 div().flex().items_center().gap_2().child("⬇️").child(
                                     div().text_sm().text_color(theme.foreground).child("下载"),
@@ -756,6 +1051,12 @@ impl SftpView {
                             .py_2()
                             .cursor_pointer()
                             .hover(|el| el.bg(theme.muted))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.context_menu_rename(cx);
+                                }),
+                            )
                             .child(div().flex().items_center().gap_2().child("✏️").child(
                                 div().text_sm().text_color(theme.foreground).child("重命名"),
                             )),
@@ -768,6 +1069,12 @@ impl SftpView {
                             .py_2()
                             .cursor_pointer()
                             .hover(|el| el.bg(theme.muted))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.context_menu_copy_path(cx);
+                                }),
+                            )
                             .child(
                                 div().flex().items_center().gap_2().child("📋").child(
                                     div()
@@ -787,6 +1094,12 @@ impl SftpView {
                             .py_2()
                             .cursor_pointer()
                             .hover(|el| el.bg(gpui::hsla(0.0, 0.7, 0.5, 0.1)))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.context_menu_delete(cx);
+                                }),
+                            )
                             .child(
                                 div().flex().items_center().gap_2().child("🗑️").child(
                                     div()
@@ -806,11 +1119,388 @@ impl SftpView {
                             .py_2()
                             .cursor_pointer()
                             .hover(|el| el.bg(theme.muted))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.context_menu_properties(cx);
+                                }),
+                            )
                             .child(
                                 div().flex().items_center().gap_2().child("ℹ️").child(
                                     div().text_sm().text_color(theme.foreground).child("属性"),
                                 ),
                             ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// 渲染删除确认对话框
+    fn render_delete_confirm_dialog(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+
+        let Some(ref confirm) = self.delete_confirm else {
+            return div().into_any_element();
+        };
+
+        let type_name = if confirm.is_directory {
+            "目录"
+        } else {
+            "文件"
+        };
+
+        div()
+            .id("delete-confirm-overlay")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::black().opacity(0.5))
+            .child(
+                div()
+                    .id("delete-confirm-dialog")
+                    .w_80()
+                    .p_4()
+                    .rounded_lg()
+                    .bg(theme.background)
+                    .border_1()
+                    .border_color(theme.border)
+                    .shadow_lg()
+                    // 阻止点击事件冒泡
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {})
+                    // 标题
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .mb_3()
+                            .child(div().text_color(gpui::hsla(0.0, 0.7, 0.5, 1.0)).child("⚠️"))
+                            .child(
+                                div()
+                                    .text_base()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme.foreground)
+                                    .child(format!("删除{}", type_name)),
+                            ),
+                    )
+                    // 描述
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .mb_4()
+                            .child(format!(
+                                "确定要删除{} \"{}\" 吗？此操作不可撤销。",
+                                type_name, confirm.filename
+                            )),
+                    )
+                    // 按钮
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap_2()
+                            // 取消按钮
+                            .child(
+                                div()
+                                    .id("delete-cancel")
+                                    .px_3()
+                                    .py_1()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .text_sm()
+                                    .text_color(theme.foreground)
+                                    .cursor_pointer()
+                                    .hover(|el| el.bg(theme.muted))
+                                    .on_mouse_down(
+                                        gpui::MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.cancel_delete(cx);
+                                        }),
+                                    )
+                                    .child("取消"),
+                            )
+                            // 删除按钮
+                            .child(
+                                div()
+                                    .id("delete-confirm")
+                                    .px_3()
+                                    .py_1()
+                                    .rounded_md()
+                                    .bg(gpui::hsla(0.0, 0.7, 0.5, 1.0))
+                                    .text_sm()
+                                    .text_color(gpui::white())
+                                    .cursor_pointer()
+                                    .hover(|el| el.bg(gpui::hsla(0.0, 0.8, 0.4, 1.0)))
+                                    .on_mouse_down(
+                                        gpui::MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.do_delete(cx);
+                                        }),
+                                    )
+                                    .child("删除"),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// 渲染重命名对话框
+    fn render_rename_dialog(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+
+        let Some(ref dialog) = self.rename_dialog else {
+            return div().into_any_element();
+        };
+
+        let new_name = dialog.new_name.clone();
+
+        div()
+            .id("rename-dialog-overlay")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::black().opacity(0.5))
+            .child(
+                div()
+                    .id("rename-dialog")
+                    .w_80()
+                    .p_4()
+                    .rounded_lg()
+                    .bg(theme.background)
+                    .border_1()
+                    .border_color(theme.border)
+                    .shadow_lg()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {})
+                    // 标题
+                    .child(
+                        div()
+                            .text_base()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_color(theme.foreground)
+                            .mb_3()
+                            .child("重命名"),
+                    )
+                    // 输入框
+                    .child(
+                        div().w_full().mb_4().child(
+                            div()
+                                .id("rename-input")
+                                .w_full()
+                                .px_3()
+                                .py_2()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(theme.border)
+                                .bg(theme.secondary)
+                                .text_sm()
+                                .text_color(theme.foreground)
+                                .child(new_name),
+                        ),
+                    )
+                    // 按钮
+                    .child(
+                        div()
+                            .flex()
+                            .justify_end()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .id("rename-cancel")
+                                    .px_3()
+                                    .py_1()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .text_sm()
+                                    .text_color(theme.foreground)
+                                    .cursor_pointer()
+                                    .hover(|el| el.bg(theme.muted))
+                                    .on_mouse_down(
+                                        gpui::MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.cancel_rename(cx);
+                                        }),
+                                    )
+                                    .child("取消"),
+                            )
+                            .child(
+                                div()
+                                    .id("rename-confirm")
+                                    .px_3()
+                                    .py_1()
+                                    .rounded_md()
+                                    .bg(theme.primary)
+                                    .text_sm()
+                                    .text_color(gpui::white())
+                                    .cursor_pointer()
+                                    .hover(|el| el.opacity(0.9))
+                                    .on_mouse_down(
+                                        gpui::MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.do_rename(cx);
+                                        }),
+                                    )
+                                    .child("确定"),
+                            ),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// 渲染属性对话框
+    fn render_properties_dialog(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+
+        let Some(ref dialog) = self.properties_dialog else {
+            return div().into_any_element();
+        };
+
+        let entry = &dialog.entry;
+        let type_name = if entry.is_dir() { "目录" } else { "文件" };
+        let size_str = entry.formatted_size();
+        let modified_str = entry.formatted_modified();
+        let perms_str = entry
+            .permissions
+            .as_ref()
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "---------".to_string());
+
+        div()
+            .id("properties-dialog-overlay")
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::black().opacity(0.5))
+            .child(
+                div()
+                    .id("properties-dialog")
+                    .w_80()
+                    .p_4()
+                    .rounded_lg()
+                    .bg(theme.background)
+                    .border_1()
+                    .border_color(theme.border)
+                    .shadow_lg()
+                    .on_mouse_down(gpui::MouseButton::Left, |_, _, _| {})
+                    // 标题
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .mb_4()
+                            .child(if entry.is_dir() { "📁" } else { "📄" })
+                            .child(
+                                div()
+                                    .text_base()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .text_color(theme.foreground)
+                                    .child(entry.name.clone()),
+                            ),
+                    )
+                    // 属性列表
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .text_sm()
+                            // 类型
+                            .child(
+                                div()
+                                    .flex()
+                                    .child(
+                                        div()
+                                            .w_20()
+                                            .text_color(theme.muted_foreground)
+                                            .child("类型"),
+                                    )
+                                    .child(div().text_color(theme.foreground).child(type_name)),
+                            )
+                            // 路径
+                            .child(
+                                div()
+                                    .flex()
+                                    .child(
+                                        div()
+                                            .w_20()
+                                            .text_color(theme.muted_foreground)
+                                            .child("路径"),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .text_color(theme.foreground)
+                                            .overflow_hidden()
+                                            .child(entry.path.clone()),
+                                    ),
+                            )
+                            // 大小
+                            .child(
+                                div()
+                                    .flex()
+                                    .child(
+                                        div()
+                                            .w_20()
+                                            .text_color(theme.muted_foreground)
+                                            .child("大小"),
+                                    )
+                                    .child(div().text_color(theme.foreground).child(size_str)),
+                            )
+                            // 修改时间
+                            .child(
+                                div()
+                                    .flex()
+                                    .child(
+                                        div()
+                                            .w_20()
+                                            .text_color(theme.muted_foreground)
+                                            .child("修改时间"),
+                                    )
+                                    .child(div().text_color(theme.foreground).child(modified_str)),
+                            )
+                            // 权限
+                            .child(
+                                div()
+                                    .flex()
+                                    .child(
+                                        div()
+                                            .w_20()
+                                            .text_color(theme.muted_foreground)
+                                            .child("权限"),
+                                    )
+                                    .child(div().text_color(theme.foreground).child(perms_str)),
+                            ),
+                    )
+                    // 关闭按钮
+                    .child(
+                        div().flex().justify_end().mt_4().child(
+                            div()
+                                .id("properties-close")
+                                .px_4()
+                                .py_1()
+                                .rounded_md()
+                                .bg(theme.primary)
+                                .text_sm()
+                                .text_color(gpui::white())
+                                .cursor_pointer()
+                                .hover(|el| el.opacity(0.9))
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(|this, _, _, cx| {
+                                        this.close_properties_dialog(cx);
+                                    }),
+                                )
+                                .child("关闭"),
+                        ),
                     ),
             )
             .into_any_element()
@@ -1066,6 +1756,52 @@ impl SftpView {
             // 通知 UI 更新
             cx.notify();
         }
+
+        // 处理待处理的操作结果
+        self.process_pending_operation(cx);
+    }
+
+    /// 处理待处理的操作结果
+    ///
+    /// 在 render 时调用，检查是否有后台线程完成的操作结果，
+    /// 如果有则更新 UI 状态。
+    fn process_pending_operation(&mut self, cx: &mut Context<Self>) {
+        let result = {
+            let mut pending = self.pending_operation.write();
+            pending.take()
+        };
+
+        if let Some(op_result) = result {
+            match op_result {
+                PendingOperationResult::DeleteSuccess { path } => {
+                    tracing::info!("Delete operation completed: {}", path);
+                    // 刷新当前目录
+                    self.refresh(cx);
+                },
+                PendingOperationResult::DeleteError { path, message } => {
+                    tracing::error!("Delete operation failed: {} - {}", path, message);
+                    self.error_message = Some(format!("删除失败: {}", message));
+                },
+                PendingOperationResult::RenameSuccess { old_path, new_path } => {
+                    tracing::info!("Rename operation completed: {} -> {}", old_path, new_path);
+                    // 刷新当前目录
+                    self.refresh(cx);
+                },
+                PendingOperationResult::RenameError { path, message } => {
+                    tracing::error!("Rename operation failed: {} - {}", path, message);
+                    self.error_message = Some(format!("重命名失败: {}", message));
+                },
+                PendingOperationResult::PropertiesLoaded { entry } => {
+                    tracing::info!("Properties loaded for: {}", entry.name);
+                    self.properties_dialog = Some(PropertiesDialogState { entry });
+                },
+                PendingOperationResult::PropertiesError { path, message } => {
+                    tracing::error!("Failed to load properties for {}: {}", path, message);
+                    self.error_message = Some(format!("获取属性失败: {}", message));
+                },
+            }
+            cx.notify();
+        }
     }
 }
 
@@ -1124,6 +1860,18 @@ impl Render for SftpView {
                                 this.hide_context_menu(cx);
                             }),
                         )
+                    })
+                    // 删除确认对话框
+                    .when(self.delete_confirm.is_some(), |el| {
+                        el.child(self.render_delete_confirm_dialog(cx))
+                    })
+                    // 重命名对话框
+                    .when(self.rename_dialog.is_some(), |el| {
+                        el.child(self.render_rename_dialog(cx))
+                    })
+                    // 属性对话框
+                    .when(self.properties_dialog.is_some(), |el| {
+                        el.child(self.render_properties_dialog(cx))
                     }),
             )
             // 传输队列（可选）
