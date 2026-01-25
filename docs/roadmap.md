@@ -360,10 +360,48 @@ tracing-subscriber = "0.3"
 
 ---
 
-## 十一、相关文档
+## 十一、后续可选优化 (P2)
+
+> 这些功能为可选增强，不影响核心功能使用。
+
+| 功能 | 状态 | 实现文档 | 实际工作量 |
+|------|:----:|----------|:----------:|
+| Tab 拖拽排序 | ✅ | [impl-tab-drag-sort.md](./impl-tab-drag-sort.md) | 0.5 天 |
+| 自定义主题文件 | ⬜ | - | 0.5-1 天 |
+| 鼠标报告模式 | ⬜ | - | 1-2 天 |
+| 快捷键配置 | ⬜ | - | 0.5 天 |
+
+### 11.1 Tab 拖拽排序 ✅ (2026-01-25 完成)
+
+- 使用 GPUI 的 `on_drag` / `on_drop` / `drag_over` API
+- 在 `tab_view.rs` 中添加 `DraggedTab` 结构体和拖拽逻辑
+- 复用现有 `TabManager::move_tab` 方法和 `TabMoved` 事件
+- 详细方案见 [Tab 拖拽排序实现指南](./impl-tab-drag-sort.md)
+
+### 11.2 自定义主题文件
+
+- `ThemeConfig.custom_theme_path` 字段已预留
+- 实现 TOML 主题文件加载逻辑
+
+### 11.3 鼠标报告模式
+
+- 利用 Alacritty 已有的 `Mode` 检测（`?1000h` 等序列）
+- 将鼠标事件编码为 SGR 序列发送到远端
+- 支持 vim/tmux/htop 等工具的鼠标操作
+
+### 11.4 快捷键配置
+
+- `KeybindingsConfig` 结构已定义
+- 从 `config.toml` 加载用户快捷键
+- 替换 `main.rs` 中的硬编码快捷键
+
+---
+
+## 十二、相关文档
 
 - [总体设计](./design.md) - 架构概述
 - [五层架构](./architecture/layers.md) - 分层设计
 - [TerminalConnection Trait](./core/connection-trait.md) - 核心接口
-- [TerminalView](./modules/terminal-view.md) -渲染视图详情
+- [TerminalView](./modules/terminal-view.md) - 渲染视图详情
 - [SSH 后端](./modules/ssh-backend.md) - SSH 实现细节
+- [Tab 拖拽排序实现指南](./impl-tab-drag-sort.md) - P2 功能详细方案

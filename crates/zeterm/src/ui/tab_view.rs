@@ -2,13 +2,15 @@
 //!
 //! 显示和管理终端标签页。
 //! 每个 Tab 拥有独立的 SplitManager，切换 Tab 时整个分屏布局随之切换。
+//! 支持 Tab 拖拽排序功能。
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
+    AnyElement, App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, ParentElement, Pixels, Point, Render, SharedString, StatefulInteractiveElement,
+    Styled, Window, div, px,
 };
 use gpui_component::ActiveTheme;
 use parking_lot::RwLock;
@@ -19,6 +21,71 @@ use super::terminal_view::TerminalView;
 
 /// 终端视图映射类型（TabId -> (PaneId -> TerminalView)）
 pub type TabTerminalViewMap = HashMap<TabId, HashMap<PaneId, Entity<TerminalView>>>;
+
+// ==================== 拖拽相关结构 ====================
+
+/// 被拖拽的 Tab 数据
+///
+/// 在拖拽过程中携带 Tab 的相关信息，用于：
+/// 1. 识别被拖拽的 Tab
+/// 2. 渲染拖拽预览
+/// 3. 确定放置目标位置
+#[derive(Clone, Debug)]
+pub struct DraggedTab {
+    /// Tab 管理器引用
+    pub tab_manager: Entity<TabManager>,
+
+    /// 被拖拽的 Tab ID
+    pub tab_id: TabId,
+
+    /// 原始索引位置
+    pub source_index: usize,
+
+    /// Tab 标题（用于预览）
+    pub title: String,
+
+    /// Tab 图标（用于预览，可选）
+    pub icon: Option<String>,
+
+    /// 是否是当前活动 Tab
+    pub is_active: bool,
+}
+
+impl Render for DraggedTab {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+
+        // 渲染拖拽时的预览视图
+        div()
+            .px_3()
+            .py_1()
+            .bg(theme.background)
+            .border_1()
+            .border_color(theme.border)
+            .rounded_md()
+            .shadow_md()
+            .opacity(0.9)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .children(
+                        self.icon
+                            .as_ref()
+                            .map(|icon| div().text_sm().child(icon.clone())),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.foreground)
+                            .child(self.title.clone()),
+                    ),
+            )
+    }
+}
+
+// ==================== Tab 视图组件 ====================
 
 /// Tab 视图组件
 pub struct TabView {
@@ -164,6 +231,23 @@ impl TabView {
         }
     }
 
+    /// 处理 Tab 放置
+    fn handle_tab_drop(
+        &mut self,
+        dragged_tab: &DraggedTab,
+        target_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let tab_id = dragged_tab.tab_id;
+
+        // 使用 TabManager 的 move_tab 方法，它会正确处理索引边界
+        self.tab_manager.update(cx, |manager, cx| {
+            manager.move_tab(tab_id, target_index, cx);
+        });
+
+        cx.notify();
+    }
+
     /// 渲染 Tab 栏
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
@@ -176,6 +260,8 @@ impl TabView {
             .iter()
             .map(|t| (*t).clone())
             .collect();
+
+        let tab_count = tabs.len();
 
         let mut tab_bar = div()
             .id("tab-bar")
@@ -190,9 +276,28 @@ impl TabView {
             .overflow_x_scroll();
 
         // 渲染每个 Tab
-        for tab in &tabs {
-            tab_bar = tab_bar.child(self.render_tab_item(tab, cx));
+        for (ix, tab) in tabs.iter().enumerate() {
+            tab_bar = tab_bar.child(self.render_tab_item(tab, ix, cx));
         }
+
+        // Tab 栏末尾的放置区域（用于将 Tab 拖到最后）
+        tab_bar = tab_bar.child(
+            div()
+                .id("tab-drop-target-end")
+                .flex_1()
+                .min_w(px(40.0))
+                .h(px(32.0))
+                .drag_over::<DraggedTab>(|style, _dragged_tab, _window, cx| {
+                    let theme = cx.theme();
+                    style.bg(theme.list_active)
+                })
+                .on_drop(
+                    cx.listener(move |this, dragged_tab: &DraggedTab, _window, cx| {
+                        // 放置到末尾
+                        this.handle_tab_drop(dragged_tab, tab_count, cx);
+                    }),
+                ),
+        );
 
         // 新建 Tab 按钮
         if self.show_new_tab_button {
@@ -202,8 +307,13 @@ impl TabView {
         tab_bar
     }
 
-    /// 渲染单个 Tab 项
-    fn render_tab_item(&self, tab: &TabInfo, cx: &mut Context<Self>) -> impl IntoElement {
+    /// 渲染单个 Tab 项（支持拖拽）
+    fn render_tab_item(
+        &self,
+        tab: &TabInfo,
+        ix: usize,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = cx.theme();
         let is_active = tab.is_active;
         let is_modified = tab.is_modified;
@@ -214,15 +324,60 @@ impl TabView {
         let tab_manager_for_close = self.tab_manager.clone();
         let show_close = self.show_close_buttons;
 
+        // 为拖拽准备数据
+        let dragged_tab_data = DraggedTab {
+            tab_manager: self.tab_manager.clone(),
+            tab_id,
+            source_index: ix,
+            title: tab_title.clone(),
+            icon: tab_icon.clone(),
+            is_active,
+        };
+
         // Tab 容器
         let tab_item = div()
             .id(SharedString::from(format!("tab-{}", tab_id)))
+            // ========== 点击处理 ==========
             .on_click(cx.listener(move |_this, _event, _window, cx| {
                 // 点击 Tab 切换
                 tab_manager.update(cx, |manager, cx| {
                     manager.switch_to_tab(tab_id, cx);
                 });
             }))
+            // ========== 拖拽处理 ==========
+            // 1. 启用拖拽
+            .on_drag(
+                dragged_tab_data,
+                |dragged_tab, _offset: Point<Pixels>, _window, cx| {
+                    // 创建拖拽预览视图
+                    cx.new(|_| dragged_tab.clone())
+                },
+            )
+            // 2. 拖拽悬停样式（显示插入指示器）
+            .drag_over::<DraggedTab>(move |style, dragged_tab, _window, cx| {
+                // 只有不同 Tab 才显示放置指示器
+                if dragged_tab.tab_id == tab_id {
+                    return style;
+                }
+
+                let border_color = cx.theme().link;
+
+                // 根据拖拽方向显示左/右边框指示器
+                if dragged_tab.source_index > ix {
+                    // 从右向左拖，显示左边框
+                    style.border_l_2().border_color(border_color)
+                } else {
+                    // 从左向右拖，显示右边框
+                    style.border_r_2().border_color(border_color)
+                }
+            })
+            // 3. 处理放置
+            .on_drop(
+                cx.listener(move |this, dragged_tab: &DraggedTab, _window, cx| {
+                    this.handle_tab_drop(dragged_tab, ix, cx);
+                }),
+            )
+            // ========== 样式 ==========
             .flex()
             .items_center()
             .gap_2()
@@ -442,9 +597,26 @@ impl Render for TabView {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn test_tab_view_defaults() {
         // 测试默认值
         assert_eq!(40.0, 40.0); // tab_bar_height default
+    }
+
+    #[test]
+    fn test_dragged_tab_clone() {
+        // 确保 DraggedTab 可以被克隆（拖拽 API 要求）
+        // 这是一个编译时检查，如果 Clone 没有正确实现，编译会失败
+        fn assert_clone<T: Clone>() {}
+        assert_clone::<DraggedTab>();
+    }
+
+    #[test]
+    fn test_dragged_tab_debug() {
+        // 确保 DraggedTab 实现了 Debug（便于调试）
+        fn assert_debug<T: std::fmt::Debug>() {}
+        assert_debug::<DraggedTab>();
     }
 }
