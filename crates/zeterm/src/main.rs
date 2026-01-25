@@ -146,21 +146,26 @@ fn main() {
         };
 
         // 创建窗口
-        let window = cx
-            .open_window(window_options, |_window, cx| {
-                // 创建 MainWindow Entity（内部自动管理 Tab 和 SplitManager）
-                cx.new(|cx| MainWindow::new(cx))
-            })
-            .expect("Failed to create main window");
+        let window = match cx.open_window(window_options, |_window, cx| {
+            // 创建 MainWindow Entity（内部自动管理 Tab 和 SplitManager）
+            cx.new(|cx| MainWindow::new(cx))
+        }) {
+            Ok(window) => window,
+            Err(e) => {
+                error!("Failed to create main window: {:?}", e);
+                cx.quit();
+                return;
+            },
+        };
 
         info!("Main window created");
 
         // 激活窗口
-        window
-            .update(cx, |_view, window, _cx| {
-                window.activate_window();
-            })
-            .expect("Failed to activate window");
+        if let Err(e) = window.update(cx, |_view, window, _cx| {
+            window.activate_window();
+        }) {
+            error!("Failed to activate window: {:?}", e);
+        }
 
         info!("Zeterm initialized successfully");
         info!("Click'Connect Mock' button to start a mock session");

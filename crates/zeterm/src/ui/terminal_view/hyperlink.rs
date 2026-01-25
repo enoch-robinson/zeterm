@@ -306,9 +306,12 @@ fn find_url_end(text: &str) -> usize {
 
     // 去除尾部标点
     while end > 0 {
-        let last_char = text[..end].chars().last().unwrap();
-        if matches!(last_char, '.' | ',' | ';' | ':' | '!' | '?') {
-            end -= last_char.len_utf8();
+        if let Some(last_char) = text[..end].chars().last() {
+            if matches!(last_char, '.' | ',' | ';' | ':' | '!' | '?') {
+                end -= last_char.len_utf8();
+            } else {
+                break;
+            }
         } else {
             break;
         }
