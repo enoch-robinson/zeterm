@@ -367,7 +367,7 @@ tracing-subscriber = "0.3"
 | 功能 | 状态 | 实现文档 | 实际工作量 |
 |------|:----:|----------|:----------:|
 | Tab 拖拽排序 | ✅ | [impl-tab-drag-sort.md](./impl-tab-drag-sort.md) | 0.5 天 |
-| 自定义主题文件 | ⬜ | - | 0.5-1 天 |
+| 自定义主题文件 | ✅ | - | 0.5 天 |
 | 鼠标报告模式 | ⬜ | - | 1-2 天 |
 | 快捷键配置 | ⬜ | - | 0.5 天 |
 
@@ -378,10 +378,12 @@ tracing-subscriber = "0.3"
 - 复用现有 `TabManager::move_tab` 方法和 `TabMoved` 事件
 - 详细方案见 [Tab 拖拽排序实现指南](./impl-tab-drag-sort.md)
 
-### 11.2 自定义主题文件
+### 11.2 自定义主题文件 ✅ (2026-01-25 完成)
 
-- `ThemeConfig.custom_theme_path` 字段已预留
-- 实现 TOML 主题文件加载逻辑
+- 为 `Rgb`, `ColorPalette` 添加 Serde 支持（#RRGGBB 格式）
+- 实现 `TerminalTheme::from_toml()` / `to_toml()` 方法
+- 在 `AppThemeManager` 中实现 `load_custom_theme()`, `export_current_theme()`
+- 添加示例主题文件 `examples/themes/dracula.toml`, `custom-template.toml`
 
 ### 11.3 鼠标报告模式
 

@@ -5,13 +5,16 @@
 //! - 内置主题选择（Dracula, One Dark, Solarized 等）
 //! - 主题持久化
 //! - 与 gpui-component Theme 集成
+//! - 支持从 TOML 文件加载自定义主题
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
 
-use crate::ui::terminal_view::theme::{TerminalTheme, ThemeManager as TerminalThemeManager};
+use crate::ui::terminal_view::theme::{
+    TerminalTheme, ThemeLoadError, ThemeManager as TerminalThemeManager,
+};
 
 /// 主题模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -430,10 +433,31 @@ impl AppThemeManager {
     pub fn with_config(config: ThemeConfig) -> Self {
         let mut manager = Self::new();
         manager.config = config.clone();
-        // 同步终端主题
-        manager
-            .terminal_theme_manager
-            .set_current(config.theme.to_terminal_theme());
+
+        // 尝试加载自定义主题
+        if let Some(ref custom_path) = config.custom_theme_path {
+            match manager.load_custom_theme(custom_path) {
+                Ok(_) => {
+                    info!("Custom theme loaded from {:?}", custom_path);
+                },
+                Err(e) => {
+                    warn!(
+                        "Failed to load custom theme from {:?}: {}, using builtin theme",
+                        custom_path, e
+                    );
+                    // 回退到内置主题
+                    manager
+                        .terminal_theme_manager
+                        .set_current(config.theme.to_terminal_theme());
+                },
+            }
+        } else {
+            // 使用内置主题
+            manager
+                .terminal_theme_manager
+                .set_current(config.theme.to_terminal_theme());
+        }
+
         manager
     }
 
@@ -629,6 +653,79 @@ impl AppThemeManager {
         for callback in &self.callbacks {
             callback(event);
         }
+    }
+
+    // ============== 自定义主题功能 ==============
+
+    /// 从 TOML 文件加载自定义主题
+    ///
+    /// # Arguments
+    /// * `path` - 主题文件路径
+    ///
+    /// # Returns
+    /// 成功返回 Ok(()), 失败返回错误
+    pub fn load_custom_theme(&mut self, path: &Path) -> Result<(), ThemeLoadError> {
+        let theme = TerminalTheme::from_toml_file(path)?;
+        info!("Loaded custom theme '{}' from {:?}", theme.name, path);
+
+        // 添加到可用主题列表并设为当前主题
+        self.terminal_theme_manager.add_theme(theme.clone());
+        self.terminal_theme_manager.set_current(theme);
+
+        // 更新配置
+        self.config.custom_theme_path = Some(path.to_path_buf());
+
+        Ok(())
+    }
+
+    /// 设置自定义主题路径并加载
+    ///
+    /// # Arguments
+    /// * `path` - 主题文件路径，None 表示清除自定义主题
+    pub fn set_custom_theme_path(&mut self, path: Option<PathBuf>) -> Result<(), ThemeLoadError> {
+        match path {
+            Some(ref p) => {
+                self.load_custom_theme(p)?;
+                self.config.custom_theme_path = Some(p.clone());
+            },
+            None => {
+                // 清除自定义主题，回退到内置主题
+                self.config.custom_theme_path = None;
+                self.terminal_theme_manager
+                    .set_current(self.config.theme.to_terminal_theme());
+                info!("Custom theme cleared, using builtin theme");
+            },
+        }
+        Ok(())
+    }
+
+    /// 获取当前自定义主题路径
+    pub fn custom_theme_path(&self) -> Option<&Path> {
+        self.config.custom_theme_path.as_deref()
+    }
+
+    /// 检查是否正在使用自定义主题
+    pub fn is_using_custom_theme(&self) -> bool {
+        self.config.custom_theme_path.is_some()
+    }
+
+    /// 重新加载自定义主题（用于热重载）
+    pub fn reload_custom_theme(&mut self) -> Result<(), ThemeLoadError> {
+        if let Some(ref path) = self.config.custom_theme_path.clone() {
+            self.load_custom_theme(&path)?;
+            info!("Custom theme reloaded from {:?}", path);
+        }
+        Ok(())
+    }
+
+    /// 导出当前主题到文件
+    ///
+    /// 将当前终端主题导出为 TOML 文件，方便用户自定义
+    pub fn export_current_theme(&self, path: &Path) -> Result<(), ThemeLoadError> {
+        let theme = self.terminal_theme_manager.current();
+        theme.to_toml_file(path)?;
+        info!("Theme '{}' exported to {:?}", theme.name, path);
+        Ok(())
     }
 }
 

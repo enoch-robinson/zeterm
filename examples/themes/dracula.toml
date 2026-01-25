@@ -1,0 +1,50 @@
+# Dracula Theme for Zeterm
+# https://draculatheme.com/
+#
+# 将此文件复制到 ~/.config/zeterm/themes/dracula.toml
+# 然后在 config.toml 中设置:
+# custom_theme_path = "~/.config/zeterm/themes/dracula.toml"
+
+[theme]
+name = "Dracula"
+is_dark = true
+
+[colors]
+foreground = "#f8f8f2"
+background = "#282a36"
+
+[colors.palette]
+# 基础 8 色
+black = "#21222c"
+red = "#ff5555"
+green = "#50fa7b"
+yellow = "#f1fa8c"
+blue = "#bd93f9"
+magenta = "#ff79c6"
+cyan = "#8be9fd"
+white = "#f8f8f2"
+
+# 高亮 8 色
+bright_black = "#6272a4"
+bright_red = "#ff6e6e"
+bright_green = "#69ff94"
+bright_yellow = "#ffffa5"
+bright_blue = "#d6acff"
+bright_magenta = "#ff92df"
+bright_cyan = "#a4ffff"
+bright_white = "#ffffff"
+
+[cursor]
+color = "#f8f8f2"
+text_color = "#282a36"
+
+[selection]
+background = "#44475a"
+# foreground = "#f8f8f2"  # 可选，不设置则使用原始颜色
+
+[ui]
+border = "#44475a"
+scrollbar = "#44475a"
+scrollbar_hover = "#6272a4"
+search_match = "#f1fa8c"
+search_match_active = "#ffb86c"

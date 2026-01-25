@@ -111,10 +111,11 @@
   - 在 `tab_view.rs` 中添加 `DraggedTab` 结构体和拖拽逻辑
   - 复用现有 `TabManager::move_tab` 方法
 
-- [ ] **P2** 自定义主题文件
-  - 字段 `custom_theme_path` 已预留
-  - 实现 TOML 主题文件加载逻辑
-  - 预估工作量: 0.5-1 天
+- [x] **P2** 自定义主题文件 (2026-01-25)
+  - 为 `Rgb`, `ColorPalette` 添加 Serde 支持
+  - 实现 `TerminalTheme::from_toml()` / `to_toml()` 方法
+  - 在 `AppThemeManager` 中实现 `load_custom_theme()`
+  - 添加示例主题文件 `examples/themes/`
 
 - [ ] **P2** 鼠标报告模式
   - 利用 Alacritty 已有的 `Mode` 检测
@@ -140,7 +141,7 @@
 | Phase 3 | 5 | 5 | 100% |
 | Phase 4 | 3 | 3 | 100% |
 | Phase 5 | 6 | 6 | 100% |
-| P2 可选 | 4 | 1 | 25% |
+| P2 可选 | 4 | 2 | 50% |
 | **核心总计** | **25** | **25** | **100%** |
 
 ---
@@ -151,4 +152,4 @@
 
 ---
 
-*最后更新: 2026-01-25 (Tab 拖拽排序完成)*
+*最后更新: 2026-01-25 (自定义主题文件完成)*

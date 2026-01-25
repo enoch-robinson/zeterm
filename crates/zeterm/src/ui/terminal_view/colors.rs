@@ -2,8 +2,10 @@
 //!
 //! 将Alacritty 终端颜色转换为 GPUI 颜色。
 //! 支持 16 色、256 色索引色和 24 位真彩色。
+//! 支持自定义主题文件的颜色解析（#RRGGBB 格式）。
 
 use gpui::Hsla;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// 16 色基础调色板
 ///
@@ -54,6 +56,8 @@ impl NamedColor {
 }
 
 /// RGB 颜色
+///
+/// 支持 #RRGGBB 格式的序列化/反序列化
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rgb {
     pub r: u8,
@@ -80,6 +84,41 @@ impl Rgb {
     pub fn to_u32(&self) -> u32 {
         ((self.r as u32) << 16) | ((self.g as u32) << 8) | (self.b as u32)
     }
+
+    /// 从十六进制字符串解析 (#RRGGBB 或 RRGGBB 格式)
+    pub fn from_hex(hex: &str) -> Result<Self, String> {
+        let hex = hex.trim_start_matches('#');
+        if hex.len() != 6 {
+            return Err(format!("Invalid hex color length: {}", hex));
+        }
+        let value = u32::from_str_radix(hex, 16)
+            .map_err(|e| format!("Invalid hex color '{}': {}", hex, e))?;
+        Ok(Self::from_u32(value))
+    }
+
+    /// 转换为十六进制字符串 (#RRGGBB 格式)
+    pub fn to_hex(&self) -> String {
+        format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
+    }
+}
+
+impl Serialize for Rgb {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&self.to_hex())
+    }
+}
+
+impl<'de> Deserialize<'de> for Rgb {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Rgb::from_hex(&s).map_err(serde::de::Error::custom)
+    }
 }
 
 /// 终端颜色
@@ -93,7 +132,171 @@ pub enum TerminalColor {
     Rgb(Rgb),
 }
 
-///颜色调色板
+/// 颜色调色板（用于 TOML 序列化的友好格式）
+///
+/// 使用命名字段而非数组，便于用户编辑主题文件
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaletteColors {
+    #[serde(default = "default_black")]
+    pub black: Rgb,
+    #[serde(default = "default_red")]
+    pub red: Rgb,
+    #[serde(default = "default_green")]
+    pub green: Rgb,
+    #[serde(default = "default_yellow")]
+    pub yellow: Rgb,
+    #[serde(default = "default_blue")]
+    pub blue: Rgb,
+    #[serde(default = "default_magenta")]
+    pub magenta: Rgb,
+    #[serde(default = "default_cyan")]
+    pub cyan: Rgb,
+    #[serde(default = "default_white")]
+    pub white: Rgb,
+    #[serde(default = "default_bright_black")]
+    pub bright_black: Rgb,
+    #[serde(default = "default_bright_red")]
+    pub bright_red: Rgb,
+    #[serde(default = "default_bright_green")]
+    pub bright_green: Rgb,
+    #[serde(default = "default_bright_yellow")]
+    pub bright_yellow: Rgb,
+    #[serde(default = "default_bright_blue")]
+    pub bright_blue: Rgb,
+    #[serde(default = "default_bright_magenta")]
+    pub bright_magenta: Rgb,
+    #[serde(default = "default_bright_cyan")]
+    pub bright_cyan: Rgb,
+    #[serde(default = "default_bright_white")]
+    pub bright_white: Rgb,
+}
+
+// 默认颜色值函数（暗色主题）
+fn default_black() -> Rgb {
+    Rgb::new(0x00, 0x00, 0x00)
+}
+fn default_red() -> Rgb {
+    Rgb::new(0xcc, 0x00, 0x00)
+}
+fn default_green() -> Rgb {
+    Rgb::new(0x00, 0xcc, 0x00)
+}
+fn default_yellow() -> Rgb {
+    Rgb::new(0xcc, 0xcc, 0x00)
+}
+fn default_blue() -> Rgb {
+    Rgb::new(0x00, 0x00, 0xcc)
+}
+fn default_magenta() -> Rgb {
+    Rgb::new(0xcc, 0x00, 0xcc)
+}
+fn default_cyan() -> Rgb {
+    Rgb::new(0x00, 0xcc, 0xcc)
+}
+fn default_white() -> Rgb {
+    Rgb::new(0xcc, 0xcc, 0xcc)
+}
+fn default_bright_black() -> Rgb {
+    Rgb::new(0x66, 0x66, 0x66)
+}
+fn default_bright_red() -> Rgb {
+    Rgb::new(0xff, 0x00, 0x00)
+}
+fn default_bright_green() -> Rgb {
+    Rgb::new(0x00, 0xff, 0x00)
+}
+fn default_bright_yellow() -> Rgb {
+    Rgb::new(0xff, 0xff, 0x00)
+}
+fn default_bright_blue() -> Rgb {
+    Rgb::new(0x00, 0x00, 0xff)
+}
+fn default_bright_magenta() -> Rgb {
+    Rgb::new(0xff, 0x00, 0xff)
+}
+fn default_bright_cyan() -> Rgb {
+    Rgb::new(0x00, 0xff, 0xff)
+}
+fn default_bright_white() -> Rgb {
+    Rgb::new(0xff, 0xff, 0xff)
+}
+fn default_foreground() -> Rgb {
+    Rgb::new(0xcc, 0xcc, 0xcc)
+}
+fn default_background() -> Rgb {
+    Rgb::new(0x1e, 0x1e, 0x1e)
+}
+
+impl Default for PaletteColors {
+    fn default() -> Self {
+        Self {
+            black: default_black(),
+            red: default_red(),
+            green: default_green(),
+            yellow: default_yellow(),
+            blue: default_blue(),
+            magenta: default_magenta(),
+            cyan: default_cyan(),
+            white: default_white(),
+            bright_black: default_bright_black(),
+            bright_red: default_bright_red(),
+            bright_green: default_bright_green(),
+            bright_yellow: default_bright_yellow(),
+            bright_blue: default_bright_blue(),
+            bright_magenta: default_bright_magenta(),
+            bright_cyan: default_bright_cyan(),
+            bright_white: default_bright_white(),
+        }
+    }
+}
+
+impl PaletteColors {
+    /// 转换为颜色数组
+    pub fn to_array(&self) -> [Rgb; 16] {
+        [
+            self.black,
+            self.red,
+            self.green,
+            self.yellow,
+            self.blue,
+            self.magenta,
+            self.cyan,
+            self.white,
+            self.bright_black,
+            self.bright_red,
+            self.bright_green,
+            self.bright_yellow,
+            self.bright_blue,
+            self.bright_magenta,
+            self.bright_cyan,
+            self.bright_white,
+        ]
+    }
+
+    /// 从颜色数组创建
+    pub fn from_array(colors: [Rgb; 16]) -> Self {
+        Self {
+            black: colors[0],
+            red: colors[1],
+            green: colors[2],
+            yellow: colors[3],
+            blue: colors[4],
+            magenta: colors[5],
+            cyan: colors[6],
+            white: colors[7],
+            bright_black: colors[8],
+            bright_red: colors[9],
+            bright_green: colors[10],
+            bright_yellow: colors[11],
+            bright_blue: colors[12],
+            bright_magenta: colors[13],
+            bright_cyan: colors[14],
+            bright_white: colors[15],
+        }
+    }
+}
+
+/// 颜色调色板
 ///
 /// 定义终端使用的颜色方案
 #[derive(Debug, Clone)]
@@ -104,6 +307,47 @@ pub struct ColorPalette {
     pub foreground: Rgb,
     /// 背景色
     pub background: Rgb,
+}
+
+/// 可序列化的调色板（用于 TOML 主题文件）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializablePalette {
+    #[serde(default = "default_foreground")]
+    pub foreground: Rgb,
+    #[serde(default = "default_background")]
+    pub background: Rgb,
+    #[serde(default)]
+    pub palette: PaletteColors,
+}
+
+impl Default for SerializablePalette {
+    fn default() -> Self {
+        Self {
+            foreground: default_foreground(),
+            background: default_background(),
+            palette: PaletteColors::default(),
+        }
+    }
+}
+
+impl From<SerializablePalette> for ColorPalette {
+    fn from(sp: SerializablePalette) -> Self {
+        Self {
+            base_colors: sp.palette.to_array(),
+            foreground: sp.foreground,
+            background: sp.background,
+        }
+    }
+}
+
+impl From<&ColorPalette> for SerializablePalette {
+    fn from(cp: &ColorPalette) -> Self {
+        Self {
+            foreground: cp.foreground,
+            background: cp.background,
+            palette: PaletteColors::from_array(cp.base_colors),
+        }
+    }
 }
 
 impl Default for ColorPalette {
@@ -259,6 +503,67 @@ mod tests {
         assert_eq!(rgb.r, 255);
         assert_eq!(rgb.g, 128);
         assert_eq!(rgb.b, 64);
+    }
+
+    #[test]
+    fn test_rgb_from_hex() {
+        // 带 # 前缀
+        let rgb = Rgb::from_hex("#ff8040").unwrap();
+        assert_eq!(rgb.r, 255);
+        assert_eq!(rgb.g, 128);
+        assert_eq!(rgb.b, 64);
+
+        // 不带 # 前缀
+        let rgb = Rgb::from_hex("ff8040").unwrap();
+        assert_eq!(rgb.r, 255);
+        assert_eq!(rgb.g, 128);
+        assert_eq!(rgb.b, 64);
+
+        // 大写
+        let rgb = Rgb::from_hex("#FF8040").unwrap();
+        assert_eq!(rgb.r, 255);
+        assert_eq!(rgb.g, 128);
+        assert_eq!(rgb.b, 64);
+    }
+
+    #[test]
+    fn test_rgb_from_hex_errors() {
+        // 长度错误
+        assert!(Rgb::from_hex("#fff").is_err());
+        assert!(Rgb::from_hex("#fffffff").is_err());
+
+        // 无效字符
+        assert!(Rgb::from_hex("#gggggg").is_err());
+    }
+
+    #[test]
+    fn test_rgb_to_hex() {
+        let rgb = Rgb::new(255, 128, 64);
+        assert_eq!(rgb.to_hex(), "#ff8040");
+
+        let rgb = Rgb::new(0, 0, 0);
+        assert_eq!(rgb.to_hex(), "#000000");
+
+        let rgb = Rgb::new(255, 255, 255);
+        assert_eq!(rgb.to_hex(), "#ffffff");
+    }
+
+    #[test]
+    fn test_rgb_serde_roundtrip() {
+        // 使用 toml 测试序列化/反序列化
+        #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+        struct TestWrapper {
+            color: Rgb,
+        }
+
+        let original = TestWrapper {
+            color: Rgb::new(255, 128, 64),
+        };
+        let toml_str = toml::to_string(&original).unwrap();
+        assert!(toml_str.contains("#ff8040"));
+
+        let parsed: TestWrapper = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed, original);
     }
 
     #[test]

@@ -1,10 +1,14 @@
 //! 终端主题模块
 //!
 //! 定义终端颜色主题结构，并与 gpui-component Theme 集成。
+//! 支持从 TOML 文件加载自定义主题。
+
+use std::path::Path;
 
 use gpui::Hsla;
+use serde::{Deserialize, Serialize};
 
-use super::colors::{ColorPalette, Rgb};
+use super::colors::{ColorPalette, Rgb, SerializablePalette};
 
 /// 终端主题
 ///
@@ -26,36 +30,197 @@ pub struct TerminalTheme {
 }
 
 /// 光标颜色配置
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CursorColors {
     /// 光标颜色
+    #[serde(default = "default_cursor_color")]
     pub color: Rgb,
     /// 光标下文字颜色
+    #[serde(default = "default_cursor_text_color")]
     pub text_color: Rgb,
 }
 
+fn default_cursor_color() -> Rgb {
+    Rgb::new(0xcc, 0xcc, 0xcc)
+}
+
+fn default_cursor_text_color() -> Rgb {
+    Rgb::new(0x1e, 0x1e, 0x1e)
+}
+
+impl Default for CursorColors {
+    fn default() -> Self {
+        Self {
+            color: default_cursor_color(),
+            text_color: default_cursor_text_color(),
+        }
+    }
+}
+
 /// 选择颜色配置
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SelectionColors {
     /// 选择背景色
+    #[serde(default = "default_selection_background")]
     pub background: Rgb,
     /// 选择前景色（可选，None 表示使用原始颜色）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foreground: Option<Rgb>,
 }
 
+fn default_selection_background() -> Rgb {
+    Rgb::new(0x26, 0x4f, 0x78)
+}
+
+impl Default for SelectionColors {
+    fn default() -> Self {
+        Self {
+            background: default_selection_background(),
+            foreground: None,
+        }
+    }
+}
+
 /// UI 元素颜色
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UiColors {
     /// 边框颜色
+    #[serde(default = "default_ui_border")]
     pub border: Rgb,
     /// 滚动条颜色
+    #[serde(default = "default_ui_scrollbar")]
     pub scrollbar: Rgb,
     /// 滚动条悬停颜色
+    #[serde(default = "default_ui_scrollbar_hover")]
     pub scrollbar_hover: Rgb,
     /// 搜索匹配高亮颜色
+    #[serde(default = "default_ui_search_match")]
     pub search_match: Rgb,
     /// 当前搜索匹配颜色
+    #[serde(default = "default_ui_search_match_active")]
     pub search_match_active: Rgb,
+}
+
+fn default_ui_border() -> Rgb {
+    Rgb::new(0x3c, 0x3c, 0x3c)
+}
+
+fn default_ui_scrollbar() -> Rgb {
+    Rgb::new(0x4a, 0x4a, 0x4a)
+}
+
+fn default_ui_scrollbar_hover() -> Rgb {
+    Rgb::new(0x5a, 0x5a, 0x5a)
+}
+
+fn default_ui_search_match() -> Rgb {
+    Rgb::new(0x51, 0x50, 0x00)
+}
+
+fn default_ui_search_match_active() -> Rgb {
+    Rgb::new(0x61, 0x5a, 0x00)
+}
+
+impl Default for UiColors {
+    fn default() -> Self {
+        Self {
+            border: default_ui_border(),
+            scrollbar: default_ui_scrollbar(),
+            scrollbar_hover: default_ui_scrollbar_hover(),
+            search_match: default_ui_search_match(),
+            search_match_active: default_ui_search_match_active(),
+        }
+    }
+}
+
+/// 可序列化的主题文件格式
+///
+/// 用于 TOML 主题文件的结构，字段名更友好
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThemeFile {
+    /// 主题基本信息
+    #[serde(default)]
+    pub theme: ThemeInfo,
+    /// 颜色配置
+    #[serde(default)]
+    pub colors: SerializablePalette,
+    /// 光标配置
+    #[serde(default)]
+    pub cursor: CursorColors,
+    /// 选择配置
+    #[serde(default)]
+    pub selection: SelectionColors,
+    /// UI 配置
+    #[serde(default)]
+    pub ui: UiColors,
+}
+
+/// 主题基本信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThemeInfo {
+    /// 主题名称
+    #[serde(default = "default_theme_name")]
+    pub name: String,
+    /// 是否为暗色主题
+    #[serde(default = "default_is_dark")]
+    pub is_dark: bool,
+}
+
+fn default_theme_name() -> String {
+    "Custom Theme".to_string()
+}
+
+fn default_is_dark() -> bool {
+    true
+}
+
+impl Default for ThemeInfo {
+    fn default() -> Self {
+        Self {
+            name: default_theme_name(),
+            is_dark: default_is_dark(),
+        }
+    }
+}
+
+impl Default for ThemeFile {
+    fn default() -> Self {
+        Self {
+            theme: ThemeInfo::default(),
+            colors: SerializablePalette::default(),
+            cursor: CursorColors::default(),
+            selection: SelectionColors::default(),
+            ui: UiColors::default(),
+        }
+    }
+}
+
+impl From<ThemeFile> for TerminalTheme {
+    fn from(file: ThemeFile) -> Self {
+        Self {
+            name: file.theme.name,
+            is_dark: file.theme.is_dark,
+            palette: file.colors.into(),
+            cursor: file.cursor,
+            selection: file.selection,
+            ui: file.ui,
+        }
+    }
+}
+
+impl From<&TerminalTheme> for ThemeFile {
+    fn from(theme: &TerminalTheme) -> Self {
+        Self {
+            theme: ThemeInfo {
+                name: theme.name.clone(),
+                is_dark: theme.is_dark,
+            },
+            colors: SerializablePalette::from(&theme.palette),
+            cursor: theme.cursor.clone(),
+            selection: theme.selection.clone(),
+            ui: theme.ui.clone(),
+        }
+    }
 }
 
 impl Default for TerminalTheme {
@@ -65,6 +230,35 @@ impl Default for TerminalTheme {
 }
 
 impl TerminalTheme {
+    /// 从 TOML 字符串解析主题
+    pub fn from_toml(toml_str: &str) -> Result<Self, toml::de::Error> {
+        let theme_file: ThemeFile = toml::from_str(toml_str)?;
+        Ok(theme_file.into())
+    }
+
+    /// 从 TOML 文件加载主题
+    pub fn from_toml_file(path: &Path) -> Result<Self, ThemeLoadError> {
+        let content = std::fs::read_to_string(path).map_err(ThemeLoadError::Io)?;
+        Self::from_toml(&content).map_err(ThemeLoadError::Parse)
+    }
+
+    /// 导出为 TOML 字符串
+    pub fn to_toml(&self) -> Result<String, toml::ser::Error> {
+        let theme_file = ThemeFile::from(self);
+        toml::to_string_pretty(&theme_file)
+    }
+
+    /// 保存到 TOML 文件
+    pub fn to_toml_file(&self, path: &Path) -> Result<(), ThemeLoadError> {
+        let content = self.to_toml().map_err(|e| {
+            ThemeLoadError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ))
+        })?;
+        std::fs::write(path, content).map_err(ThemeLoadError::Io)
+    }
+
     /// 创建暗色主题
     pub fn dark() -> Self {
         Self {
@@ -269,6 +463,33 @@ impl TerminalTheme {
     }
 }
 
+/// 主题加载错误
+#[derive(Debug)]
+pub enum ThemeLoadError {
+    /// IO 错误
+    Io(std::io::Error),
+    /// TOML 解析错误
+    Parse(toml::de::Error),
+}
+
+impl std::fmt::Display for ThemeLoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ThemeLoadError::Io(e) => write!(f, "Failed to read theme file: {}", e),
+            ThemeLoadError::Parse(e) => write!(f, "Failed to parse theme file: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for ThemeLoadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ThemeLoadError::Io(e) => Some(e),
+            ThemeLoadError::Parse(e) => Some(e),
+        }
+    }
+}
+
 /// 主题管理器
 #[derive(Debug, Clone)]
 pub struct ThemeManager {
@@ -465,5 +686,90 @@ mod tests {
         assert_eq!(theme.background(), theme.palette.background);
         assert_eq!(theme.cursor_color(), theme.cursor.color);
         assert_eq!(theme.selection_background(), theme.selection.background);
+    }
+
+    #[test]
+    fn test_theme_from_toml() {
+        let toml_str = r##"
+[theme]
+name = "My Theme"
+is_dark = true
+
+[colors]
+foreground = "#f8f8f2"
+background = "#282a36"
+
+[colors.palette]
+black = "#21222c"
+red = "#ff5555"
+green = "#50fa7b"
+yellow = "#f1fa8c"
+blue = "#bd93f9"
+magenta = "#ff79c6"
+cyan = "#8be9fd"
+white = "#f8f8f2"
+bright_black = "#6272a4"
+bright_red = "#ff6e6e"
+bright_green = "#69ff94"
+bright_yellow = "#ffffa5"
+bright_blue = "#d6acff"
+bright_magenta = "#ff92df"
+bright_cyan = "#a4ffff"
+bright_white = "#ffffff"
+
+[cursor]
+color = "#f8f8f2"
+text_color = "#282a36"
+
+[selection]
+background = "#44475a"
+
+[ui]
+border = "#44475a"
+scrollbar = "#44475a"
+scrollbar_hover = "#6272a4"
+search_match = "#f1fa8c"
+search_match_active = "#ffb86c"
+"##;
+
+        let theme = TerminalTheme::from_toml(toml_str).unwrap();
+        assert_eq!(theme.name, "My Theme");
+        assert!(theme.is_dark);
+        assert_eq!(theme.palette.foreground, Rgb::new(0xf8, 0xf8, 0xf2));
+        assert_eq!(theme.palette.background, Rgb::new(0x28, 0x2a, 0x36));
+        assert_eq!(theme.cursor.color, Rgb::new(0xf8, 0xf8, 0xf2));
+    }
+
+    #[test]
+    fn test_theme_from_toml_minimal() {
+        // 测试最小配置（使用所有默认值）
+        let toml_str = r##"
+[theme]
+name = "Minimal"
+"##;
+
+        let theme = TerminalTheme::from_toml(toml_str).unwrap();
+        assert_eq!(theme.name, "Minimal");
+        assert!(theme.is_dark); // 默认值
+    }
+
+    #[test]
+    fn test_theme_to_toml_roundtrip() {
+        let original = TerminalTheme::dracula();
+        let toml_str = original.to_toml().unwrap();
+        let parsed = TerminalTheme::from_toml(&toml_str).unwrap();
+
+        assert_eq!(parsed.name, original.name);
+        assert_eq!(parsed.is_dark, original.is_dark);
+        assert_eq!(parsed.palette.foreground, original.palette.foreground);
+        assert_eq!(parsed.palette.background, original.palette.background);
+        assert_eq!(parsed.cursor.color, original.cursor.color);
+    }
+
+    #[test]
+    fn test_theme_file_default() {
+        let file = ThemeFile::default();
+        assert_eq!(file.theme.name, "Custom Theme");
+        assert!(file.theme.is_dark);
     }
 }
