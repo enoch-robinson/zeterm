@@ -230,6 +230,45 @@ impl SplitManager {
         self.split_pane(pane_id, SplitDirection::Vertical, 0.5, cx)
     }
 
+    /// 使用已创建好的 Pane 进行分屏
+    ///
+    /// 与 split_horizontal/split_vertical 不同，此方法接受外部创建的 Pane，
+    /// 允许调用方在分屏前完成 TerminalView 等资源的创建和关联。
+    ///
+    /// # Arguments
+    /// * `target_pane_id` - 要分屏的目标面板 ID
+    /// * `new_pane` - 已创建好的新面板
+    /// * `direction` - 分屏方向
+    /// * `ratio` - 分屏比例（0.1 - 0.9）
+    pub fn split_with_pane(
+        &mut self,
+        target_pane_id: PaneId,
+        new_pane: Pane,
+        direction: SplitDirection,
+        ratio: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<PaneId> {
+        let root = self.root.as_mut()?;
+        let new_pane_id = new_pane.id;
+
+        // 查找目标面板并替换为分屏结构
+        if let Some(target_pane) = Self::find_and_remove_pane(root, target_pane_id) {
+            let split_pane =
+                Pane::new_split(direction, target_pane, new_pane, ratio.clamp(0.1, 0.9));
+            *root = split_pane;
+            self.pane_count += 1;
+            self.focused_pane = Some(new_pane_id);
+
+            cx.emit(SplitManagerEvent::PaneSplit(new_pane_id));
+            cx.emit(SplitManagerEvent::LayoutChanged);
+            cx.notify();
+
+            Some(new_pane_id)
+        } else {
+            None
+        }
+    }
+
     /// 分屏指定面板
     fn split_pane(
         &mut self,

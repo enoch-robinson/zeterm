@@ -16,6 +16,9 @@ use parking_lot::RwLock;
 use super::{Pane, PaneContent, PaneId, SplitDirection, SplitManager};
 use crate::ui::terminal_view::TerminalView;
 
+/// 拖拽灵敏度因子（像素移动多少对应比例变化 1.0）
+const DRAG_SENSITIVITY: f32 = 400.0;
+
 /// 拖拽状态
 #[derive(Debug, Clone)]
 struct DragState {
@@ -27,8 +30,6 @@ struct DragState {
     start_position: Point<f32>,
     /// 拖拽开始时的分屏比例
     start_ratio: f32,
-    /// 容器尺寸（用于计算比例变化）
-    container_size: f32,
 }
 
 /// 终端视图渲染器
@@ -89,7 +90,6 @@ impl SplitView {
         direction: SplitDirection,
         position: Point<f32>,
         current_ratio: f32,
-        container_size: f32,
         _cx: &mut Context<Self>,
     ) {
         let mut drag_state = self.drag_state.write();
@@ -98,7 +98,6 @@ impl SplitView {
             direction,
             start_position: position,
             start_ratio: current_ratio,
-            container_size,
         });
     }
 
@@ -116,22 +115,20 @@ impl SplitView {
                 SplitDirection::Vertical => position.y - state.start_position.y,
             };
 
-            // 计算新的比例
-            if state.container_size > 0.0 {
-                let ratio_delta = delta / state.container_size;
-                let new_ratio = (state.start_ratio + ratio_delta).clamp(0.1, 0.9);
+            // 使用固定灵敏度因子计算比例变化（不依赖容器尺寸）
+            let ratio_delta = delta / DRAG_SENSITIVITY;
+            let new_ratio = (state.start_ratio + ratio_delta).clamp(0.1, 0.9);
 
-                // 更新分屏管理器中的比例
-                self.split_manager.update(cx, |manager, cx| {
-                    manager.adjust_split_ratio(state.split_id, new_ratio - state.start_ratio, cx);
-                });
+            // 更新分屏管理器中的比例
+            self.split_manager.update(cx, |manager, cx| {
+                manager.adjust_split_ratio(state.split_id, new_ratio - state.start_ratio, cx);
+            });
 
-                // 更新起始比例以便下次计算
-                let mut drag_state = self.drag_state.write();
-                if let Some(ref mut s) = *drag_state {
-                    s.start_ratio = new_ratio;
-                    s.start_position = position;
-                }
+            // 更新起始比例以便下次计算
+            let mut drag_state = self.drag_state.write();
+            if let Some(ref mut s) = *drag_state {
+                s.start_ratio = new_ratio;
+                s.start_position = position;
             }
         }
     }
@@ -347,17 +344,11 @@ impl SplitView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, _window, cx| {
-                    // 获取容器尺寸（使用窗口尺寸作为近似值）
-                    let container_size = match direction {
-                        SplitDirection::Horizontal => 800.0, // 默认宽度
-                        SplitDirection::Vertical => 600.0,   // 默认高度
-                    };
                     this.start_drag(
                         split_id,
                         direction,
                         Point::new(f32::from(event.position.x), f32::from(event.position.y)),
                         current_ratio,
-                        container_size,
                         cx,
                     );
                 }),
@@ -398,12 +389,23 @@ impl Render for SplitView {
         let root_pane = self.split_manager.read(cx).root().cloned();
 
         // 基础容器
+        // 在顶层容器监听 mouse_up 以确保拖拽状态被正确清理
+        // （即使鼠标在分隔条外释放也能清理状态）
         let container = div()
             .id("split-view")
             .flex()
             .flex_col()
             .size_full()
-            .bg(theme.background);
+            .bg(theme.background)
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
+                    // 无条件清理拖拽状态（幂等操作）
+                    if this.is_dragging() {
+                        this.end_drag(cx);
+                    }
+                }),
+            );
 
         match root_pane {
             Some(pane) => container.child(self.render_pane(&pane, cx)),

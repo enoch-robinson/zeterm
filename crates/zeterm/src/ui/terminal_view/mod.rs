@@ -21,7 +21,7 @@ use alacritty_terminal::grid::Dimensions;
 use gpui::{
     App, AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
     KeyDownEvent, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render,
-    ScrollWheelEvent, Styled, Window, div, px,
+    ScrollWheelEvent, SharedString, Styled, TextRun, Window, div, px,
 };
 use gpui_component::ActiveTheme;
 use tracing::{debug, info};
@@ -1064,8 +1064,21 @@ impl Render for TerminalView {
         let focused = self.focus_handle.is_focused(_window);
 
         // 动态计算并更新单元格尺寸
-        // 使用字体配置计算单元格尺寸（等宽字体近似值）
-        let cell_width = self.render_config.font_size * 0.6;
+        // 使用实际字体测量获取精确的单元格宽度
+        let font_size = px(self.render_config.font_size);
+        let font = fonts::terminal_font();
+        let text: SharedString = "M".into();
+        let text_run = TextRun {
+            len: 1,
+            font: font.clone(),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let text_system = _window.text_system();
+        let shaped = text_system.shape_line(text, font_size, &[text_run], None);
+        let cell_width = shaped.width.into();
         let cell_height = self.render_config.font_size * self.render_config.line_height;
         self.update_cell_size(cell_width, cell_height);
 

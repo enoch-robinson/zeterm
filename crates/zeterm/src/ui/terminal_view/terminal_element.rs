@@ -1107,8 +1107,10 @@ impl Element for TerminalElement {
             let start = selection.start;
             let end = selection.end;
 
-            // 确保 start <= end
-            let (start_line, start_col, end_line, end_col) = if start.line <= end.line {
+            // 确保 start <= end（同时处理同一行内的反向选择）
+            let (start_line, start_col, end_line, end_col) = if start.line < end.line
+                || (start.line == end.line && start.column <= end.column)
+            {
                 (
                     start.line.0,
                     start.column.0 as i32,

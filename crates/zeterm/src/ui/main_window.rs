@@ -14,8 +14,9 @@ use gpui_component::ActiveTheme;
 use tracing::info;
 
 use crate::app::session::SessionCoordinator;
+use crate::app::terminal::TerminalConfig;
 use crate::ui::app_theme::{AppThemeManager, BuiltinTheme, ThemeMode};
-use crate::ui::split_pane::{Pane, PaneId, SplitManager, SplitView};
+use crate::ui::split_pane::{Pane, PaneId, SplitDirection, SplitManager, SplitView};
 use crate::ui::status_bar::{ConnectionStatus, StatusBar, StatusInfo};
 use crate::ui::tab_manager::{TabId, TabInfo, TabManager, TabManagerEvent};
 use crate::ui::tab_view::TabView;
@@ -326,6 +327,12 @@ impl MainWindow {
         // 创建 TerminalView 实体
         let terminal_view = cx.new(|cx| TerminalView::new(coordinator.clone(), cx));
 
+        // 初始化终端主题（确保新创建的终端使用当前应用主题）
+        let terminal_theme = self.theme_manager.terminal_theme().clone();
+        terminal_view.update(cx, |view, _cx| {
+            view.set_theme(terminal_theme);
+        });
+
         // 存储终端面板数据
         self.terminal_panes.insert(
             pane_id,
@@ -459,24 +466,103 @@ impl MainWindow {
 
     /// 在当前活动 Tab 中水平分屏
     pub fn split_horizontal(&mut self, cx: &mut Context<Self>) {
-        if let Some(split_manager) = self.active_split_manager(cx) {
-            if let Some(pane_id) = split_manager.read(cx).focused_pane() {
-                split_manager.update(cx, |manager, cx| {
-                    manager.split_horizontal(pane_id, cx);
-                });
-            }
-        }
+        self.split_with_direction(SplitDirection::Horizontal, cx);
     }
 
     /// 在当前活动 Tab 中垂直分屏
     pub fn split_vertical(&mut self, cx: &mut Context<Self>) {
-        if let Some(split_manager) = self.active_split_manager(cx) {
-            if let Some(pane_id) = split_manager.read(cx).focused_pane() {
-                split_manager.update(cx, |manager, cx| {
-                    manager.split_vertical(pane_id, cx);
-                });
-            }
+        self.split_with_direction(SplitDirection::Vertical, cx);
+    }
+
+    /// 使用指定方向进行分屏（内部方法）
+    ///
+    /// 创建完整的终端视图并执行分屏操作，包括：
+    /// 1. 创建新的 SessionCoordinator
+    /// 2. 创建新的 TerminalView Entity
+    /// 3. 创建新的 Pane 数据结构
+    /// 4. 注册到各个管理器
+    /// 5. 执行分屏布局
+    fn split_with_direction(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
+        // 获取当前活动 Tab
+        let tab_id = match self.tab_manager.read(cx).active_tab_id() {
+            Some(id) => id,
+            None => {
+                info!("Cannot split: no active tab");
+                return;
+            },
+        };
+
+        // 获取 SplitManager
+        let split_manager = match self.active_split_manager(cx) {
+            Some(sm) => sm,
+            None => {
+                info!("Cannot split: no split manager for tab {}", tab_id);
+                return;
+            },
+        };
+
+        // 获取当前焦点面板
+        let focused_pane_id = match split_manager.read(cx).focused_pane() {
+            Some(id) => id,
+            None => {
+                info!("Cannot split: no focused pane");
+                return;
+            },
+        };
+
+        // 创建新的终端配置和协调器（本地终端）
+        let config = TerminalConfig::default();
+        let coordinator = Arc::new(SessionCoordinator::new(config));
+
+        // 创建新的终端面板
+        let new_pane = Pane::new_terminal("Terminal");
+        let new_pane_id = new_pane.id;
+
+        // 创建 TerminalView
+        let terminal_view = cx.new(|cx| TerminalView::new(coordinator.clone(), cx));
+
+        // 初始化终端主题（确保新创建的终端使用当前应用主题）
+        let terminal_theme = self.theme_manager.terminal_theme().clone();
+        terminal_view.update(cx, |view, _cx| {
+            view.set_theme(terminal_theme);
+        });
+
+        // 存储终端面板数据
+        self.terminal_panes.insert(
+            new_pane_id,
+            TerminalPaneData {
+                terminal_view: terminal_view.clone(),
+                coordinator,
+                tab_id,
+            },
+        );
+
+        // 注册到 SplitView
+        if let Some(split_view) = self.split_views.get(&tab_id) {
+            split_view.update(cx, |view, _cx| {
+                view.register_terminal_view(new_pane_id, terminal_view.clone());
+            });
         }
+
+        // 注册到 TabView
+        self.tab_view.update(cx, |view, _cx| {
+            view.register_terminal_view(tab_id, new_pane_id, terminal_view);
+        });
+
+        // 执行分屏
+        split_manager.update(cx, |manager, cx| {
+            manager.split_with_pane(focused_pane_id, new_pane, direction, 0.5, cx);
+        });
+
+        let direction_name = match direction {
+            SplitDirection::Horizontal => "horizontal",
+            SplitDirection::Vertical => "vertical",
+        };
+        info!(
+            "Split {} with new terminal pane: {} in tab {}",
+            direction_name, new_pane_id, tab_id
+        );
+        cx.notify();
     }
 
     /// 关闭当前焦点面板
