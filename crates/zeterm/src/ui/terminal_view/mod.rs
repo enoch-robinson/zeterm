@@ -36,6 +36,7 @@ mod hyperlink;
 mod ime;
 mod key_mapping;
 mod mouse;
+mod mouse_report;
 mod resize;
 mod search;
 mod selection;
@@ -74,6 +75,11 @@ pub use clipboard::{ClipboardManager, PasteProcessor, TextExtractor};
 pub use mouse::{
     CellPosition, ClickDetector, ClickType, CoordinateConverter, MouseButton, MouseEventType,
     MousePosition,
+};
+#[allow(unused_imports)]
+pub use mouse_report::{
+    MouseModeFlags, MouseModifiers, MouseReportAction, MouseReportButton, MouseReportEvent,
+    MouseReporter, should_report_event, to_sgr_coords,
 };
 #[allow(unused_imports)]
 pub use resize::{PixelSize, ResizeHandler, TerminalDimensions};
@@ -225,6 +231,8 @@ pub struct TerminalView {
     resize_handler: ResizeHandler,
     /// 滚动偏移量（行数）
     scroll_offset: i32,
+    /// 鼠标报告器（用于远端鼠标模式）
+    mouse_reporter: MouseReporter,
 }
 
 impl TerminalView {
@@ -257,6 +265,8 @@ impl TerminalView {
             click_detector: ClickDetector::new(),
             resize_handler: ResizeHandler::new(8.0, 16.0), // 默认单元格尺寸
             scroll_offset: 0,
+            // 鼠标报告模式
+            mouse_reporter: MouseReporter::new(),
         }
     }
 
@@ -393,6 +403,20 @@ impl TerminalView {
         self.cursor_blink_enabled
     }
 
+    /// 重置鼠标报告器状态
+    ///
+    /// 当窗口失去焦点或终端会话重置时调用，
+    /// 避免远端应用认为鼠标按键仍然按下
+    pub fn reset_mouse_reporter(&mut self) {
+        self.mouse_reporter.reset();
+        debug!("Mouse reporter state reset");
+    }
+
+    /// 获取鼠标报告器的引用（用于测试或调试）
+    pub fn mouse_reporter(&self) -> &MouseReporter {
+        &self.mouse_reporter
+    }
+
     /// 切换光标可见性（用于闪烁动画）
     pub fn toggle_cursor_visibility(&mut self) {
         if self.cursor_blink_enabled {
@@ -446,6 +470,54 @@ impl TerminalView {
 
     //========== Phase 4:鼠标事件处理 ==========
 
+    /// 获取当前鼠标模式标志
+    fn get_mouse_mode_flags(&self) -> MouseModeFlags {
+        let terminal = self.coordinator.terminal();
+        MouseModeFlags {
+            report_click: terminal.is_mouse_report_click_enabled(),
+            report_drag: terminal.is_mouse_drag_enabled(),
+            report_motion: terminal.is_mouse_motion_enabled(),
+            sgr_mode: terminal.is_sgr_mouse_enabled(),
+        }
+    }
+
+    /// 检查是否应该使用远端鼠标模式
+    ///
+    /// 当远端应用启用鼠标模式且 Shift 未按下时返回 true
+    fn should_use_remote_mouse_mode(&self, shift_pressed: bool) -> bool {
+        if shift_pressed {
+            // Shift 键强制使用本地选择
+            return false;
+        }
+        self.coordinator.terminal().is_any_mouse_mode_enabled()
+    }
+
+    /// 发送鼠标事件到远端
+    fn send_mouse_event_to_remote(&self, event: &MouseReportEvent) {
+        let mode = self.get_mouse_mode_flags();
+
+        // 根据模式选择编码格式
+        let bytes = if mode.use_sgr() {
+            self.mouse_reporter.encode_sgr(event)
+        } else {
+            self.mouse_reporter.encode_x10(event)
+        };
+
+        if !bytes.is_empty() {
+            self.coordinator.send_input_sync(&bytes);
+            debug!(
+                "Mouse event sent to remote: {:?} at ({}, {})",
+                event.action, event.col, event.row
+            );
+        }
+    }
+
+    /// 获取当前终端尺寸
+    fn terminal_size(&self) -> (i32, i32) {
+        let size = self.coordinator.terminal_size();
+        (size.cols as i32, size.rows as i32)
+    }
+
     /// 处理鼠标按下事件
     fn handle_mouse_down(
         &mut self,
@@ -456,8 +528,43 @@ impl TerminalView {
         // 获取鼠标位置
         let mouse_pos = MousePosition::from_point(event.position);
 
+        // 检查 Shift 键状态
+        let shift_pressed = event.modifiers.shift;
+
         // 转换为单元格坐标
         if let Some(cell_pos) = self.screen_to_cell(mouse_pos) {
+            // 检查是否应该报告给远端
+            if self.should_use_remote_mouse_mode(shift_pressed) {
+                // 远端鼠标模式：编码并发送事件
+                let (max_col, max_row) = self.terminal_size();
+                let (col, row) = to_sgr_coords(cell_pos.col, cell_pos.line, max_col, max_row);
+
+                let button = match event.button {
+                    gpui::MouseButton::Left => MouseReportButton::Left,
+                    gpui::MouseButton::Middle => MouseReportButton::Middle,
+                    gpui::MouseButton::Right => MouseReportButton::Right,
+                    _ => MouseReportButton::Left,
+                };
+
+                let modifiers = MouseModifiers {
+                    shift: event.modifiers.shift,
+                    alt: event.modifiers.alt,
+                    ctrl: event.modifiers.control,
+                };
+
+                let report_event =
+                    MouseReportEvent::new(button, MouseReportAction::Press, col, row, modifiers);
+
+                self.send_mouse_event_to_remote(&report_event);
+
+                // 记录按下的按钮（用于拖拽追踪）
+                self.mouse_reporter.button_pressed(button);
+
+                cx.notify();
+                return;
+            }
+
+            // 本地模式：处理文本选择
             // 检测点击类型（单击、双击、三击）
             let click_type = self.click_detector.record_click(mouse_pos);
 
@@ -492,26 +599,101 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // 只在选择状态下处理
-        if !self.selection.is_selecting() {
-            return;
-        }
-
         let mouse_pos = MousePosition::from_point(event.position);
+        let shift_pressed = event.modifiers.shift;
 
         if let Some(cell_pos) = self.screen_to_cell(mouse_pos) {
-            self.selection.update(cell_pos.to_selection_point());
-            cx.notify();
+            // 检查远端鼠标模式
+            if self.should_use_remote_mouse_mode(shift_pressed) {
+                let mode = self.get_mouse_mode_flags();
+                let pressed_button = self.mouse_reporter.pressed_button();
+
+                // 判断是拖拽还是移动
+                let should_report = if pressed_button.is_some() {
+                    // 有按钮按下 = 拖拽
+                    mode.should_report_drag()
+                } else {
+                    // 无按钮按下 = 移动
+                    mode.should_report_motion()
+                };
+
+                if should_report {
+                    let (max_col, max_row) = self.terminal_size();
+                    let (col, row) = to_sgr_coords(cell_pos.col, cell_pos.line, max_col, max_row);
+
+                    let button = pressed_button.unwrap_or(MouseReportButton::None);
+                    let action = if pressed_button.is_some() {
+                        MouseReportAction::Drag
+                    } else {
+                        MouseReportAction::Motion
+                    };
+
+                    let modifiers = MouseModifiers {
+                        shift: event.modifiers.shift,
+                        alt: event.modifiers.alt,
+                        ctrl: event.modifiers.control,
+                    };
+
+                    let report_event = MouseReportEvent::new(button, action, col, row, modifiers);
+                    self.send_mouse_event_to_remote(&report_event);
+                }
+
+                cx.notify();
+                return;
+            }
+
+            // 本地模式：只在选择状态下处理
+            if self.selection.is_selecting() {
+                self.selection.update(cell_pos.to_selection_point());
+                cx.notify();
+            }
         }
     }
 
     /// 处理鼠标释放事件
     fn handle_mouse_up(
         &mut self,
-        _event: &MouseUpEvent,
+        event: &MouseUpEvent,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let shift_pressed = event.modifiers.shift;
+
+        // 检查远端鼠标模式
+        if self.should_use_remote_mouse_mode(shift_pressed) {
+            if let Some(pressed_button) = self.mouse_reporter.pressed_button() {
+                let mouse_pos = MousePosition::from_point(event.position);
+
+                if let Some(cell_pos) = self.screen_to_cell(mouse_pos) {
+                    let (max_col, max_row) = self.terminal_size();
+                    let (col, row) = to_sgr_coords(cell_pos.col, cell_pos.line, max_col, max_row);
+
+                    let modifiers = MouseModifiers {
+                        shift: event.modifiers.shift,
+                        alt: event.modifiers.alt,
+                        ctrl: event.modifiers.control,
+                    };
+
+                    let report_event = MouseReportEvent::new(
+                        pressed_button,
+                        MouseReportAction::Release,
+                        col,
+                        row,
+                        modifiers,
+                    );
+
+                    self.send_mouse_event_to_remote(&report_event);
+                }
+
+                // 清除按钮状态
+                self.mouse_reporter.button_released();
+            }
+
+            cx.notify();
+            return;
+        }
+
+        // 本地模式：完成选择
         if self.selection.is_selecting() {
             self.selection.finish();
             debug!("Selection finished");
@@ -530,10 +712,48 @@ impl TerminalView {
         let delta_y = event.delta.pixel_delta(px(16.0)).y;
         let lines = (f32::from(delta_y) / 16.0).round() as i32;
 
-        if lines != 0 {
-            self.scroll(-lines); // 负号：向上滚动时delta 为正
-            cx.notify();
+        if lines == 0 {
+            return;
         }
+
+        let shift_pressed = event.modifiers.shift;
+
+        // 检查远端鼠标模式
+        if self.should_use_remote_mouse_mode(shift_pressed) {
+            let mode = self.get_mouse_mode_flags();
+
+            if mode.should_report_click() {
+                let mouse_pos = MousePosition::from_point(event.position);
+
+                if let Some(cell_pos) = self.screen_to_cell(mouse_pos) {
+                    let (max_col, max_row) = self.terminal_size();
+                    let (col, row) = to_sgr_coords(cell_pos.col, cell_pos.line, max_col, max_row);
+
+                    let modifiers = MouseModifiers {
+                        shift: event.modifiers.shift,
+                        alt: event.modifiers.alt,
+                        ctrl: event.modifiers.control,
+                    };
+
+                    // 滚轮事件：每行发送一次
+                    let scroll_up = lines < 0;
+                    let scroll_count = lines.abs();
+
+                    for _ in 0..scroll_count {
+                        let report_event =
+                            MouseReportEvent::scroll(scroll_up, col, row).with_modifiers(modifiers);
+                        self.send_mouse_event_to_remote(&report_event);
+                    }
+                }
+
+                cx.notify();
+                return;
+            }
+        }
+
+        // 本地模式：滚动缓冲区
+        self.scroll(-lines); // 负号：向上滚动时 delta 为正
+        cx.notify();
     }
 
     //========== Phase 4:辅助方法 ==========

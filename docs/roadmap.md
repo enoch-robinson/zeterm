@@ -368,7 +368,7 @@ tracing-subscriber = "0.3"
 |------|:----:|----------|:----------:|
 | Tab 拖拽排序 | ✅ | [impl-tab-drag-sort.md](./impl-tab-drag-sort.md) | 0.5 天 |
 | 自定义主题文件 | ✅ | - | 0.5 天 |
-| 鼠标报告模式 | ⬜ | - | 1-2 天 |
+| 鼠标报告模式 | ✅ | - | 1 天 |
 | 快捷键配置 | ⬜ | - | 0.5 天 |
 
 ### 11.1 Tab 拖拽排序 ✅ (2026-01-25 完成)
@@ -385,10 +385,13 @@ tracing-subscriber = "0.3"
 - 在 `AppThemeManager` 中实现 `load_custom_theme()`, `export_current_theme()`
 - 添加示例主题文件 `examples/themes/dracula.toml`, `custom-template.toml`
 
-### 11.3 鼠标报告模式
+### 11.3 鼠标报告模式 ✅ (2026-01-25 完成)
 
 - 利用 Alacritty 已有的 `Mode` 检测（`?1000h` 等序列）
-- 将鼠标事件编码为 SGR 序列发送到远端
+- 新增 `mouse_report.rs` 模块，实现 SGR/X10 鼠标事件编码
+- 在 `TerminalState` 中添加 `mode()` 和鼠标模式检测方法
+- 修改鼠标事件处理器，支持远端/本地模式切换
+- Shift 键强制使用本地选择（业界惯例）
 - 支持 vim/tmux/htop 等工具的鼠标操作
 
 ### 11.4 快捷键配置

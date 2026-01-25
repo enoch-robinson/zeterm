@@ -7,7 +7,7 @@ use std::sync::Arc;
 use alacritty_terminal::{
     event::{Event, EventListener},
     sync::FairMutex,
-    term::{Config as TermConfig, Term, test::TermSize},
+    term::{Config as TermConfig, Term, TermMode, test::TermSize},
     vte::ansi::{Processor, StdSyncHandler},
 };
 use parking_lot::RwLock;
@@ -281,6 +281,64 @@ impl TerminalState {
         // 标题通过事件获取，这里返回 None
         None
     }
+
+    // ========== 鼠标模式检测 ==========
+
+    /// 获取终端模式
+    ///
+    /// 返回当前终端的模式标志，用于检测鼠标报告模式等
+    pub fn mode(&self) -> TermMode {
+        let term = self.term.lock();
+        *term.mode()
+    }
+
+    /// 检查是否启用了鼠标点击报告 (?1000h)
+    pub fn is_mouse_report_click_enabled(&self) -> bool {
+        self.mode().contains(TermMode::MOUSE_REPORT_CLICK)
+    }
+
+    /// 检查是否启用了鼠标拖拽报告 (?1002h)
+    pub fn is_mouse_drag_enabled(&self) -> bool {
+        self.mode().contains(TermMode::MOUSE_DRAG)
+    }
+
+    /// 检查是否启用了鼠标移动报告 (?1003h)
+    pub fn is_mouse_motion_enabled(&self) -> bool {
+        self.mode().contains(TermMode::MOUSE_MOTION)
+    }
+
+    /// 检查是否使用 SGR 鼠标编码 (?1006h)
+    pub fn is_sgr_mouse_enabled(&self) -> bool {
+        self.mode().contains(TermMode::SGR_MOUSE)
+    }
+
+    /// 检查是否启用了任何鼠标报告模式
+    ///
+    /// 当远端应用（如 vim、tmux）启用鼠标支持时返回 true
+    pub fn is_any_mouse_mode_enabled(&self) -> bool {
+        let mode = self.mode();
+        mode.contains(TermMode::MOUSE_REPORT_CLICK)
+            || mode.contains(TermMode::MOUSE_DRAG)
+            || mode.contains(TermMode::MOUSE_MOTION)
+    }
+
+    /// 检查是否应该报告鼠标点击事件
+    ///
+    /// 当任意鼠标报告模式启用时返回 true
+    pub fn should_report_mouse_click(&self) -> bool {
+        self.is_any_mouse_mode_enabled()
+    }
+
+    /// 检查是否应该报告鼠标拖拽事件
+    pub fn should_report_mouse_drag(&self) -> bool {
+        let mode = self.mode();
+        mode.contains(TermMode::MOUSE_DRAG) || mode.contains(TermMode::MOUSE_MOTION)
+    }
+
+    /// 检查是否应该报告鼠标移动事件（非拖拽）
+    pub fn should_report_mouse_motion(&self) -> bool {
+        self.mode().contains(TermMode::MOUSE_MOTION)
+    }
 }
 
 #[cfg(test)]
@@ -333,5 +391,36 @@ mod tests {
 
         // 发送 ANSI 转义序列
         state.advance_bytes(b"\x1b[31mRed Text\x1b[0m");
+    }
+
+    #[test]
+    fn test_terminal_mouse_mode_default() {
+        let (state, _rx) = TerminalState::with_defaults();
+
+        // 默认情况下，鼠标模式应该都是关闭的
+        assert!(!state.is_mouse_report_click_enabled());
+        assert!(!state.is_mouse_drag_enabled());
+        assert!(!state.is_mouse_motion_enabled());
+        assert!(!state.is_sgr_mouse_enabled());
+        assert!(!state.is_any_mouse_mode_enabled());
+    }
+
+    #[test]
+    fn test_terminal_mouse_mode_enabled() {
+        let (state, _rx) = TerminalState::with_defaults();
+
+        // 发送启用鼠标点击报告的转义序列 (?1000h)
+        state.advance_bytes(b"\x1b[?1000h");
+        assert!(state.is_mouse_report_click_enabled());
+        assert!(state.is_any_mouse_mode_enabled());
+        assert!(state.should_report_mouse_click());
+
+        // 发送启用 SGR 鼠标编码的转义序列 (?1006h)
+        state.advance_bytes(b"\x1b[?1006h");
+        assert!(state.is_sgr_mouse_enabled());
+
+        // 发送禁用鼠标模式的转义序列
+        state.advance_bytes(b"\x1b[?1000l");
+        assert!(!state.is_mouse_report_click_enabled());
     }
 }
