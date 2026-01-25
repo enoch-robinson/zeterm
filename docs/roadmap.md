@@ -234,37 +234,65 @@ zed/crates/terminal/src/
 |------|------|----------------|--------|
 | 主机列表 | 侧边栏管理 | ✅ `Table` + `Tree` | P0 |
 | 配置系统 | TOML 配置文件 | - | P0 |
-| Tab 管理 | 多标签页 | ✅ `Tab` | P0 |
-| 分屏布局 | 水平/垂直分割 | ✅ `Dock` | P0 |
+| Tab 管理 | 多标签页 | 自实现 `TabManager` | P0 ✅ |
+| 分屏布局 | 水平/垂直分割 | 自实现 `SplitManager` | P0 ✅ |
+| **Tab + 分屏集成** | 每个 Tab 独立分屏 | - | P0 ✅ |
 | SFTP 面板 | 文件管理 | ✅ `Table` + `Tree` | P1 |
 | 主题系统 | 颜色主题切换 | ✅ `Theme` | P0 |
 | 数据持久化 | SQLite 存储 | - | P0 |
 | 连接对话框 | 新建/编辑主机 | ✅ `Modal` + `Input` | P0 |
 
+> **设计决策**: Tab 管理和分屏布局均采用自实现方案，而非 gpui-component。
+> 原因是终端场景有特殊需求（字符网格对齐、PTY resize、焦点管理、会话生命周期），
+> 通用组件无法满足。
+
 ### 7.3 UI 布局
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  [Tab1] [Tab2] [Tab3] [+][≡]            │  ← gpui_component::Tab
-├──────────┬──────────────────────────────────────────────────┤
-│          │                                                  │  ← gpui_component::Dock
-│  主机列表 │              终端区域                            │
-│ (Tree)   │           (TerminalView)                         │
-│          │                                                  │
-│▼生产环境│user@server:~$ ls -la                          │
-│   Server1│  total 32│
-│   Server2│  drwxr-xr-x5 user user4096 Jan1 00:00 .     │
-│          │                                                  │
-├──────────┴──────────────────────────────────────────────────┤
-│  🟢 Connected | UTF-8 | 80x24                │  ← StatusBar
-└─────────────────────────────────────────────────────────────┘
+│  [生产环境] [开发环境] [测试环境] [+]                   │  ← TabView (自实现)
+├──────────┬──────────────────────────────────────────────┤
+│          │ ┌───────────────┬───────────────┐            │
+│  主机列表 │ │   Server1     │   Server2     │            │  ← 当前 Tab 的 SplitView
+│ (Tree)   │ │   (Terminal)  │   (Terminal)  │            │
+│          │ ├───────────────┴───────────────┤            │
+│ ▼生产环境│ │         Server3               │            │
+│   Server1│ │         (Terminal)            │            │
+│   Server2│ └───────────────────────────────┘            │
+│   Server3│                                              │
+├──────────┴──────────────────────────────────────────────┤
+│  🟢 Connected | root@Server1 | UTF-8 | 80x24            │  ← StatusBar
+└─────────────────────────────────────────────────────────┘
 ```
 
-### 7.4 里程碑验证
+### 7.4 Tab + 分屏集成设计
+
+参考 iTerm2、Windows Terminal 等主流终端应用，采用 **"每个 Tab 独立分屏"** 模式：
+
+| 设计要点 | 说明 |
+|----------|------|
+| Tab 作为工作区 | 每个 Tab 代表一个工作场景（如：生产环境、开发环境） |
+| 独立分屏布局 | 每个 Tab 拥有独立的 `SplitManager`，布局互不影响 |
+| Tab 切换 | 切换 Tab 时，整个分屏布局随之切换 |
+| 布局持久化 | 支持保存/恢复每个 Tab 的分屏布局（后续实现） |
+
+**与全局分屏的区别**：
+
+```
+全局分屏（不采用）           Tab + 独立分屏（采用）
+─────────────────────────────────────────────────────
+所有终端在一个 SplitView     每个 Tab 有独立 SplitView
+终端多了会很乱               按工作场景组织，清晰
+无法保存布局组合             可保存/恢复布局
+```
+
+### 7.5 里程碑验证
 
 - ✅ 可以添加、编辑、删除主机
 - ✅ 双击主机快速连接
-- ✅ 多标签页切换
+- ✅ 多标签页切换 (2026-01-22 完成)
+- ✅ 切换 Tab 时分屏布局随之切换 (2026-01-22 完成)
+- ✅ 每个 Tab 内可独立水平/垂直分屏 (2026-01-22 完成)
 - ✅ 分屏同时查看多个终端
 - ✅ SFTP 上传下载文件
 - ✅ 深色/浅色主题切换
@@ -275,11 +303,11 @@ zed/crates/terminal/src/
 
 | 风险 | 影响 | 应对策略 | 状态 |
 |------|------|----------|------|
-| Zed 渲染器理解困难 | Phase 2 延期 | 预留额外时间，逐步理解 |🟡 |
-| russh 兼容性问题 | Phase 3阻塞 | 提前调研，准备 thrussh 备选 | ⚠️ |
-| GPUI 学习曲线 | 整体延期 | gpui-component 示例丰富 | 🟢 |
-| 性能问题 | 用户体验差 | 持续性能测试，及时优化 | ⚠️ |
-| Unicode宽字符处理 | Phase 2 延期 | 参考 Zed 实现 | 🟡 |
+| Zed 渲染器理解困难 | Phase 2 延期 | 预留额外时间，逐步理解 | 🟢 已解决 |
+| russh 兼容性问题 | Phase 3阻塞 | 提前调研，准备 thrussh 备选 | 🟢 已解决 |
+| GPUI 学习曲线 | 整体延期 | gpui-component 示例丰富 | 🟢 已解决 |
+| 性能问题 | 用户体验差 | 持续性能测试，及时优化 | 🟡 持续关注 |
+| Unicode宽字符处理 | Phase 2 延期 | 参考 Zed 实现 | 🟢 已解决 |
 
 ---
 
@@ -332,10 +360,53 @@ tracing-subscriber = "0.3"
 
 ---
 
-## 十一、相关文档
+## 十一、后续可选优化 (P2)
+
+> 这些功能为可选增强，不影响核心功能使用。
+
+| 功能 | 状态 | 实现文档 | 实际工作量 |
+|------|:----:|----------|:----------:|
+| Tab 拖拽排序 | ✅ | [impl-tab-drag-sort.md](./impl-tab-drag-sort.md) | 0.5 天 |
+| 自定义主题文件 | ✅ | - | 0.5 天 |
+| 鼠标报告模式 | ✅ | - | 1 天 |
+| 快捷键配置 | ⬜ | - | 0.5 天 |
+
+### 11.1 Tab 拖拽排序 ✅ (2026-01-25 完成)
+
+- 使用 GPUI 的 `on_drag` / `on_drop` / `drag_over` API
+- 在 `tab_view.rs` 中添加 `DraggedTab` 结构体和拖拽逻辑
+- 复用现有 `TabManager::move_tab` 方法和 `TabMoved` 事件
+- 详细方案见 [Tab 拖拽排序实现指南](./impl-tab-drag-sort.md)
+
+### 11.2 自定义主题文件 ✅ (2026-01-25 完成)
+
+- 为 `Rgb`, `ColorPalette` 添加 Serde 支持（#RRGGBB 格式）
+- 实现 `TerminalTheme::from_toml()` / `to_toml()` 方法
+- 在 `AppThemeManager` 中实现 `load_custom_theme()`, `export_current_theme()`
+- 添加示例主题文件 `examples/themes/dracula.toml`, `custom-template.toml`
+
+### 11.3 鼠标报告模式 ✅ (2026-01-25 完成)
+
+- 利用 Alacritty 已有的 `Mode` 检测（`?1000h` 等序列）
+- 新增 `mouse_report.rs` 模块，实现 SGR/X10 鼠标事件编码
+- 在 `TerminalState` 中添加 `mode()` 和鼠标模式检测方法
+- 修改鼠标事件处理器，支持远端/本地模式切换
+- Shift 键强制使用本地选择（业界惯例）
+- 支持 vim/tmux/htop 等工具的鼠标操作
+
+### 11.4 快捷键配置
+
+- `KeybindingsConfig` 结构已定义
+- 从 `config.toml` 加载用户快捷键
+- 替换 `main.rs` 中的硬编码快捷键
+
+---
+
+## 十二、相关文档
 
 - [总体设计](./design.md) - 架构概述
 - [五层架构](./architecture/layers.md) - 分层设计
 - [TerminalConnection Trait](./core/connection-trait.md) - 核心接口
-- [TerminalView](./modules/terminal-view.md) -渲染视图详情
+- [TerminalView](./modules/terminal-view.md) - 渲染视图详情
 - [SSH 后端](./modules/ssh-backend.md) - SSH 实现细节
+- [Tab 拖拽排序实现指南](./impl-tab-drag-sort.md) - P2 功能详细方案

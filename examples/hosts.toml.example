@@ -1,0 +1,173 @@
+# Zeterm 主机配置文件 (hosts.toml)
+# 文档：https://github.com/user/zeterm/docs/hosts-config.md
+#
+# 此文件用于定义 SSH 主机连接配置。
+# 默认路径:
+#   - Linux: ~/.config/zeterm/hosts.toml
+#   - macOS: ~/Library/Application Support/zeterm/hosts.toml
+#   - Windows: %APPDATA%\zeterm\hosts.toml
+
+# ============================================================================
+# 分组配置（可选）
+# ============================================================================
+
+[groups.production]
+display_name = "生产环境"
+description = "生产服务器集群"
+color = "#FF5733"
+order = 1
+
+[groups.development]
+display_name = "开发环境"
+description = "开发测试服务器"
+color = "#33FF57"
+order = 2
+
+[groups.staging]
+display_name = "预发布环境"
+description = "预发布测试服务器"
+color = "#3357FF"
+order = 3
+
+# ============================================================================
+# 主机列表
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# 示例 1: 密码认证（使用系统密钥链存储密码）
+# ----------------------------------------------------------------------------
+[[hosts]]
+name = "生产服务器 1"
+host = "192.168.1.100"
+port = 22
+username = "admin"
+auth_type = "password"
+# 密码引用格式: keychain:密钥名称
+# 密码存储在系统密钥链中，不会明文保存在配置文件
+password_ref = "keychain:prod-server-1"
+group = "production"
+tags = ["web", "nginx", "主节点"]
+description = "主 Web 服务器，运行 Nginx 和应用"
+
+# ----------------------------------------------------------------------------
+# 示例 2: 密码认证（从环境变量读取，适合 CI/CD）
+# ----------------------------------------------------------------------------
+[[hosts]]
+name = "CI 构建服务器"
+host = "ci.example.com"
+port = 22
+username = "ci"
+auth_type = "password"
+# 从环境变量 CI_SSH_PASSWORD 读取密码
+password_ref = "env:CI_SSH_PASSWORD"
+tags = ["ci", "automation", "jenkins"]
+description = "持续集成构建服务器"
+
+# ----------------------------------------------------------------------------
+# 示例 3: 公钥认证（无密码私钥）
+# ----------------------------------------------------------------------------
+[[hosts]]
+name = "开发服务器"
+host = "dev.example.com"
+port = 22
+username = "developer"
+auth_type = "public_key"
+# 私钥文件路径（支持 ~ 展开为用户目录）
+key_path = "~/.ssh/id_ed25519"
+group = "development"
+tags = ["dev", "docker", "k8s"]
+description = "开发环境 Docker 集群"
+
+# ----------------------------------------------------------------------------
+# 示例 4: 公钥认证（加密私钥，密码存储在密钥链）
+# ----------------------------------------------------------------------------
+[[hosts]]
+name = "高安全服务器"
+host = "secure.example.com"
+port = 2222
+username = "secadmin"
+auth_type = "public_key"
+key_path = "~/.ssh/id_rsa_secure"
+# 私钥密码引用
+passphrase_ref = "keychain:secure-key-passphrase"
+group = "production"
+tags = ["secure", "bastion", "跳板机"]
+description = "高安全级别堡垒机"
+
+# ----------------------------------------------------------------------------
+# 示例 5: SSH Agent 认证
+# ----------------------------------------------------------------------------
+[[hosts]]
+name = "GitHub Actions Runner"
+host = "runner.example.com"
+port = 22
+username = "runner"
+auth_type = "agent"
+# SSH Agent 认证无需提供密钥路径或密码
+# 会自动使用 ssh-agent 中加载的密钥
+tags = ["github", "runner"]
+description = "使用 SSH Agent 认证，密钥由 ssh-agent 管理"
+
+# ----------------------------------------------------------------------------
+# 示例 6: 未分组的服务器
+# ----------------------------------------------------------------------------
+[[hosts]]
+name = "临时测试机"
+host = "192.168.100.50"
+port = 22
+username = "test"
+auth_type = "password"
+password_ref = "keychain:temp-test"
+# 未指定 group，将显示在"未分组"类别下
+tags = ["temp", "测试"]
+description = "临时测试用服务器"
+
+# ----------------------------------------------------------------------------
+# 示例 7: 非标准端口
+# ----------------------------------------------------------------------------
+[[hosts]]
+name = "自定义端口服务器"
+host = "custom.example.com"
+port = 10022
+username = "admin"
+auth_type = "agent"
+group = "staging"
+tags = ["custom-port"]
+
+# ============================================================================
+# 密码引用格式说明
+# ============================================================================
+#
+# password_ref 和 passphrase_ref 支持以下格式:
+#
+# 1. keychain:key_name
+#    从系统密钥链读取密码（推荐）
+#    - macOS: Keychain Access
+#    - Windows: Credential Manager
+#    - Linux: Secret Service (GNOME Keyring / KWallet)
+#
+# 2. env:VAR_NAME
+#    从环境变量读取密码
+#    适合 CI/CD 环境或临时使用
+#
+# 3. plain:password
+#    明文密码（不推荐！仅用于测试）
+#    警告：密码会明文存储在配置文件中
+#
+# ============================================================================
+# 认证类型说明
+# ============================================================================
+#
+# auth_type 支持以下值:
+#
+# 1. password
+#    密码认证，需要提供 password_ref
+#
+# 2. public_key
+#    公钥认证，需要提供 key_path
+#    如果私钥有密码，可选提供 passphrase_ref
+#
+# 3. agent
+#    SSH Agent 认证，无需额外配置
+#    密钥由 ssh-agent 管理
+#

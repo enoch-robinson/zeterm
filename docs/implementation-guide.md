@@ -37,7 +37,7 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                    表现层 (Presentation)                    │
-│                GPUI Views│
+│                      GPUI Views                             │
 │         TerminalView | SftpView | HostListView              │
 ├─────────────────────────────────────────────────────────────┤
 │                    应用层 (Application)                     │
@@ -48,13 +48,13 @@
 │                 Entities, Traits & Rules                    │
 │    TerminalConnection | HostConfig | ConnectionState        │
 ├─────────────────────────────────────────────────────────────┤
-│适配器层 (Adapter)                       │
+│                     适配器层 (Adapter)                       │
 │                   Protocol Converters                       │
-│              SshAdapter | EventStreamConverter│
+│              SshAdapter | EventStreamConverter              │
 ├─────────────────────────────────────────────────────────────┤
-│                基础设施层 (Infrastructure)                  │
+│                  基础设施层 (Infrastructure)                  │
 │                   IO & External Services                    │
-│       SshConnection | SqliteRepository | SftpClient│
+│       SshConnection | SqliteRepository | SftpClient         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -179,15 +179,15 @@ zeterm/
 ```
                     ┌─────────────────┐
                     │     zeterm      │
-                    │   (主程序)      │
-                    └────┬────────┘
+                    │     (主程序)     │
+                    └────────┬────────┘
                              │
           ┌──────────────────┼──────────────────┐
           │                  │                  │
           ▼                  ▼                  ▼
 ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-│  zeterm-ssh│ │ zeterm-storage│ │  zeterm-mock    │
-│(SSH 后端)     │ │  (持久化)       │ │  (Mock 测试)    │
+│  zeterm-ssh     │ │ zeterm-storage  │ │  zeterm-mock    │
+│(SSH 后端)       │ │  (持久化)         │ │  (Mock 测试)    │
 └────────┬────────┘ └────────┬────────┘ └────────┬────────┘
          │                   │                   │
          └───────────────────┼───────────────────┘
@@ -195,7 +195,7 @@ zeterm/
                              ▼
                     ┌─────────────────┐
                     │   zeterm-core   │
-                    │   (领域层)      │
+                    │   (领域层)       │
                     └─────────────────┘
 ```
 
@@ -319,15 +319,15 @@ zed/crates/terminal/src/
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  TerminalView (gpui::Render)                            │
-│  ├──读取 SessionCoordinator 状态                       │
+│  ├──读取 SessionCoordinator 状态                         │
 │  ├── 创建 TerminalElement                               │
-│  └── 处理键盘/鼠标事件                                │
+│  └── 处理键盘/鼠标事件                                    │
 ├─────────────────────────────────────────────────────────┤
 │  TerminalElement (gpui::Element)                        │
-│  ├── prepaint(): 计算字体度量、布局                     │
-│  └── paint(): 绘制背景、字符、光标                      │
+│  ├── prepaint(): 计算字体度量、布局                        │
+│  └── paint(): 绘制背景、字符、光标                         │
 ├─────────────────────────────────────────────────────────┤
-│  alacritty_terminal::Term                │
+│  alacritty_terminal::Term                               │
 │  └── 提供 renderable_content()                          │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -410,8 +410,10 @@ BoxStream<Vec<u8>> (流式)
 ### 8.4 认证流程
 
 ```
-用户输入 → 认证方式选择 → 执行认证│┌───────────┼───────────┐
-    ▼           ▼           ▼
+用户输入 → 认证方式选择 → 执行认证
+                        │
+    ┌───────────────────┼────┐
+    ▼           ▼          ▼
   密码认证    公钥认证    Agent认证
     │           │           │
     └───────────┴───────────┘
@@ -568,18 +570,18 @@ BoxStream<Vec<u8>> (流式)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  [Tab1] [Tab2] [Tab3] [+][≡]        │  ← Tab
+│  [Tab1] [Tab2] [Tab3] [+][≡]                            │  ← Tab
 ├──────────┬──────────────────────────────────────────────┤
 │          │                                              │  ← Dock
-│  主机列表 │              终端区域                        │
+│  主机列表 │              终端区域                          │
 │ (Tree)   │           (TerminalView)                     │
 │          │                                              │
-│▼生产环境│user@server:~$ ls -la                       │
-│   Server1│  total 32│
+│▼生产环境  │user@server:~$ ls -la                         │
+│   Server1│  total 32                                    │
 │   Server2│  drwxr-xr-x 5 user user 4096 Jan 1 00:00 .   │
 │          │                                              │
 ├──────────┴──────────────────────────────────────────────┤
-│🟢 Connected | UTF-8 | 80x24                │  ← StatusBar
+│🟢 Connected | UTF-8 | 80x24                             │  ← StatusBar
 └─────────────────────────────────────────────────────────┘
 ```
 
