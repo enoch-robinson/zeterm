@@ -498,7 +498,7 @@ impl Render for HostConnectionDialog {
                     .id("host-connection-dialog")
                     .track_focus(&self.focus_handle)
                     .w(px(600.0))
-                    .max_h(px(700.0))
+                    .max_h(px(850.0))
                     .bg(theme.background)
                     .border_1()
                     .border_color(if has_focus {
