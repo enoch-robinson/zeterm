@@ -10,6 +10,8 @@ use gpui::{
     Application, Bounds, KeyBinding, TitlebarOptions, WindowBounds, WindowKind, WindowOptions,
     actions, prelude::*, px, size,
 };
+use std::process;
+use std::sync::{Arc, OnceLock};
 use tracing::{error, info, warn};
 use ui::MainWindow;
 use zeterm_storage::{ConnectionHistoryRepository, Database, SqliteConnectionHistoryRepository};
@@ -41,29 +43,17 @@ const MIN_WINDOW_HEIGHT: f32 = 480.0;
 ///
 /// # Returns
 ///
-/// 返回初始化完成的数据库实例，如果失败则 panic
-fn init_database() -> std::sync::Arc<Database> {
+/// 返回初始化完成的数据库实例，如果失败则返回错误
+fn init_database() -> Result<std::sync::Arc<Database>, Box<dyn std::error::Error + Send + Sync>> {
     info!("Initializing database...");
 
     // 使用共享 Runtime 执行异步初始化
     runtime::block_on(async {
         // 1. 创建数据库连接
-        let db = match Database::with_default_path().await {
-            Ok(db) => {
-                info!("Database connection established: {:?}", db.db_path());
-                db
-            },
-            Err(e) => {
-                error!("Failed to connect to database: {}", e);
-                panic!("Failed to connect to database: {}", e);
-            },
-        };
+        let db = Database::with_default_path().await?;
 
         // 2. 运行数据库迁移
-        if let Err(e) = db.init().await {
-            error!("Failed to initialize database: {}", e);
-            panic!("Failed to initialize database: {}", e);
-        }
+        db.init().await?;
         info!("Database migrations completed");
 
         // 3. 清理僵尸连接记录（上次崩溃遗留的"连接中"状态）
@@ -87,7 +77,7 @@ fn init_database() -> std::sync::Arc<Database> {
         info!("Database initialization completed");
 
         // 返回数据库实例
-        std::sync::Arc::new(db)
+        Ok(std::sync::Arc::new(db))
     })
 }
 
@@ -103,7 +93,15 @@ fn main() {
     info!("Shared Tokio runtime initialized");
 
     // 初始化数据库（在 GPUI 启动前完成）
-    let database = init_database();
+    let database = match init_database() {
+        Ok(db) => db,
+        Err(e) => {
+            error!("Database initialization failed: {}", e);
+            eprintln!("Fatal error: Failed to initialize database: {}", e);
+            eprintln!("Please check database permissions and configuration.");
+            process::exit(1);
+        },
+    };
     app::init_global_database(database);
     info!("Global database initialized and ready for use");
 

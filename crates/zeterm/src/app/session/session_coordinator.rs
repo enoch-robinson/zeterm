@@ -18,7 +18,9 @@ use tracing::{debug, error, info, warn};
 use super::{ConnectionManager, ReconnectController, ReconnectControllerConfig};
 use crate::app::runtime;
 use crate::app::terminal::{EventProxy, TerminalConfig, TerminalEvent, TerminalState};
-use zeterm_core::{ConnectionError, ConnectionState, TerminalConnection, TerminalSize};
+use zeterm_core::{
+    ConnectionError, ConnectionState, DisconnectReason, TerminalConnection, TerminalSize,
+};
 
 /// 会话协调器
 ///
@@ -271,7 +273,7 @@ impl SessionCoordinator {
                             if !e.is_retryable() {
                                 // 标记连接已断开（同步操作）
                                     self.connection_manager.mark_disconnected(
-                                        zeterm_core::DisconnectReason::NetworkError,
+                                        DisconnectReason::NetworkError,
                                     );
                                 break;
                             }
