@@ -220,15 +220,9 @@ impl MainWindow {
             },
         };
 
-        // 先设置为连接中状态
-        self.update_connection_status(ConnectionStatus::Connecting, cx);
-
         // 5. 异步执行 SSH 连接
         let host_clone = host.clone();
         let coordinator_clone = coordinator.clone();
-
-        // 获取状态栏实体的弱引用用于更新状态
-        let _status_bar = self.status_bar.clone();
 
         runtime::spawn(async move {
             info!(
@@ -243,9 +237,6 @@ impl MainWindow {
                     // 启动数据泵
                     coordinator_clone
                         .start_data_pump(stream, move || {
-                            // 数据泵回调 - 当有新数据时触发
-                            // 注意：这里在异步上下文中，无法直接触发 GPUI 重绘
-                            // 依赖 TerminalView 的 dirty 标记机制
                             debug!("数据泵收到新数据");
                         })
                         .await;
@@ -254,8 +245,6 @@ impl MainWindow {
                 },
                 Err(e) => {
                     error!("SSH 连接失败: {} - {}", host_clone.name, e);
-                    // 连接失败，coordinator 会保持断开状态
-                    // UI 会通过状态栏显示错误
                 },
             }
         });
@@ -555,6 +544,13 @@ impl MainWindow {
         self.tab_manager.read(cx).get_split_manager(tab_id).cloned()
     }
 
+    /// 获取当前活动 Pane 的 ID
+    pub fn active_pane_id(&self, cx: &Context<Self>) -> Option<PaneId> {
+        let tab_id = self.tab_manager.read(cx).active_tab_id()?;
+        let split_manager = self.tab_manager.read(cx).get_split_manager(tab_id)?;
+        split_manager.read(cx).focused_pane()
+    }
+
     /// 获取 Tab 数量
     pub fn tab_count(&self, cx: &Context<Self>) -> usize {
         self.tab_manager.read(cx).tab_count()
@@ -633,9 +629,6 @@ impl MainWindow {
                 });
             }
         }
-
-        // 更新状态栏
-        self.update_connection_status(ConnectionStatus::Connected, cx);
 
         info!(
             "Added terminal pane: {} (id: {}) to tab: {}",
@@ -1256,6 +1249,9 @@ impl Render for MainWindow {
             self.create_local_tab("新终端", cx);
         }
 
+        // 同步状态栏：根据当前活动 pane 的实际连接状态更新
+        self.sync_status_bar_from_coordinator(cx);
+
         let has_tabs = self.has_tabs(cx);
 
         // 获取主题颜色（在可变借用之后）
@@ -1335,5 +1331,41 @@ impl Render for MainWindow {
         }
 
         root
+    }
+}
+
+impl MainWindow {
+    /// 根据当前活动 pane 的 SessionCoordinator 状态同步状态栏
+    ///
+    /// 这是方案 3 的核心实现：利用现有的 SessionCoordinator 状态
+    /// 作为单一数据源，确保 UI 状态与实际连接状态一致。
+    fn sync_status_bar_from_coordinator(&mut self, cx: &mut Context<Self>) {
+        // 获取当前活动 pane
+        if let Some(pane_id) = self.active_pane_id(cx) {
+            if let Some(data) = self.terminal_panes.get(&pane_id) {
+                let actual_state = data.coordinator.connection_state();
+
+                let expected_status = match actual_state {
+                    zeterm_core::ConnectionState::Idle
+                    | zeterm_core::ConnectionState::Disconnected { .. } => {
+                        ConnectionStatus::Disconnected
+                    },
+                    zeterm_core::ConnectionState::Connected { .. } => ConnectionStatus::Connected,
+                    zeterm_core::ConnectionState::Connecting { .. }
+                    | zeterm_core::ConnectionState::Authenticating
+                    | zeterm_core::ConnectionState::Reconnecting { .. }
+                    | zeterm_core::ConnectionState::Disconnecting => ConnectionStatus::Connecting,
+                };
+
+                let current_status = self.status_bar.read(cx).status_info().connection_status;
+                if current_status != expected_status {
+                    self.update_connection_status(expected_status, cx);
+                    debug!(
+                        "状态栏从 {:?} 更新为 {:?} (coordinator state: {:?})",
+                        current_status, expected_status, actual_state
+                    );
+                }
+            }
+        }
     }
 }
