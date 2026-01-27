@@ -195,13 +195,18 @@ impl MainWindow {
     /// 5. 异步建立 SSH 连接并启动数据泵
     fn connect_to_host(&mut self, host: zeterm_core::entities::HostConfig, cx: &mut Context<Self>) {
         // 1. 创建 SSH Tab
-        let _tab_id = match self.create_ssh_tab(&host, cx) {
+        let tab_id = match self.create_ssh_tab(&host, cx) {
             Some(id) => id,
             None => {
                 error!("创建 Tab 失败");
                 return;
             },
         };
+
+        // 1.5. 激活新创建的 tab（修复Bug 1）
+        self.tab_manager.update(cx, |manager, cx| {
+            manager.switch_to_tab(tab_id, cx);
+        });
 
         // 2. 更新状态栏为"连接中"
         self.update_connection_status(ConnectionStatus::Connecting, cx);
@@ -211,8 +216,8 @@ impl MainWindow {
         let config = TerminalConfig::default();
         let coordinator = Arc::new(SessionCoordinator::new(config));
 
-        // 4. 添加终端面板
-        let _pane_id = match self.add_ssh_terminal_pane(&host, coordinator.clone(), cx) {
+        // 4. 添加终端面板（传入指定的tab_id，修复Bug 2）
+        let _pane_id = match self.add_ssh_terminal_pane(tab_id, &host, coordinator.clone(), cx) {
             Some(id) => id,
             None => {
                 error!("添加终端面板失败");
@@ -563,17 +568,15 @@ impl MainWindow {
 
     // ==================== 终端面板管理 ====================
 
-    /// 在当前活动 Tab 中添加终端面板
+    /// 在指定 Tab 中添加终端面板
     pub fn add_terminal_pane(
         &mut self,
+        tab_id: TabId,
         title: impl Into<String>,
         coordinator: Arc<SessionCoordinator>,
         cx: &mut Context<Self>,
     ) -> Option<PaneId> {
         let title = title.into();
-
-        // 获取当前活动 Tab
-        let tab_id = self.tab_manager.read(cx).active_tab_id()?;
 
         // 获取该 Tab 的 SplitManager
         let split_manager = self.tab_manager.read(cx).get_split_manager(tab_id)?.clone();
@@ -639,9 +642,10 @@ impl MainWindow {
         Some(pane_id)
     }
 
-    /// 在当前活动 Tab 中添加 SSH 终端面板
+    /// 在指定 Tab 中添加 SSH 终端面板
     pub fn add_ssh_terminal_pane(
         &mut self,
+        tab_id: TabId,
         host_config: &zeterm_core::entities::HostConfig,
         coordinator: Arc<SessionCoordinator>,
         cx: &mut Context<Self>,
@@ -655,7 +659,7 @@ impl MainWindow {
             cx,
         );
 
-        self.add_terminal_pane(title, coordinator, cx)
+        self.add_terminal_pane(tab_id, title, coordinator, cx)
     }
 
     /// 关闭指定终端面板
@@ -1246,7 +1250,12 @@ impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 检查是否有新建 Tab 请求（来自 TabView 的 "+" 按钮）
         if self.new_tab_requested.swap(false, Ordering::SeqCst) {
-            self.create_local_tab("新终端", cx);
+            if let Some(tab_id) = self.create_local_tab("新终端", cx) {
+                // 激活新创建的本地 tab
+                self.tab_manager.update(cx, |manager, cx| {
+                    manager.switch_to_tab(tab_id, cx);
+                });
+            }
         }
 
         // 同步状态栏：根据当前活动 pane 的实际连接状态更新
