@@ -328,22 +328,26 @@ impl ReconnectController {
             error: error.to_string(),
         });
 
-        // 检查是否还能重试
-        if !self.backoff.read().can_retry() {
-            self.on_gave_up();
-        } else if let Some(delay) = self.next_delay() {
+        // 尝试获取下一次延迟（这会自动增加尝试计数）
+        // 如果返回 None，说明已达到最大尝试次数或被禁用
+        if let Some(delay) = self.next_delay() {
+            // 获取更新后的尝试次数
+            let next_attempt = self.backoff.read().attempt();
             self.set_state(ReconnectState::Waiting {
-                attempt: attempt + 1,
+                attempt: next_attempt,
                 remaining: delay,
             });
             self.emit_event(ReconnectControllerEvent::Waiting {
                 delay,
-                attempt: attempt + 1,
+                attempt: next_attempt,
             });
             self.notify_callbacks(ReconnectEvent::Waiting {
                 delay,
-                attempt: attempt + 1,
+                attempt: next_attempt,
             });
+        } else {
+            // 没有下一次延迟，放弃重连
+            self.on_gave_up();
         }
     }
 
@@ -487,5 +491,69 @@ mod tests {
         controller.cancelled.store(true, Ordering::SeqCst);
 
         assert!(controller.next_delay().is_none());
+    }
+
+    #[test]
+    fn test_reconnect_controller_attempt_counting() {
+        // 验证修复：on_attempt_failed 的尝试计数应该准确
+        let config = ReconnectControllerConfig {
+            policy: ReconnectPolicy::default()
+                .with_max_attempts(3)
+                .with_initial_delay(Duration::from_millis(10)),
+            reconnect_on_initial_failure: false,
+        };
+        let controller = ReconnectController::new(config);
+
+        // 模拟重连流程：初始状态 attempt = 0
+        controller.reconnecting.store(true, Ordering::SeqCst);
+
+        // 注意：在实际流程中，begin_attempt 或 trigger_reconnect 会设置 attempt = 1
+        // 这里我们手动设置初始状态来模拟第一次尝试已开始
+        let _ = controller.next_delay(); // 这会将 attempt 从 0 增加到 1
+
+        // 第一次失败 (attempt = 1)
+        controller.on_attempt_failed("test error 1");
+        assert_eq!(controller.current_attempt(), 2); // next_delay 将其增加到 2
+        assert!(matches!(
+            controller.state(),
+            ReconnectState::Waiting { attempt: 2, .. }
+        ));
+
+        // 第二次失败 (attempt = 2)
+        controller.on_attempt_failed("test error 2");
+        assert_eq!(controller.current_attempt(), 3); // next_delay 将其增加到 3
+        assert!(matches!(
+            controller.state(),
+            ReconnectState::Waiting { attempt: 3, .. }
+        ));
+
+        // 第三次失败（最后一次，attempt = 3）
+        controller.on_attempt_failed("test error 3");
+        assert_eq!(controller.current_attempt(), 3); // 达到 max_attempts，不再增加
+        assert!(matches!(
+            controller.state(),
+            ReconnectState::Failed { total_attempts: 3 }
+        ));
+    }
+
+    #[test]
+    fn test_reconnect_controller_next_delay_increments_correctly() {
+        // 验证 next_delay 正确增加计数器
+        let controller = ReconnectController::with_defaults();
+
+        assert_eq!(controller.current_attempt(), 0);
+
+        // 第一次调用 next_delay
+        let delay1 = controller.next_delay();
+        assert!(delay1.is_some());
+        assert_eq!(controller.current_attempt(), 1);
+
+        // 第二次调用 next_delay
+        let delay2 = controller.next_delay();
+        assert!(delay2.is_some());
+        assert_eq!(controller.current_attempt(), 2);
+
+        // 验证延迟按指数增长
+        assert!(delay2.unwrap() > delay1.unwrap());
     }
 }

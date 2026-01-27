@@ -220,18 +220,19 @@ impl SessionCoordinator {
     ) where
         F: Fn() + Send + Sync + 'static,
     {
-        // 检查是否已经在运行
+        // 原子地检查并设置运行状态（避免竞态条件）
         {
-            let running = self.data_pump_running.read();
+            let mut running = self.data_pump_running.write();
             if *running {
                 warn!("Data pump is already running");
                 return;
             }
+            *running = true;
+            // 在持有写锁时尽快释放，避免阻塞其他操作
         }
 
-        // 标记为运行中
+        // 重置取消标志
         {
-            *self.data_pump_running.write() = true;
             *self.data_pump_cancel.write() = false;
         }
 
