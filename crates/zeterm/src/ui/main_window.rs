@@ -13,34 +13,23 @@ use gpui::{
     Render, Styled, Window, div, prelude::*, px,
 };
 use gpui_component::ActiveTheme;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info};
 
 use crate::app::runtime;
 use crate::app::session::SessionCoordinator;
 use crate::app::terminal::TerminalConfig;
 use crate::ui::app_theme::{AppThemeManager, BuiltinTheme, ThemeMode};
+use crate::ui::connection_manager::ConnectionManager;
 use crate::ui::dialogs::HostConnectionDialog;
 use crate::ui::host_list::{HostListEvent, HostListView};
 use crate::ui::split_pane::{Pane, PaneId, SplitDirection, SplitManager, SplitView};
 use crate::ui::status_bar::{ConnectionStatus, StatusBar, StatusInfo};
 use crate::ui::tab_manager::{TabId, TabInfo, TabManager, TabManagerEvent};
 use crate::ui::tab_view::TabView;
+use crate::ui::terminal_pane_manager::{TerminalPaneData, TerminalPaneManager};
 use crate::ui::terminal_view::TerminalView;
-use zeterm_core::config::PasswordRef;
-use zeterm_core::entities::{AuthConfig, HostConfig};
-use zeterm_core::errors::ConnectionError;
-use zeterm_ssh::{AuthMethod, SshConfig, SshConnection};
-use zeterm_storage::{HostRepository, KeyringSecretStore, SecretHelper, SqliteHostRepository};
-
-/// 终端面板数据（关联 Tab）
-struct TerminalPaneData {
-    /// 终端视图实体
-    terminal_view: Entity<TerminalView>,
-    /// 会话协调器
-    coordinator: Arc<SessionCoordinator>,
-    /// 所属 Tab ID
-    tab_id: TabId,
-}
+use zeterm_core::entities::HostConfig;
+use zeterm_storage::{HostRepository, SqliteHostRepository};
 
 /// 主窗口
 pub struct MainWindow {
@@ -61,6 +50,12 @@ pub struct MainWindow {
 
     /// 终端面板数据（PaneId -> TerminalPaneData）
     terminal_panes: HashMap<PaneId, TerminalPaneData>,
+
+    /// 终端面板管理器
+    terminal_pane_manager: TerminalPaneManager,
+
+    /// 连接管理器（静态方法，但保留为字段以保持一致性）
+    _connection_manager: ConnectionManager,
 
     /// 状态栏
     status_bar: Entity<StatusBar>,
@@ -148,6 +143,8 @@ impl MainWindow {
             tab_view,
             split_views: HashMap::new(),
             terminal_panes: HashMap::new(),
+            terminal_pane_manager: TerminalPaneManager::new(),
+            _connection_manager: ConnectionManager,
             status_bar,
             theme_manager,
             connection_dialog: Arc::new(Mutex::new(None)),
@@ -189,10 +186,8 @@ impl MainWindow {
     ///
     /// 执行完整的 SSH 连接流程：
     /// 1. 创建 SSH Tab
-    /// 2. 更新状态栏为"连接中"
-    /// 3. 创建 SessionCoordinator
-    /// 4. 添加终端面板（显示"正在连接..."）
-    /// 5. 异步建立 SSH 连接并启动数据泵
+    /// 2. 添加终端面板
+    /// 3. 委托给 ConnectionManager 处理连接
     fn connect_to_host(&mut self, host: zeterm_core::entities::HostConfig, cx: &mut Context<Self>) {
         // 1. 创建 SSH Tab
         let tab_id = match self.create_ssh_tab(&host, cx) {
@@ -203,20 +198,11 @@ impl MainWindow {
             },
         };
 
-        // 1.5. 激活新创建的 tab（修复Bug 1）
-        self.tab_manager.update(cx, |manager, cx| {
-            manager.switch_to_tab(tab_id, cx);
-        });
-
-        // 2. 更新状态栏为"连接中"
-        self.update_connection_status(ConnectionStatus::Connecting, cx);
-        self.update_user_host(Some(host.username.clone()), Some(host.host.clone()), cx);
-
-        // 3. 创建 SessionCoordinator
+        // 2. 创建 SessionCoordinator
         let config = TerminalConfig::default();
         let coordinator = Arc::new(SessionCoordinator::new(config));
 
-        // 4. 添加终端面板（传入指定的tab_id，修复Bug 2）
+        // 3. 添加 SSH 终端面板
         let _pane_id = match self.add_ssh_terminal_pane(tab_id, &host, coordinator.clone(), cx) {
             Some(id) => id,
             None => {
@@ -225,151 +211,16 @@ impl MainWindow {
             },
         };
 
-        // 5. 异步执行 SSH 连接
-        let host_clone = host.clone();
-        let coordinator_clone = coordinator.clone();
-
-        runtime::spawn(async move {
-            info!(
-                "开始异步 SSH 连接: {}@{}",
-                host_clone.username, host_clone.host
-            );
-
-            match Self::do_ssh_connect(&host_clone, coordinator_clone.clone()).await {
-                Ok(stream) => {
-                    info!("SSH 连接成功: {}@{}", host_clone.username, host_clone.host);
-
-                    // 启动数据泵
-                    coordinator_clone
-                        .start_data_pump(stream, move || {
-                            debug!("数据泵收到新数据");
-                        })
-                        .await;
-
-                    info!("数据泵已停止: {}@{}", host_clone.username, host_clone.host);
-                },
-                Err(e) => {
-                    error!("SSH 连接失败: {} - {}", host_clone.name, e);
-                },
-            }
-        });
-
-        cx.notify();
-    }
-
-    /// 执行 SSH 连接（异步）
-    ///
-    /// 1. 转换 HostConfig 为 SshConfig
-    /// 2. 创建 SshConnection 并连接
-    /// 3. 将连接设置到 SessionCoordinator
-    /// 4. 返回数据流用于启动数据泵
-    async fn do_ssh_connect(
-        host: &zeterm_core::entities::HostConfig,
-        coordinator: Arc<SessionCoordinator>,
-    ) -> Result<
-        futures::stream::BoxStream<'static, Result<Vec<u8>, ConnectionError>>,
-        ConnectionError,
-    > {
-        // 1. 转换配置
-        let ssh_config = Self::convert_to_ssh_config(host).await?;
-
-        // 2. 创建 SSH 连接
-        let ssh_conn = SshConnection::new(ssh_config);
-
-        // 3. 建立连接
-        info!("正在建立 SSH 连接...");
-        ssh_conn.connect().await?;
-        info!("SSH 握手和认证完成");
-
-        // 4. 设置到 SessionCoordinator 并获取数据流
-        let stream = coordinator.set_connection(Box::new(ssh_conn)).await;
-
-        Ok(stream)
-    }
-
-    /// 将 HostConfig 转换为 SshConfig
-    ///
-    /// 处理认证配置的转换，包括从密钥链解析密码
-    async fn convert_to_ssh_config(
-        host: &zeterm_core::entities::HostConfig,
-    ) -> Result<SshConfig, ConnectionError> {
-        // 创建密钥助手用于解析密码引用
-        let secret_helper = SecretHelper::<KeyringSecretStore>::default();
-
-        // 转换认证方式
-        let auth_method = match &host.auth_config {
-            AuthConfig::Password { password_ref } => {
-                debug!("解析密码认证: {}", password_ref);
-                let parsed_ref = PasswordRef::parse(password_ref);
-                let password = secret_helper
-                    .resolve_password_ref(&parsed_ref)
-                    .map_err(|e| ConnectionError::Configuration(format!("密码解析失败: {}", e)))?
-                    .ok_or_else(|| {
-                        ConnectionError::Authentication("无法获取密码，请检查密码配置".into())
-                    })?;
-                AuthMethod::Password(password)
-            },
-            AuthConfig::PublicKey {
-                key_path,
-                passphrase_ref,
-            } => {
-                debug!("解析公钥认证: {:?}", key_path);
-                let passphrase = if let Some(pp_ref) = passphrase_ref {
-                    let parsed_ref = PasswordRef::parse(pp_ref);
-                    secret_helper
-                        .resolve_password_ref(&parsed_ref)
-                        .map_err(|e| {
-                            ConnectionError::Configuration(format!("私钥密码解析失败: {}", e))
-                        })?
-                } else {
-                    None
-                };
-                AuthMethod::PublicKey {
-                    key_path: key_path.clone(),
-                    passphrase,
-                }
-            },
-            AuthConfig::Agent => {
-                debug!("使用 SSH Agent 认证");
-                AuthMethod::Agent
-            },
-        };
-
-        // 构建 SshConfig
-        let ssh_config = SshConfig::new(&host.host, &host.username)
-            .with_port(host.port)
-            .with_terminal_size(80, 24); // 默认终端大小，后续会通过 resize 调整
-
-        // 设置认证方式（需要使用内部字段，因为 SshConfig 没有 with_auth_method）
-        let mut ssh_config = ssh_config;
-        ssh_config.auth_method = auth_method;
-
-        debug!(
-            "SshConfig 创建完成: {}@{}:{}",
-            host.username, host.host, host.port
+        // 4. 委托给连接管理器处理连接逻辑
+        ConnectionManager::connect_to_host(
+            host,
+            tab_id,
+            coordinator,
+            cx,
+            &self.tab_manager,
+            &self.status_bar,
         );
 
-        Ok(ssh_config)
-    }
-
-    /// 更新连接状态并刷新 UI
-    ///
-    /// 可以从异步上下文中安全调用（通过 Entity 弱引用）
-    fn update_connection_result(
-        &mut self,
-        success: bool,
-        error_msg: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
-        if success {
-            self.update_connection_status(ConnectionStatus::Connected, cx);
-            info!("连接状态已更新为: Connected");
-        } else {
-            self.update_connection_status(ConnectionStatus::Error, cx);
-            if let Some(msg) = error_msg {
-                warn!("连接失败: {}", msg);
-            }
-        }
         cx.notify();
     }
 
@@ -432,7 +283,10 @@ impl MainWindow {
             });
         }
 
-        // 移除该 Tab 下的所有终端面板
+        // 清理该 Tab 下的所有终端面板
+        self.terminal_pane_manager.cleanup_tab(tab_id);
+
+        // 从主 terminal_panes 中移除
         let pane_ids_to_remove: Vec<PaneId> = self
             .terminal_panes
             .iter()
@@ -650,14 +504,14 @@ impl MainWindow {
         coordinator: Arc<SessionCoordinator>,
         cx: &mut Context<Self>,
     ) -> Option<PaneId> {
-        let title = format!("{}@{}", host_config.username, host_config.host);
-
         // 更新状态栏用户主机信息
         self.update_user_host(
             Some(host_config.username.clone()),
             Some(host_config.host.clone()),
             cx,
         );
+
+        let title = format!("{}@{}", host_config.username, host_config.host);
 
         self.add_terminal_pane(tab_id, title, coordinator, cx)
     }
@@ -702,23 +556,21 @@ impl MainWindow {
                 self.update_user_host(None, None, cx);
             }
         }
-
-        cx.notify();
     }
 
     /// 获取指定面板的 TerminalView
     pub fn get_terminal_view(&self, pane_id: PaneId) -> Option<&Entity<TerminalView>> {
-        self.terminal_panes.get(&pane_id).map(|d| &d.terminal_view)
+        self.terminal_pane_manager.get_terminal_view(pane_id)
     }
 
     /// 获取指定面板的 SessionCoordinator
     pub fn get_coordinator(&self, pane_id: PaneId) -> Option<&Arc<SessionCoordinator>> {
-        self.terminal_panes.get(&pane_id).map(|d| &d.coordinator)
+        self.terminal_pane_manager.get_coordinator(pane_id)
     }
 
     /// 检查是否已连接
     pub fn is_connected(&self) -> bool {
-        !self.terminal_panes.is_empty()
+        self.terminal_pane_manager.is_connected()
     }
 
     // ==================== 分屏操作 ====================
@@ -1349,31 +1201,15 @@ impl MainWindow {
     /// 这是方案 3 的核心实现：利用现有的 SessionCoordinator 状态
     /// 作为单一数据源，确保 UI 状态与实际连接状态一致。
     fn sync_status_bar_from_coordinator(&mut self, cx: &mut Context<Self>) {
-        // 获取当前活动 pane
+        // 获取当前活动 pane 的协调器
         if let Some(pane_id) = self.active_pane_id(cx) {
-            if let Some(data) = self.terminal_panes.get(&pane_id) {
-                let actual_state = data.coordinator.connection_state();
-
-                let expected_status = match actual_state {
-                    zeterm_core::ConnectionState::Idle
-                    | zeterm_core::ConnectionState::Disconnected { .. } => {
-                        ConnectionStatus::Disconnected
-                    },
-                    zeterm_core::ConnectionState::Connected { .. } => ConnectionStatus::Connected,
-                    zeterm_core::ConnectionState::Connecting { .. }
-                    | zeterm_core::ConnectionState::Authenticating
-                    | zeterm_core::ConnectionState::Reconnecting { .. }
-                    | zeterm_core::ConnectionState::Disconnecting => ConnectionStatus::Connecting,
-                };
-
-                let current_status = self.status_bar.read(cx).status_info().connection_status;
-                if current_status != expected_status {
-                    self.update_connection_status(expected_status, cx);
-                    debug!(
-                        "状态栏从 {:?} 更新为 {:?} (coordinator state: {:?})",
-                        current_status, expected_status, actual_state
-                    );
-                }
+            if let Some(coordinator) = self.terminal_pane_manager.get_coordinator(pane_id) {
+                // 使用 ConnectionManager 来同步状态栏
+                ConnectionManager::sync_status_bar_from_coordinator(
+                    coordinator,
+                    &self.status_bar,
+                    cx,
+                );
             }
         }
     }

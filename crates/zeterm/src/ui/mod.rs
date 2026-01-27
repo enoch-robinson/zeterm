@@ -21,14 +21,16 @@
 
 mod app_theme;
 mod components;
+mod connection_manager;
 mod dialogs;
 mod host_list;
 mod main_window;
 pub mod sftp;
-pub mod split_pane;
+mod split_pane;
 mod status_bar;
 mod tab_manager;
 mod tab_view;
+mod terminal_pane_manager;
 pub mod terminal_view;
 
 // ==================== 主题相关 ====================
@@ -59,6 +61,12 @@ pub use status_bar::{ConnectionStatus, StatusBar, StatusInfo};
 // ==================== 终端视图 ====================
 #[allow(unused_imports)]
 pub use terminal_view::TerminalView;
+
+// ==================== 管理器 ====================
+#[allow(unused_imports)]
+pub use connection_manager::ConnectionManager;
+#[allow(unused_imports)]
+pub use terminal_pane_manager::{TerminalPaneData, TerminalPaneManager};
 
 // ==================== SFTP 文件管理 ====================
 #[allow(unused_imports)]

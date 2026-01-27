@@ -11,7 +11,6 @@ use gpui::{
     actions, prelude::*, px, size,
 };
 use std::process;
-use std::sync::{Arc, OnceLock};
 use tracing::{error, info, warn};
 use ui::MainWindow;
 use zeterm_storage::{ConnectionHistoryRepository, Database, SqliteConnectionHistoryRepository};
