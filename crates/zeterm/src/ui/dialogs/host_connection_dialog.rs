@@ -10,7 +10,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, Window, div, px,
 };
 use gpui_component::{ActiveTheme, Sizable, Size, button::Button};
-use parking_lot::Mutex;
+
 use tracing::{info, warn};
 use zeterm_core::entities::{AuthConfig, HostConfig, HostId};
 use zeterm_storage::{KeyringSecretStore, SecretHelper, SecretKeyGenerator, SecretStore};
@@ -280,9 +280,9 @@ pub struct HostConnectionDialog {
     /// 原始主机配置（编辑模式时使用）
     original_config: Option<HostConfig>,
     /// 表单数据
-    form_data: Arc<Mutex<FormData>>,
+    form_data: FormData,
     /// 验证错误信息
-    validation_error: Arc<Mutex<Option<String>>>,
+    validation_error: Option<String>,
     /// 保存回调
     on_save: Option<Arc<dyn Fn(HostConfig) + Send + Sync>>,
     /// 取消回调
@@ -300,8 +300,8 @@ impl HostConnectionDialog {
             focus_handle: cx.focus_handle(),
             mode: DialogMode::Create,
             original_config: None,
-            form_data: Arc::new(Mutex::new(FormData::new())),
-            validation_error: Arc::new(Mutex::new(None)),
+            form_data: FormData::new(),
+            validation_error: None,
             on_save: None,
             on_cancel: None,
             editing_field: None,
@@ -321,8 +321,8 @@ impl HostConnectionDialog {
             focus_handle: cx.focus_handle(),
             mode: DialogMode::Edit,
             original_config: Some(config),
-            form_data: Arc::new(Mutex::new(form_data)),
-            validation_error: Arc::new(Mutex::new(None)),
+            form_data,
+            validation_error: None,
             on_save: None,
             on_cancel: None,
             editing_field: None,
@@ -344,21 +344,18 @@ impl HostConnectionDialog {
     /// 处理键盘输入
     fn handle_key_input(&mut self, input: &str, cx: &mut Context<Self>) {
         if let Some(ref field) = self.editing_field {
-            let mut form_data = self.form_data.lock();
             match field {
-                EditingField::Name => form_data.name.push_str(input),
-                EditingField::Host => form_data.host.push_str(input),
-                EditingField::Port => form_data.port.push_str(input),
-                EditingField::Username => form_data.username.push_str(input),
-                EditingField::PasswordInput => form_data.password_input.push_str(input),
-                EditingField::PasswordRef => form_data.password_ref.push_str(input),
-                EditingField::KeyPath => form_data.key_path.push_str(input),
-                EditingField::PassphraseRef => form_data.passphrase_ref.push_str(input),
-                EditingField::Group => form_data.group.push_str(input),
-                EditingField::Description => form_data.description.push_str(input),
+                EditingField::Name => self.form_data.name.push_str(input),
+                EditingField::Host => self.form_data.host.push_str(input),
+                EditingField::Port => self.form_data.port.push_str(input),
+                EditingField::Username => self.form_data.username.push_str(input),
+                EditingField::PasswordInput => self.form_data.password_input.push_str(input),
+                EditingField::PasswordRef => self.form_data.password_ref.push_str(input),
+                EditingField::KeyPath => self.form_data.key_path.push_str(input),
+                EditingField::PassphraseRef => self.form_data.passphrase_ref.push_str(input),
+                EditingField::Group => self.form_data.group.push_str(input),
+                EditingField::Description => self.form_data.description.push_str(input),
             }
-            drop(form_data);
-            *self.validation_error.lock() = None;
             cx.notify();
         }
     }
@@ -366,21 +363,19 @@ impl HostConnectionDialog {
     /// 处理退格键
     fn handle_backspace(&mut self, cx: &mut Context<Self>) {
         if let Some(ref field) = self.editing_field {
-            let mut form_data = self.form_data.lock();
             let target = match field {
-                EditingField::Name => &mut form_data.name,
-                EditingField::Host => &mut form_data.host,
-                EditingField::Port => &mut form_data.port,
-                EditingField::Username => &mut form_data.username,
-                EditingField::PasswordInput => &mut form_data.password_input,
-                EditingField::PasswordRef => &mut form_data.password_ref,
-                EditingField::KeyPath => &mut form_data.key_path,
-                EditingField::PassphraseRef => &mut form_data.passphrase_ref,
-                EditingField::Group => &mut form_data.group,
-                EditingField::Description => &mut form_data.description,
+                EditingField::Name => &mut self.form_data.name,
+                EditingField::Host => &mut self.form_data.host,
+                EditingField::Port => &mut self.form_data.port,
+                EditingField::Username => &mut self.form_data.username,
+                EditingField::PasswordInput => &mut self.form_data.password_input,
+                EditingField::PasswordRef => &mut self.form_data.password_ref,
+                EditingField::KeyPath => &mut self.form_data.key_path,
+                EditingField::PassphraseRef => &mut self.form_data.passphrase_ref,
+                EditingField::Group => &mut self.form_data.group,
+                EditingField::Description => &mut self.form_data.description,
             };
             target.pop();
-            drop(form_data);
             cx.notify();
         }
     }
@@ -413,12 +408,12 @@ impl HostConnectionDialog {
 
     /// 处理保存
     fn handle_save(&mut self, cx: &mut Context<Self>) {
-        let form_data = self.form_data.lock().clone();
+        let form_data = self.form_data.clone();
 
         // 验证表单
         if let Err(error) = form_data.validate() {
             warn!("Form validation failed: {}", error);
-            *self.validation_error.lock() = Some(error);
+            self.validation_error = Some(error);
             cx.notify();
             return;
         }
@@ -428,7 +423,7 @@ impl HostConnectionDialog {
         match form_data.to_host_config(original_id) {
             Ok(config) => {
                 info!("Host config created/updated: {}", config.name);
-                *self.validation_error.lock() = None;
+                self.validation_error = None;
 
                 if let Some(ref callback) = self.on_save {
                     callback(config);
@@ -436,7 +431,7 @@ impl HostConnectionDialog {
             },
             Err(error) => {
                 warn!("Failed to create host config: {}", error);
-                *self.validation_error.lock() = Some(error);
+                self.validation_error = Some(error);
                 cx.notify();
             },
         }
@@ -456,12 +451,10 @@ impl HostConnectionDialog {
     where
         F: FnOnce(&mut FormData),
     {
-        let mut form_data = self.form_data.lock();
-        updater(&mut form_data);
-        drop(form_data);
+        updater(&mut self.form_data);
 
         // 清除验证错误
-        *self.validation_error.lock() = None;
+        self.validation_error = None;
         cx.notify();
     }
 }
@@ -475,7 +468,7 @@ impl Focusable for HostConnectionDialog {
 impl Render for HostConnectionDialog {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let validation_error = self.validation_error.lock().clone();
+        let validation_error = self.validation_error.clone();
         let has_focus = self.focus_handle.is_focused(_window);
 
         // 对话框容器
@@ -641,7 +634,7 @@ impl HostConnectionDialog {
 
     /// 渲染表单字段
     fn render_form_fields(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let form_data = self.form_data.lock();
+        let form_data = &self.form_data;
         let name = form_data.name.clone();
         let host = form_data.host.clone();
         let port = form_data.port.clone();
@@ -649,7 +642,6 @@ impl HostConnectionDialog {
         let auth_type = form_data.auth_type;
         let group = form_data.group.clone();
         let description = form_data.description.clone();
-        drop(form_data);
 
         div()
             .flex()
@@ -939,12 +931,11 @@ impl HostConnectionDialog {
 
     /// 渲染认证相关字段
     fn render_auth_fields(&self, auth_type: AuthType, cx: &mut Context<Self>) -> impl IntoElement {
-        let form_data = self.form_data.lock();
+        let form_data = &self.form_data;
         let password_input = form_data.password_input.clone();
         let _password_ref = form_data.password_ref.clone();
         let key_path = form_data.key_path.clone();
         let passphrase_ref = form_data.passphrase_ref.clone();
-        drop(form_data);
 
         match auth_type {
             AuthType::Password => div()

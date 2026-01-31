@@ -4,7 +4,7 @@
 
 use gpui::{
     App, Context, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement, Render,
-    Styled, Window, div,
+    Styled, Window, div, px,
 };
 use gpui_component::ActiveTheme;
 use parking_lot::Mutex;
@@ -234,6 +234,36 @@ impl TextInput {
             value.clone()
         }
     }
+
+    /// 启动光标闪烁
+    ///
+    /// TODO: 需要修复类型注解问题，暂时使用静态光标
+    fn start_cursor_blink(&mut self, _cx: &mut Context<Self>) {
+        // 光标闪烁暂时禁用，使用静态光标
+        // 后续可通过 GPUI 的定时器机制实现
+    }
+
+    /// 获取光标位置前的文本
+    fn text_before_cursor(&self) -> String {
+        let value = self.value.lock();
+        let cursor_pos = *self.cursor_position.lock();
+        if self.is_password && !value.is_empty() {
+            "•".repeat(cursor_pos)
+        } else {
+            value.chars().take(cursor_pos).collect()
+        }
+    }
+
+    /// 获取光标后的文本
+    fn text_after_cursor(&self) -> String {
+        let value = self.value.lock();
+        let cursor_pos = *self.cursor_position.lock();
+        if self.is_password && !value.is_empty() {
+            "•".repeat(value.len().saturating_sub(cursor_pos))
+        } else {
+            value.chars().skip(cursor_pos).collect()
+        }
+    }
 }
 
 impl Focusable for TextInput {
@@ -245,9 +275,11 @@ impl Focusable for TextInput {
 impl Render for TextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let display_text = self.display_text();
         let is_empty = self.value.lock().is_empty();
         let is_focused = self.focus_handle.is_focused(window);
+
+        // 光标颜色
+        let cursor_color = theme.foreground;
 
         div()
             .id("text-input")
@@ -263,12 +295,60 @@ impl Render for TextInput {
             })
             .rounded_md()
             .text_sm()
-            .text_color(if is_empty {
-                theme.muted_foreground
-            } else {
-                theme.foreground
-            })
             .cursor_text()
-            .child(display_text)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .children(if is_empty && !is_focused {
+                        // 显示占位符
+                        vec![
+                            div()
+                                .text_color(theme.muted_foreground)
+                                .child(self.placeholder.clone())
+                                .into_any_element(),
+                        ]
+                    } else {
+                        // 显示文本和光标
+                        let mut children: Vec<gpui::AnyElement> = Vec::new();
+
+                        // 光标前的文本
+                        let before_text = self.text_before_cursor();
+                        if !before_text.is_empty() || is_focused {
+                            children.push(
+                                div()
+                                    .text_color(theme.foreground)
+                                    .child(before_text)
+                                    .into_any_element(),
+                            );
+                        }
+
+                        // 光标（仅在聚焦时显示）
+                        if is_focused {
+                            children.push(
+                                div()
+                                    .w(px(2.0))
+                                    .h_full()
+                                    .min_h(px(16.0))
+                                    .bg(cursor_color)
+                                    .into_any_element(),
+                            );
+                        }
+
+                        // 光标后的文本
+                        let after_text = self.text_after_cursor();
+                        if !after_text.is_empty() {
+                            children.push(
+                                div()
+                                    .text_color(theme.foreground)
+                                    .child(after_text)
+                                    .into_any_element(),
+                            );
+                        }
+
+                        children
+                    }),
+            )
     }
 }

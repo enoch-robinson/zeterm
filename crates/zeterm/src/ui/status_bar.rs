@@ -73,6 +73,8 @@ pub struct StatusInfo {
     pub rtt_ms: Option<u32>,
     /// 当前工作目录
     pub cwd: Option<String>,
+    /// 错误信息
+    pub error_message: Option<String>,
 }
 
 impl StatusInfo {
@@ -87,6 +89,7 @@ impl StatusInfo {
             encoding: "UTF-8".to_string(),
             rtt_ms: None,
             cwd: None,
+            error_message: None,
         }
     }
 
@@ -210,6 +213,18 @@ impl StatusBar {
     /// 获取状态信息
     pub fn status_info(&self) -> &StatusInfo {
         &self.status_info
+    }
+
+    /// 设置错误信息
+    pub fn set_error_message(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
+        self.status_info.error_message = Some(message.into());
+        cx.notify();
+    }
+
+    /// 清除错误信息
+    pub fn clear_error_message(&mut self, cx: &mut Context<Self>) {
+        self.status_info.error_message = None;
+        cx.notify();
     }
 
     /// 渲染状态项分隔符

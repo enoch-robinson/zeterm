@@ -41,19 +41,15 @@ pub fn init_global_database(db: Arc<Database>) {
 
 /// 获取全局数据库实例
 ///
-/// # Panics
-///
-/// 如果数据库未初始化（未调用 `init_global_database`），会 panic。
+/// 如果数据库未初始化（未调用 `init_global_database`），返回 `None`。
 ///
 /// # Example
 ///
 /// ```ignore
-/// let db = app::global_database();
-/// let hosts = db.list_all_hosts().await?;
+/// if let Some(db) = app::global_database() {
+///     let hosts = db.list_all_hosts().await?;
+/// }
 /// ```
-pub fn global_database() -> Arc<Database> {
-    GLOBAL_DATABASE
-        .get()
-        .expect("Database not initialized. Call init_global_database first.")
-        .clone()
+pub fn global_database() -> Option<Arc<Database>> {
+    GLOBAL_DATABASE.get().cloned()
 }

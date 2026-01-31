@@ -5,7 +5,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, RwLock};
 
 use gpui::{
@@ -25,7 +24,7 @@ use crate::ui::host_list::{HostListEvent, HostListView};
 use crate::ui::split_pane::{Pane, PaneId, SplitDirection, SplitManager, SplitView};
 use crate::ui::status_bar::{ConnectionStatus, StatusBar, StatusInfo};
 use crate::ui::tab_manager::{TabId, TabInfo, TabManager, TabManagerEvent};
-use crate::ui::tab_view::TabView;
+use crate::ui::tab_view::{TabView, TabViewEvent};
 use crate::ui::terminal_pane_manager::{TerminalPaneData, TerminalPaneManager};
 use crate::ui::terminal_view::TerminalView;
 use zeterm_core::entities::HostConfig;
@@ -71,9 +70,6 @@ pub struct MainWindow {
 
     /// 是否显示 Tab 栏
     show_tab_bar: bool,
-
-    /// 新建 Tab 请求标志（用于 TabView 回调通知）
-    new_tab_requested: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for MainWindow {
@@ -88,6 +84,13 @@ impl std::fmt::Debug for MainWindow {
     }
 }
 
+/// 状态栏同步触发标志
+/// 用于在事件处理器中触发状态栏同步，避免在 render 中修改状态
+#[derive(Clone, Debug)]
+enum StatusBarSyncEvent {
+    SyncRequested,
+}
+
 impl MainWindow {
     /// 构建主窗口（工厂方法，供 open_window 使用）
     pub fn build(_window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -99,7 +102,8 @@ impl MainWindow {
         let focus_handle = cx.focus_handle();
 
         // 获取全局数据库实例
-        let database = crate::app::global_database();
+        let database = crate::app::global_database()
+            .expect("Database should be initialized before creating MainWindow");
 
         // 创建主机列表视图
         let host_list_view = cx.new(|cx| HostListView::new(database, cx));
@@ -107,20 +111,8 @@ impl MainWindow {
         // 创建 Tab 管理器
         let tab_manager = cx.new(|_cx| TabManager::new());
 
-        // 创建新建 Tab 请求标志
-        let new_tab_requested = Arc::new(AtomicBool::new(false));
-
         // 创建 Tab 视图
         let tab_view = cx.new(|cx| TabView::new(tab_manager.clone(), cx));
-
-        // 设置新建 Tab 回调
-        let new_tab_flag = new_tab_requested.clone();
-        tab_view.update(cx, |view, _cx| {
-            view.set_on_new_tab(move |_cx| {
-                // 设置标志，在下次 render 时创建 Tab
-                new_tab_flag.store(true, Ordering::SeqCst);
-            });
-        });
 
         // 创建状态栏
         let status_bar = cx.new(|cx| StatusBar::new(cx));
@@ -136,6 +128,9 @@ impl MainWindow {
         cx.subscribe(&host_list_view, Self::on_host_list_event)
             .detach();
 
+        // 订阅 TabView 事件
+        cx.subscribe(&tab_view, Self::on_tab_view_event).detach();
+
         Self {
             focus_handle,
             host_list_view,
@@ -150,7 +145,6 @@ impl MainWindow {
             connection_dialog: Arc::new(Mutex::new(None)),
             show_sidebar: true,
             show_tab_bar: true,
-            new_tab_requested,
         }
     }
 
@@ -243,6 +237,8 @@ impl MainWindow {
             TabManagerEvent::TabSwitched(tab_id) => {
                 info!("Tab switched to: {}", tab_id);
                 self.on_tab_switched(*tab_id, cx);
+                // Tab 切换时同步状态栏
+                self.sync_status_bar_from_coordinator(cx);
             },
             TabManagerEvent::TabUpdated(tab_id) => {
                 info!("Tab updated: {}", tab_id);
@@ -251,7 +247,26 @@ impl MainWindow {
                 info!("Tab moved: {} to index {}", tab_id, new_index);
             },
         }
-        cx.notify();
+    }
+
+    /// 处理 TabView 事件
+    fn on_tab_view_event(
+        &mut self,
+        _tab_view: Entity<TabView>,
+        event: &TabViewEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            TabViewEvent::NewTabRequested => {
+                info!("收到新建 Tab 请求");
+                if let Some(tab_id) = self.create_local_tab("新终端", cx) {
+                    // 激活新创建的本地 tab
+                    self.tab_manager.update(cx, |manager, cx| {
+                        manager.switch_to_tab(tab_id, cx);
+                    });
+                }
+            },
+        }
     }
 
     /// Tab 切换时的处理
@@ -274,7 +289,24 @@ impl MainWindow {
     }
 
     /// 清理 Tab 相关资源
+    ///
+    /// 关闭 SSH 连接并清理相关资源
     fn cleanup_tab(&mut self, tab_id: TabId, cx: &mut Context<Self>) {
+        // 收集需要关闭的 coordinators
+        let coordinators_to_close: Vec<_> =
+            self.terminal_pane_manager.get_coordinators_for_tab(tab_id);
+
+        // 异步关闭 SSH 连接
+        if !coordinators_to_close.is_empty() {
+            let tab_id_clone = tab_id;
+            crate::app::runtime::spawn(async move {
+                for coordinator in coordinators_to_close {
+                    coordinator.close().await;
+                }
+                info!("Tab {} 的 SSH 连接已关闭", tab_id_clone);
+            });
+        }
+
         // 移除 SplitView
         if let Some(_split_view) = self.split_views.remove(&tab_id) {
             // 从 TabView 中移除
@@ -302,6 +334,8 @@ impl MainWindow {
         self.tab_view.update(cx, |view, _cx| {
             view.unregister_all_terminal_views(tab_id);
         });
+
+        info!("Tab {} 已清理", tab_id);
 
         // 如果没有更多 Tab，更新状态栏
         if !self.tab_manager.read(cx).has_tabs() {
@@ -966,7 +1000,10 @@ impl MainWindow {
         tracing::info!("显示新建主机对话框");
 
         // 获取全局数据库实例
-        let database = crate::app::global_database();
+        let Some(database) = crate::app::global_database() else {
+            tracing::error!("数据库未初始化，无法显示对话框");
+            return;
+        };
 
         // 创建 SqliteHostRepository
         let repository = Arc::new(SqliteHostRepository::new(database.pool().clone()));
@@ -1002,7 +1039,10 @@ impl MainWindow {
         tracing::info!("显示编辑主机对话框: {}", host.name);
 
         // 获取全局数据库实例
-        let database = crate::app::global_database();
+        let Some(database) = crate::app::global_database() else {
+            tracing::error!("数据库未初始化，无法显示对话框");
+            return;
+        };
 
         // 创建 SqliteHostRepository
         let repository = Arc::new(SqliteHostRepository::new(database.pool().clone()));
@@ -1100,18 +1140,9 @@ impl Focusable for MainWindow {
 
 impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 检查是否有新建 Tab 请求（来自 TabView 的 "+" 按钮）
-        if self.new_tab_requested.swap(false, Ordering::SeqCst) {
-            if let Some(tab_id) = self.create_local_tab("新终端", cx) {
-                // 激活新创建的本地 tab
-                self.tab_manager.update(cx, |manager, cx| {
-                    manager.switch_to_tab(tab_id, cx);
-                });
-            }
-        }
-
-        // 同步状态栏：根据当前活动 pane 的实际连接状态更新
-        self.sync_status_bar_from_coordinator(cx);
+        // 注意：不在 render 中修改状态
+        // 新建 Tab 请求通过 TabViewEvent 事件处理
+        // 状态栏同步在 TabSwitched 事件中处理
 
         let has_tabs = self.has_tabs(cx);
 

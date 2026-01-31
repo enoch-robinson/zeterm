@@ -19,6 +19,15 @@ use super::split_pane::{PaneId, SplitView};
 use super::tab_manager::{TabId, TabInfo, TabManager};
 use super::terminal_view::TerminalView;
 
+/// TabView 事件
+#[derive(Clone, Debug)]
+pub enum TabViewEvent {
+    /// 请求新建 Tab
+    NewTabRequested,
+}
+
+impl gpui::EventEmitter<TabViewEvent> for TabView {}
+
 /// 终端视图映射类型（TabId -> (PaneId -> TerminalView)）
 pub type TabTerminalViewMap = HashMap<TabId, HashMap<PaneId, Entity<TerminalView>>>;
 
@@ -233,6 +242,10 @@ impl TabView {
 
     /// 处理新建 Tab 按钮点击
     fn handle_new_tab_click(&mut self, cx: &mut Context<Self>) {
+        // 优先使用新的事件机制
+        cx.emit(TabViewEvent::NewTabRequested);
+
+        // 保持向后兼容
         if let Some(ref callback) = self.on_new_tab {
             callback(cx);
         }

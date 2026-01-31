@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use gpui::{Context, Entity};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 use zeterm_core::ConnectionState;
 use zeterm_core::config::PasswordRef;
 use zeterm_core::entities::{AuthConfig, HostConfig};
@@ -37,7 +37,10 @@ impl ConnectionManager {
         cx: &mut Context<T>,
         tab_manager: &Entity<TabManager>,
         status_bar: &Entity<StatusBar>,
-    ) -> Option<()> {
+    ) -> Option<()>
+    where
+        T: 'static,
+    {
         // 1. 激活新创建的 tab
         tab_manager.update(cx, |manager, cx| {
             manager.switch_to_tab(tab_id, cx);
@@ -77,6 +80,7 @@ impl ConnectionManager {
                 },
                 Err(e) => {
                     error!("SSH 连接失败: {} - {}", host_clone.name, e);
+                    // 错误状态将通过 coordinator 的状态变化被检测并更新
                 },
             }
         });
@@ -175,28 +179,6 @@ impl ConnectionManager {
         );
 
         Ok(ssh_config)
-    }
-
-    /// 更新连接状态并刷新 UI
-    ///
-    /// 可以从异步上下文中安全调用（通过 Entity 弱引用）
-    fn update_connection_result<T>(
-        success: bool,
-        error_msg: Option<String>,
-        status_bar: &Entity<StatusBar>,
-        cx: &mut Context<T>,
-    ) {
-        status_bar.update(cx, |bar, cx| {
-            if success {
-                bar.set_connection_status(ConnectionStatus::Connected, cx);
-                info!("连接状态已更新为: Connected");
-            } else {
-                bar.set_connection_status(ConnectionStatus::Error, cx);
-                if let Some(msg) = error_msg {
-                    warn!("连接失败: {}", msg);
-                }
-            }
-        });
     }
 
     /// 更新状态栏连接状态

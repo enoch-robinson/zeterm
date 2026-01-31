@@ -54,10 +54,26 @@ impl TerminalPaneManager {
             .collect()
     }
 
-    pub fn cleanup_tab(&mut self, tab_id: TabId) {
+    /// 获取指定 Tab 的所有 coordinator
+    pub fn get_coordinators_for_tab(&self, tab_id: TabId) -> Vec<Arc<SessionCoordinator>> {
+        self.terminal_panes
+            .iter()
+            .filter(|(_, d)| d.tab_id == tab_id)
+            .map(|(_, d)| d.coordinator.clone())
+            .collect()
+    }
+
+    /// 清理 Tab 相关资源
+    ///
+    /// 返回被移除的 pane 数据，调用者负责关闭连接
+    pub fn cleanup_tab(&mut self, tab_id: TabId) -> Vec<TerminalPaneData> {
         let pane_ids: Vec<_> = self.pane_ids_for_tab(tab_id);
+        let mut removed = Vec::new();
         for pane_id in pane_ids {
-            self.terminal_panes.remove(&pane_id);
+            if let Some(data) = self.terminal_panes.remove(&pane_id) {
+                removed.push(data);
+            }
         }
+        removed
     }
 }
