@@ -37,6 +37,7 @@ impl ConnectionManager {
         cx: &mut Context<T>,
         tab_manager: &Entity<TabManager>,
         status_bar: &Entity<StatusBar>,
+        on_error: Option<Box<dyn Fn(String) + Send + 'static>>,
     ) -> Option<()>
     where
         T: 'static,
@@ -79,8 +80,13 @@ impl ConnectionManager {
                     info!("数据泵已停止: {}@{}", host_clone.username, host_clone.host);
                 },
                 Err(e) => {
-                    error!("SSH 连接失败: {} - {}", host_clone.name, e);
-                    // 错误状态将通过 coordinator 的状态变化被检测并更新
+                    let error_msg = format!("SSH 连接失败: {} - {}", host_clone.name, e);
+                    error!("{}", error_msg);
+
+                    // 调用错误回调
+                    if let Some(ref callback) = on_error {
+                        callback(error_msg);
+                    }
                 },
             }
         });

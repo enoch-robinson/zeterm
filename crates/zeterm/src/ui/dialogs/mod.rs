@@ -4,6 +4,7 @@
 
 mod close_confirm_dialog;
 mod delete_confirm_dialog;
+mod error_notification;
 mod host_connection_dialog;
 mod host_key_channel;
 mod host_key_dialog;
@@ -18,4 +19,5 @@ pub use delete_confirm_dialog::{
     // DeleteTarget is only used internally in DeleteConfirmEvent
     // create_delete_confirm_dialog is not used
 };
+pub use error_notification::{ErrorNotification, ErrorNotificationEvent};
 pub use host_connection_dialog::HostConnectionDialog;

@@ -19,7 +19,7 @@ use crate::app::session::SessionCoordinator;
 use crate::app::terminal::TerminalConfig;
 use crate::ui::app_theme::{AppThemeManager, BuiltinTheme, ThemeMode};
 use crate::ui::connection_manager::ConnectionManager;
-use crate::ui::dialogs::HostConnectionDialog;
+use crate::ui::dialogs::{ErrorNotification, HostConnectionDialog};
 use crate::ui::host_list::{HostListEvent, HostListView};
 use crate::ui::split_pane::{Pane, PaneId, SplitDirection, SplitManager, SplitView};
 use crate::ui::status_bar::{ConnectionStatus, StatusBar, StatusInfo};
@@ -64,6 +64,9 @@ pub struct MainWindow {
 
     /// 连接对话框（新建或编辑主机）- 使用共享引用以便在回调中关闭
     connection_dialog: Arc<Mutex<Option<Entity<HostConnectionDialog>>>>,
+
+    /// 错误通知
+    error_notification: Option<Entity<ErrorNotification>>,
 
     /// 是否显示侧边栏
     show_sidebar: bool,
@@ -143,6 +146,7 @@ impl MainWindow {
             status_bar,
             theme_manager,
             connection_dialog: Arc::new(Mutex::new(None)),
+            error_notification: None,
             show_sidebar: true,
             show_tab_bar: true,
         }
@@ -206,6 +210,12 @@ impl MainWindow {
         };
 
         // 4. 委托给连接管理器处理连接逻辑
+        let _host_name = host.name.clone();
+        let error_callback = Box::new(move |error_msg: String| {
+            // 错误通知将通过主窗口的事件循环显示
+            tracing::error!("连接错误回调: {}", error_msg);
+        });
+
         ConnectionManager::connect_to_host(
             host,
             tab_id,
@@ -213,9 +223,37 @@ impl MainWindow {
             cx,
             &self.tab_manager,
             &self.status_bar,
+            Some(error_callback),
         );
 
         cx.notify();
+    }
+
+    /// 显示连接错误通知
+    pub fn show_connection_error(
+        &mut self,
+        title: impl Into<String>,
+        message: impl Into<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let notification = cx.new(|cx| {
+            ErrorNotification::new(cx)
+                .with_title(title)
+                .with_message(message)
+                .with_retry(true)
+                .with_auto_dismiss(false)
+        });
+
+        self.error_notification = Some(notification);
+        cx.notify();
+    }
+
+    /// 关闭错误通知
+    fn close_error_notification(&mut self, cx: &mut Context<Self>) {
+        if self.error_notification.is_some() {
+            self.error_notification = None;
+            cx.notify();
+        }
     }
 
     /// 处理 Tab 管理器事件
@@ -1169,6 +1207,9 @@ impl Render for MainWindow {
                 .into_any_element()
         };
 
+        // 错误通知（浮动在右上角）
+        let error_notification = self.error_notification.clone();
+
         // 构建主布局（垂直布局：内容区 + 状态栏）
         let mut root = div()
             .id("main-window")
@@ -1220,6 +1261,17 @@ impl Render for MainWindow {
         // 如果有连接对话框，添加到根元素（作为覆盖层）
         if let Some(ref dialog) = *self.connection_dialog.lock().unwrap() {
             root = root.child(dialog.clone());
+        }
+
+        // 如果有错误通知，显示在右上角
+        if let Some(ref notification) = error_notification {
+            root = root.child(
+                div()
+                    .absolute()
+                    .top(px(16.0))
+                    .right(px(16.0))
+                    .child(notification.clone()),
+            );
         }
 
         root
