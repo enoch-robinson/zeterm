@@ -23,7 +23,10 @@ pub type DataReceiver = mpsc::UnboundedReceiver<Vec<u8>>;
 /// - `None`: 用户拒绝，中止连接
 /// - `Some(true)`: 用户接受，保存到 known_hosts
 /// - `Some(false)`: 用户接受，但不保存（临时信任）
-pub type HostKeyConfirmCallback = Arc<dyn Fn(&str, u16, &str, &str) -> Option<bool> + Send + Sync>;
+///
+/// 使用异步通道模式支持 UI 确认对话框
+pub type HostKeyConfirmCallback =
+    Arc<dyn Fn(&str, u16, &str, &str, tokio::sync::oneshot::Sender<Option<bool>>) + Send + Sync>;
 
 /// 不安全模式标志
 /// 当设置为 true 时，跳过所有主机密钥验证（仅用于测试环境）
@@ -128,6 +131,40 @@ impl SshHandler {
         self.host_key_confirm_callback = Some(callback);
     }
 
+    /// 异步等待主机密钥确认
+    ///
+    /// 当需要用户确认主机密钥时，发送请求到 UI 层并等待响应
+    pub async fn request_host_key_confirm(
+        &self,
+        host: &str,
+        port: u16,
+        key_type: &str,
+        fingerprint: &str,
+    ) -> Option<bool> {
+        if let Some(ref callback) = self.host_key_confirm_callback {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+
+            // 调用回调，传入发送端
+            callback(host, port, key_type, fingerprint, tx);
+
+            // 等待用户响应，超时 60 秒
+            match tokio::time::timeout(tokio::time::Duration::from_secs(60), rx).await {
+                Ok(result) => result.ok().flatten(),
+                Err(_) => {
+                    warn!("Host key confirmation timed out after 60 seconds");
+                    None
+                },
+            }
+        } else {
+            // 没有回调时，默认接受并保存
+            warn!(
+                "No host key confirmation callback set, auto-accepting unknown host {}:{}",
+                host, port
+            );
+            Some(true)
+        }
+    }
+
     /// 获取当前状态
     pub fn state(&self) -> HandlerState {
         *self.state.lock()
@@ -191,8 +228,8 @@ impl SshHandler {
         fingerprint.to_string()
     }
 
-    /// 验证主机密钥
-    fn verify_host_key(&self, server_public_key: &PublicKey) -> bool {
+    /// 异步验证主机密钥
+    async fn verify_host_key_async(&self, server_public_key: &PublicKey) -> bool {
         let key_type = Self::extract_key_type(server_public_key);
         let key_data = Self::encode_public_key(server_public_key);
         let fingerprint = Self::get_key_fingerprint(server_public_key);
@@ -237,20 +274,30 @@ impl SshHandler {
                 true
             },
 
-            HostKeyVerification::Strict => self.verify_strict(&key_type, &key_data, &fingerprint),
+            HostKeyVerification::Strict => {
+                self.verify_strict_async(&key_type, &key_data, &fingerprint)
+                    .await
+            },
 
             HostKeyVerification::AskOnFirstConnect => {
-                self.verify_ask_on_first_connect(&key_type, &key_data, &fingerprint)
+                self.verify_ask_on_first_connect_async(&key_type, &key_data, &fingerprint)
+                    .await
             },
 
             HostKeyVerification::KnownHostsFile(_path) => {
-                self.verify_with_known_hosts(&key_type, &key_data, &fingerprint)
+                self.verify_with_known_hosts_async(&key_type, &key_data, &fingerprint)
+                    .await
             },
         }
     }
 
-    /// 严格模式验证：密钥必须在 known_hosts 中且匹配
-    fn verify_strict(&self, key_type: &KeyType, key_data: &str, fingerprint: &str) -> bool {
+    /// 严格模式验证：密钥必须在 known_hosts 中且匹配（异步版本）
+    async fn verify_strict_async(
+        &self,
+        key_type: &KeyType,
+        key_data: &str,
+        fingerprint: &str,
+    ) -> bool {
         let store_guard = self.known_hosts_store.lock();
 
         if let Some(store) = store_guard.as_ref() {
@@ -302,38 +349,51 @@ impl SshHandler {
         }
     }
 
-    /// 首次连接询问模式：未知主机时询问用户
-    fn verify_ask_on_first_connect(
+    /// 首次连接询问模式：未知主机时询问用户（异步版本）
+    async fn verify_ask_on_first_connect_async(
         &self,
         key_type: &KeyType,
         key_data: &str,
         fingerprint: &str,
     ) -> bool {
-        let store_guard = self.known_hosts_store.lock();
+        // 首先检查存储和验证结果，不跨越 await 持有锁
+        let verification_result = {
+            let store_guard = self.known_hosts_store.lock();
+            store_guard
+                .as_ref()
+                .map(|store| store.verify(&self.server_host, self.server_port, key_type, key_data))
+        };
 
-        if let Some(store) = store_guard.as_ref() {
-            match store.verify(&self.server_host, self.server_port, key_type, key_data) {
+        if let Some(result) = verification_result {
+            match result {
                 VerificationResult::Match => {
                     info!("Host key verified: {}", fingerprint);
                     true
                 },
                 VerificationResult::Unknown => {
-                    drop(store_guard); // 释放锁，因为回调可能需要时间
-
-                    // 调用用户确认回调
+                    // 异步等待用户确认
                     let result = if let Some(ref callback) = self.host_key_confirm_callback {
                         info!(
                             "Unknown host {}:{}, asking user for confirmation",
                             self.server_host, self.server_port
                         );
+                        let (tx, rx) = tokio::sync::oneshot::channel();
                         callback(
                             &self.server_host,
                             self.server_port,
                             key_type.as_str(),
                             fingerprint,
-                        )
+                            tx,
+                        );
+                        // 异步等待用户响应，超时 60 秒
+                        match tokio::time::timeout(tokio::time::Duration::from_secs(60), rx).await {
+                            Ok(result) => result.ok().flatten(),
+                            Err(_) => {
+                                warn!("Host key confirmation timed out after 60 seconds");
+                                None
+                            },
+                        }
                     } else {
-                        // 没有回调时，默认接受并保存（与之前行为一致，但会记录警告）
                         warn!(
                             "No host key confirmation callback set, auto-accepting unknown host {}:{}",
                             self.server_host, self.server_port
@@ -341,7 +401,6 @@ impl SshHandler {
                         warn!("This is insecure! Set a confirmation callback for production use.");
                         Some(true)
                     };
-
                     match result {
                         Some(save_to_known_hosts) => {
                             info!(
@@ -391,12 +450,23 @@ impl SshHandler {
         } else {
             // 没有存储时，询问用户
             if let Some(ref callback) = self.host_key_confirm_callback {
-                let result = callback(
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                callback(
                     &self.server_host,
                     self.server_port,
                     key_type.as_str(),
                     fingerprint,
+                    tx,
                 );
+                // 异步等待用户响应
+                let result =
+                    match tokio::time::timeout(tokio::time::Duration::from_secs(60), rx).await {
+                        Ok(result) => result.ok().flatten(),
+                        Err(_) => {
+                            warn!("Host key confirmation timed out after 60 seconds");
+                            None
+                        },
+                    };
                 // 没有 store，无法保存，只关心是否接受
                 match result {
                     Some(_) => {
@@ -415,36 +485,50 @@ impl SshHandler {
         }
     }
 
-    /// 使用 known_hosts 文件验证
-    fn verify_with_known_hosts(
+    /// 使用 known_hosts 文件验证（异步版本）
+    async fn verify_with_known_hosts_async(
         &self,
         key_type: &KeyType,
         key_data: &str,
         fingerprint: &str,
     ) -> bool {
-        let store_guard = self.known_hosts_store.lock();
+        // 首先检查存储和验证结果，不跨越 await 持有锁
+        let verification_result = {
+            let store_guard = self.known_hosts_store.lock();
+            store_guard
+                .as_ref()
+                .map(|store| store.verify(&self.server_host, self.server_port, key_type, key_data))
+        };
 
-        if let Some(store) = store_guard.as_ref() {
-            match store.verify(&self.server_host, self.server_port, key_type, key_data) {
+        if let Some(result) = verification_result {
+            match result {
                 VerificationResult::Match => {
                     info!("Host key verified from known_hosts: {}", fingerprint);
                     true
                 },
                 VerificationResult::Unknown => {
-                    drop(store_guard);
-
                     // 首次连接，询问用户
                     let result = if let Some(ref callback) = self.host_key_confirm_callback {
                         info!(
                             "Host {}:{} not in known_hosts, asking user",
                             self.server_host, self.server_port
                         );
+                        let (tx, rx) = tokio::sync::oneshot::channel();
                         callback(
                             &self.server_host,
                             self.server_port,
                             key_type.as_str(),
                             fingerprint,
-                        )
+                            tx,
+                        );
+                        // 异步等待用户响应
+                        match tokio::time::timeout(tokio::time::Duration::from_secs(60), rx).await {
+                            Ok(result) => result.ok().flatten(),
+                            Err(_) => {
+                                warn!("Host key confirmation timed out after 60 seconds");
+                                None
+                            },
+                        }
                     } else {
                         warn!(
                             "Host {}:{} not in known_hosts, no callback set, rejecting",
@@ -529,7 +613,9 @@ impl SshHandler {
 impl Handler for SshHandler {
     type Error = russh::Error;
 
-    /// 检查服务器公钥
+    /// 检查服务器公钥（异步版本）
+    ///
+    /// 支持异步主机密钥确认，当需要用户确认时会等待用户响应
     async fn check_server_key(
         &mut self,
         server_public_key: &PublicKey,
@@ -539,7 +625,7 @@ impl Handler for SshHandler {
             self.server_host, self.server_port
         );
 
-        let accepted = self.verify_host_key(server_public_key);
+        let accepted = self.verify_host_key_async(server_public_key).await;
 
         if accepted {
             self.set_state(HandlerState::HostKeyVerified);
@@ -738,9 +824,10 @@ mod tests {
     #[test]
     fn test_handler_with_callback() {
         let (sender, _receiver) = create_data_channel();
-        let callback: HostKeyConfirmCallback = Arc::new(|_host, _port, _key_type, _fingerprint| {
-            Some(true) // 总是接受并保存
-        });
+        let callback: HostKeyConfirmCallback =
+            Arc::new(|_host, _port, _key_type, _fingerprint, response_sender| {
+                let _ = response_sender.send(Some(true)); // 总是接受并保存
+            });
 
         let handler = SshHandler::new(
             sender,

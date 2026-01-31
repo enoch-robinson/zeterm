@@ -21,3 +21,4 @@ pub use delete_confirm_dialog::{
 };
 pub use error_notification::ErrorNotification;
 pub use host_connection_dialog::HostConnectionDialog;
+pub use host_key_dialog::{HostKeyDialog, HostKeyInfo, HostKeyResponse};

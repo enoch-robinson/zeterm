@@ -497,14 +497,15 @@ fn test_ssh_handler_known_hosts_file_mode() {
 fn test_ssh_handler_with_callback() {
     let (sender, _receiver) = create_data_channel();
 
-    let callback: HostKeyConfirmCallback = Arc::new(|host, port, key_type, fingerprint| {
-        // 验证回调参数
-        assert!(!host.is_empty());
-        assert!(port > 0);
-        assert!(!key_type.is_empty());
-        assert!(!fingerprint.is_empty());
-        Some(true) // 接受并保存到 known_hosts
-    });
+    let callback: HostKeyConfirmCallback =
+        Arc::new(|host, port, key_type, fingerprint, response_sender| {
+            // 验证回调参数
+            assert!(!host.is_empty());
+            assert!(port > 0);
+            assert!(!key_type.is_empty());
+            assert!(!fingerprint.is_empty());
+            let _ = response_sender.send(Some(true)); // 接受并保存到 known_hosts
+        });
 
     let handler = SshHandler::new(
         sender,

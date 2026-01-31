@@ -6,13 +6,13 @@
 use std::sync::Arc;
 
 use gpui::{Context, Entity};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info};
 use zeterm_core::ConnectionState;
 use zeterm_core::config::PasswordRef;
 use zeterm_core::entities::{AuthConfig, HostConfig};
 use zeterm_core::errors::ConnectionError;
-use zeterm_ssh::{AuthMethod, SshConfig, SshConnection};
+use zeterm_ssh::{AuthMethod, HostKeyConfirmCallback, SshConfig, SshConnection};
 use zeterm_storage::{KeyringSecretStore, SecretHelper};
 
 use crate::app::runtime;
@@ -53,6 +53,7 @@ impl ConnectionManager {
         tab_manager: &Entity<TabManager>,
         status_bar: &Entity<StatusBar>,
         event_tx: mpsc::Sender<ConnectionEvent>,
+        host_key_confirm_callback: Option<HostKeyConfirmCallback>,
         on_error: Option<Box<dyn Fn(String) + Send + 'static>>,
     ) -> Option<()>
     where
@@ -76,6 +77,7 @@ impl ConnectionManager {
         let host_clone = host.clone();
         let coordinator_clone = coordinator.clone();
         let event_tx_clone = event_tx.clone();
+        let host_key_callback = host_key_confirm_callback.clone();
 
         runtime::spawn(async move {
             info!(
@@ -83,7 +85,9 @@ impl ConnectionManager {
                 host_clone.username, host_clone.host
             );
 
-            match Self::do_ssh_connect(&host_clone, coordinator_clone.clone()).await {
+            match Self::do_ssh_connect(&host_clone, coordinator_clone.clone(), host_key_callback)
+                .await
+            {
                 Ok(stream) => {
                     info!("SSH 连接成功: {}@{}", host_clone.username, host_clone.host);
 
@@ -153,6 +157,7 @@ impl ConnectionManager {
     async fn do_ssh_connect(
         host: &HostConfig,
         coordinator: Arc<SessionCoordinator>,
+        host_key_confirm_callback: Option<HostKeyConfirmCallback>,
     ) -> Result<
         futures::stream::BoxStream<'static, Result<Vec<u8>, ConnectionError>>,
         ConnectionError,
@@ -161,7 +166,12 @@ impl ConnectionManager {
         let ssh_config = Self::convert_to_ssh_config(host).await?;
 
         // 2. 创建 SSH 连接
-        let ssh_conn = SshConnection::new(ssh_config);
+        let mut ssh_conn = SshConnection::new(ssh_config);
+
+        // 设置主机密钥确认回调
+        if let Some(callback) = host_key_confirm_callback {
+            ssh_conn.set_host_key_confirm_callback(callback);
+        }
 
         // 3. 建立连接
         info!("正在建立 SSH 连接...");

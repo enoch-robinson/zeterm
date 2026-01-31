@@ -29,6 +29,7 @@ use crate::ui::tab_view::{TabView, TabViewEvent};
 use crate::ui::terminal_pane_manager::{TerminalPaneData, TerminalPaneManager};
 use crate::ui::terminal_view::TerminalView;
 use zeterm_core::entities::HostConfig;
+use zeterm_ssh::HostKeyConfirmCallback;
 use zeterm_storage::{HostRepository, SqliteHostRepository};
 
 /// 主窗口
@@ -108,37 +109,25 @@ impl MainWindow {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let focus_handle = cx.focus_handle();
 
-        // 获取全局数据库实例
-        let database = crate::app::global_database()
-            .expect("Database should be initialized before creating MainWindow");
-
-        // 创建主机列表视图
-        let host_list_view = cx.new(|cx| HostListView::new(database, cx));
-
-        // 创建 Tab 管理器
+        // 创建基本的 UI 组件（不依赖数据库）
         let tab_manager = cx.new(|_cx| TabManager::new());
-
-        // 创建 Tab 视图
         let tab_view = cx.new(|cx| TabView::new(tab_manager.clone(), cx));
-
-        // 创建状态栏
         let status_bar = cx.new(|cx| StatusBar::new(cx));
-
-        // 主题管理器
         let theme_manager = AppThemeManager::new();
 
-        // 订阅 Tab 管理器事件
+        // 创建主机列表视图（数据库应该总是被初始化）
+        let database = crate::app::global_database()
+            .expect("Database must be initialized before creating MainWindow");
+        let host_list_view = cx.new(|cx| HostListView::new(database, cx));
+
+        // 订阅事件（必须在移动 host_list_view 到 main_window 之前）
         cx.subscribe(&tab_manager, Self::on_tab_manager_event)
             .detach();
-
-        // 订阅主机列表视图事件
+        cx.subscribe(&tab_view, Self::on_tab_view_event).detach();
         cx.subscribe(&host_list_view, Self::on_host_list_event)
             .detach();
 
-        // 订阅 TabView 事件
-        cx.subscribe(&tab_view, Self::on_tab_view_event).detach();
-
-        Self {
+        let main_window = Self {
             focus_handle,
             host_list_view,
             tab_manager,
@@ -154,7 +143,9 @@ impl MainWindow {
             pending_errors: Arc::new(Mutex::new(Vec::new())),
             show_sidebar: true,
             show_tab_bar: true,
-        }
+        };
+
+        main_window
     }
 
     /// 处理主机列表视图事件
@@ -218,6 +209,30 @@ impl MainWindow {
         let (event_tx, mut event_rx) = mpsc::channel::<ConnectionEvent>(100);
         let pending_errors = self.pending_errors.clone();
 
+        // 创建主机密钥确认通道
+        let (host_key_tx, _host_key_rx) = mpsc::channel::<(
+            String,
+            u16,
+            String,
+            String,
+            tokio::sync::oneshot::Sender<Option<bool>>,
+        )>(10);
+        let host_key_confirm_callback: HostKeyConfirmCallback = Arc::new(
+            move |host: &str,
+                  port: u16,
+                  key_type: &str,
+                  fingerprint: &str,
+                  tx: tokio::sync::oneshot::Sender<Option<bool>>| {
+                let _ = host_key_tx.try_send((
+                    host.to_string(),
+                    port,
+                    key_type.to_string(),
+                    fingerprint.to_string(),
+                    tx,
+                ));
+            },
+        );
+
         // 启动事件处理任务 - 使用 runtime::spawn 避免 GPUI 生命周期问题
         runtime::spawn(async move {
             while let Some(event) = event_rx.recv().await {
@@ -251,6 +266,7 @@ impl MainWindow {
             &self.tab_manager,
             &self.status_bar,
             event_tx,
+            Some(host_key_confirm_callback),
             None, // 错误通过事件通道处理
         );
 
