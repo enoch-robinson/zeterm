@@ -25,8 +25,8 @@ async fn test_global_database_singleton() {
     app::init_global_database(Arc::new(db));
 
     // 获取全局数据库实例
-    let db1 = app::global_database();
-    let db2 = app::global_database();
+    let db1 = app::global_database().expect("Global database should be initialized");
+    let db2 = app::global_database().expect("Global database should be initialized");
 
     // 验证返回的是同一个实例（Arc 指针相等）
     assert!(
