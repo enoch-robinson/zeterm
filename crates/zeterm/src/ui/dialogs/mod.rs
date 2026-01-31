@@ -19,5 +19,5 @@ pub use delete_confirm_dialog::{
     // DeleteTarget is only used internally in DeleteConfirmEvent
     // create_delete_confirm_dialog is not used
 };
-pub use error_notification::{ErrorNotification, ErrorNotificationEvent};
+pub use error_notification::ErrorNotification;
 pub use host_connection_dialog::HostConnectionDialog;

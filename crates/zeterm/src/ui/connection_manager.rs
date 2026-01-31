@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use gpui::{Context, Entity};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 use zeterm_core::ConnectionState;
 use zeterm_core::config::PasswordRef;
@@ -18,6 +19,20 @@ use crate::app::runtime;
 use crate::app::session::SessionCoordinator;
 use crate::ui::status_bar::{ConnectionStatus, StatusBar};
 use crate::ui::tab_manager::{TabId, TabManager};
+
+/// 连接事件
+/// 用于异步通知 UI 层连接状态变化
+#[derive(Clone, Debug)]
+pub enum ConnectionEvent {
+    /// 连接成功
+    Connected { host: String, username: String },
+    /// 连接失败
+    Failed { host: String, error: String },
+    /// 连接断开
+    Disconnected { host: String, reason: String },
+    /// 状态变化
+    StateChanged { state: ConnectionState },
+}
 
 pub struct ConnectionManager;
 
@@ -37,6 +52,7 @@ impl ConnectionManager {
         cx: &mut Context<T>,
         tab_manager: &Entity<TabManager>,
         status_bar: &Entity<StatusBar>,
+        event_tx: mpsc::Sender<ConnectionEvent>,
         on_error: Option<Box<dyn Fn(String) + Send + 'static>>,
     ) -> Option<()>
     where
@@ -59,6 +75,7 @@ impl ConnectionManager {
         // 3-5. 异步执行 SSH 连接
         let host_clone = host.clone();
         let coordinator_clone = coordinator.clone();
+        let event_tx_clone = event_tx.clone();
 
         runtime::spawn(async move {
             info!(
@@ -70,6 +87,23 @@ impl ConnectionManager {
                 Ok(stream) => {
                     info!("SSH 连接成功: {}@{}", host_clone.username, host_clone.host);
 
+                    // 发送连接成功事件
+                    let _ = event_tx_clone
+                        .send(ConnectionEvent::Connected {
+                            host: host_clone.host.clone(),
+                            username: host_clone.username.clone(),
+                        })
+                        .await;
+
+                    // 发送状态变化事件
+                    let _ = event_tx_clone
+                        .send(ConnectionEvent::StateChanged {
+                            state: ConnectionState::Connected {
+                                connected_at: std::time::Instant::now(),
+                            },
+                        })
+                        .await;
+
                     // 启动数据泵
                     coordinator_clone
                         .start_data_pump(stream, move || {
@@ -78,10 +112,26 @@ impl ConnectionManager {
                         .await;
 
                     info!("数据泵已停止: {}@{}", host_clone.username, host_clone.host);
+
+                    // 发送断开连接事件
+                    let _ = event_tx_clone
+                        .send(ConnectionEvent::Disconnected {
+                            host: host_clone.host.clone(),
+                            reason: "连接已关闭".to_string(),
+                        })
+                        .await;
                 },
                 Err(e) => {
                     let error_msg = format!("SSH 连接失败: {} - {}", host_clone.name, e);
                     error!("{}", error_msg);
+
+                    // 发送连接失败事件
+                    let _ = event_tx_clone
+                        .send(ConnectionEvent::Failed {
+                            host: host_clone.name.clone(),
+                            error: error_msg.clone(),
+                        })
+                        .await;
 
                     // 调用错误回调
                     if let Some(ref callback) = on_error {

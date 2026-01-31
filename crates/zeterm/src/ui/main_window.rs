@@ -12,13 +12,14 @@ use gpui::{
     Render, Styled, Window, div, prelude::*, px,
 };
 use gpui_component::ActiveTheme;
+use tokio::sync::mpsc;
 use tracing::{error, info};
 
 use crate::app::runtime;
 use crate::app::session::SessionCoordinator;
 use crate::app::terminal::TerminalConfig;
 use crate::ui::app_theme::{AppThemeManager, BuiltinTheme, ThemeMode};
-use crate::ui::connection_manager::ConnectionManager;
+use crate::ui::connection_manager::{ConnectionEvent, ConnectionManager};
 use crate::ui::dialogs::{ErrorNotification, HostConnectionDialog};
 use crate::ui::host_list::{HostListEvent, HostListView};
 use crate::ui::split_pane::{Pane, PaneId, SplitDirection, SplitManager, SplitView};
@@ -67,6 +68,9 @@ pub struct MainWindow {
 
     /// 错误通知
     error_notification: Option<Entity<ErrorNotification>>,
+
+    /// 待处理的连接错误队列
+    pending_errors: Arc<Mutex<Vec<String>>>,
 
     /// 是否显示侧边栏
     show_sidebar: bool,
@@ -147,6 +151,7 @@ impl MainWindow {
             theme_manager,
             connection_dialog: Arc::new(Mutex::new(None)),
             error_notification: None,
+            pending_errors: Arc::new(Mutex::new(Vec::new())),
             show_sidebar: true,
             show_tab_bar: true,
         }
@@ -209,13 +214,35 @@ impl MainWindow {
             },
         };
 
-        // 4. 委托给连接管理器处理连接逻辑
-        let _host_name = host.name.clone();
-        let error_callback = Box::new(move |error_msg: String| {
-            // 错误通知将通过主窗口的事件循环显示
-            tracing::error!("连接错误回调: {}", error_msg);
+        // 4. 创建事件通道用于接收连接状态变化
+        let (event_tx, mut event_rx) = mpsc::channel::<ConnectionEvent>(100);
+        let pending_errors = self.pending_errors.clone();
+
+        // 启动事件处理任务 - 使用 runtime::spawn 避免 GPUI 生命周期问题
+        runtime::spawn(async move {
+            while let Some(event) = event_rx.recv().await {
+                match event {
+                    ConnectionEvent::Connected { .. } => {
+                        // 状态栏更新将在 render 中通过 sync_status_bar_from_coordinator 处理
+                    },
+                    ConnectionEvent::Failed { host, error } => {
+                        // 将错误加入队列，在 render 中显示
+                        pending_errors
+                            .lock()
+                            .unwrap()
+                            .push(format!("{}: {}", host, error));
+                    },
+                    ConnectionEvent::Disconnected { .. } => {
+                        // 状态栏更新将在 render 中处理
+                    },
+                    ConnectionEvent::StateChanged { .. } => {
+                        // 状态栏更新将在 render 中处理
+                    },
+                }
+            }
         });
 
+        // 5. 委托给连接管理器处理连接逻辑
         ConnectionManager::connect_to_host(
             host,
             tab_id,
@@ -223,7 +250,8 @@ impl MainWindow {
             cx,
             &self.tab_manager,
             &self.status_bar,
-            Some(error_callback),
+            event_tx,
+            None, // 错误通过事件通道处理
         );
 
         cx.notify();
@@ -1181,6 +1209,12 @@ impl Render for MainWindow {
         // 注意：不在 render 中修改状态
         // 新建 Tab 请求通过 TabViewEvent 事件处理
         // 状态栏同步在 TabSwitched 事件中处理
+
+        // 处理待显示的错误
+        let errors: Vec<String> = self.pending_errors.lock().unwrap().drain(..).collect();
+        for error in errors {
+            self.show_connection_error("连接失败", error, cx);
+        }
 
         let has_tabs = self.has_tabs(cx);
 
