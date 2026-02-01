@@ -139,10 +139,20 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
     get_or_init_runtime().block_on(future)
 }
 
-/// 在新线程中执行异步代码
+/// 在阻塞线程池中执行异步代码
+///
+/// 使用 tokio 的内置阻塞线程池，避免创建新线程。
+/// 执行完成后不返回结果（fire-and-forget 模式）。
+///
+/// # 性能优势
+///
+/// - 使用固定大小的线程池（由 tokio 管理）
+/// - 线程复用，避免频繁创建/销毁的开销
+/// - 自动限制并发数，避免资源耗尽
+///
+/// # 使用场景
 ///
 /// 适用于从 UI 线程发起异步操作，避免阻塞 UI。
-/// 执行完成后不返回结果（fire-and-forget 模式）。
 ///
 /// # 示例
 ///
@@ -157,13 +167,21 @@ where
     F: Future + Send + 'static,
     F::Output: Send + 'static,
 {
-    let handle = handle();
-    std::thread::spawn(move || {
-        handle.block_on(future);
-    });
+    get_or_init_runtime()
+        .spawn_blocking(move || tokio::task::block_in_place(|| Handle::current().block_on(future)));
 }
 
-/// 在新线程中执行异步代码，并通过回调返回结果
+/// 在阻塞线程池中执行异步代码，并通过回调返回结果
+///
+/// 使用 tokio 的内置阻塞线程池，避免创建新线程。
+///
+/// # 性能优势
+///
+/// - 使用固定大小的线程池（由 tokio 管理）
+/// - 线程复用，避免频繁创建/销毁的开销
+/// - 自动限制并发数，避免资源耗尽
+///
+/// # 使用场景
 ///
 /// 适用于需要获取异步操作结果的场景。
 ///
@@ -173,7 +191,7 @@ where
 /// runtime::spawn_with_callback(
 ///     async { fetch_data().await },
 ///     |result| {
-///         // 在新线程中处理结果
+///         // 在阻塞线程池中处理结果
 ///         println!("Got result: {:?}", result);
 ///     }
 /// );
@@ -184,9 +202,8 @@ where
     T: Send + 'static,
     C: FnOnce(T) + Send + 'static,
 {
-    let handle = handle();
-    std::thread::spawn(move || {
-        let result = handle.block_on(future);
+    get_or_init_runtime().spawn_blocking(move || {
+        let result = tokio::task::block_in_place(|| Handle::current().block_on(future));
         callback(result);
     });
 }
