@@ -1,0 +1,53 @@
+# Zeterm Clippy 代码检查配置
+# https://doc.rust-lang.org/clippy/configuration.html
+
+# 认知复杂度阈值
+cognitive-complexity-threshold = 25
+
+# 函数参数数量上限
+too-many-arguments-threshold = 8
+
+# 结构体字段数量上限
+too-many-lines-threshold = 200
+
+# 类型复杂度阈值
+type-complexity-threshold = 300
+
+# 允许的通配符导入
+allowed-wildcard-imports = ["gpui::*", "gpui::prelude::*"]
+
+# 文档注释中允许的私有项
+missing-docs-in-crate-items = false
+
+# 单字母变量名允许列表
+allowed-idents-below-min-chars = ["i", "j", "k", "n", "x", "y", "w", "h", "cx", "id", "tx", "rx"]
+
+# 禁止使用的方法
+disallowed-methods = [
+    { path = "std::thread::sleep", reason = "Use tokio::time::sleep for async code" },
+]
+
+# 禁止使用的类型
+disallowed-types = [
+    { path = "std::sync::Mutex", reason = "Use parking_lot::Mutex or tokio::sync::Mutex" },
+]
+
+# 大型错误类型阈值 (bytes)
+large-error-threshold = 256
+
+# 枚举变体大小差异阈值
+enum-variant-size-threshold = 200
+
+# 向量初始化大小阈值
+vec-box-size-threshold = 4096
+
+# 允许的脚本
+allowed-scripts = ["Latin", "Common"]
+
+# 标准宏格式
+standard-macro-braces = [
+    { name = "vec", brace = "[" },
+    { name = "format", brace = "(" },
+    { name = "println", brace = "(" },
+    { name = "eprintln", brace = "(" },
+]

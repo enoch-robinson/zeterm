@@ -1,0 +1,43 @@
+[package]
+name = "zeterm-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+# Internal
+zeterm-core.workspace = true
+
+# Database
+sqlx.workspace = true
+
+# Async
+async-trait.workspace = true
+futures.workspace = true
+tokio.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Utilities
+dirs.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+
+# Secret storage
+keyring.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "macros"] }
+tempfile = "3.8"

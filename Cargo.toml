@@ -1,0 +1,85 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/zeterm",
+    "crates/zeterm-core",
+    "crates/zeterm-mock",
+    "crates/zeterm-ssh",
+    "crates/zeterm-storage",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.92"
+authors = ["Zeterm Team"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/example/zeterm"
+
+[workspace.dependencies]
+# Internal crates
+zeterm-core = { path = "crates/zeterm-core" }
+zeterm-mock = { path = "crates/zeterm-mock" }
+zeterm-ssh = { path = "crates/zeterm-ssh" }
+zeterm-storage = { path = "crates/zeterm-storage" }
+
+# UI Framework
+# Use git version to fix ashpd compatibility issue
+gpui = { git = "https://github.com/zed-industries/zed", default-features = false, features = ["font-kit"] }
+gpui-component = { git = "https://github.com/longbridge/gpui-component", branch = "main" }
+
+# Terminal emulation
+alacritty_terminal = "0.25.1"
+
+# SSH
+# ECDSA key support (NIST P-256, P-384, P-521) is built-in via p256/p384/p521 dependencies
+russh = "0.56.0"
+russh-sftp = "2.1.1"
+
+# Async runtime
+tokio = { version = "1.49.0", features = ["full"] }
+tokio-stream = "0.1"
+futures = "0.3.31"
+async-trait = "0.1.89"
+tokio-util = "0.7"
+
+# Serialization
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.9.11"
+
+# Database
+sqlx = { version = "0.8", features = ["sqlite", "runtime-tokio"] }
+
+# Error handling
+thiserror = "2.0.17"
+anyhow = "1.0.100"
+
+# Logging
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter"] }
+
+# Utilities
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dirs = "6.0"
+parking_lot = "0.12"
+
+# Secret storage (cross-platform keychain/credential manager)
+keyring = "3"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+
+# Patch to fix ashpd 0.11.0 compatibility issue
+# Use Zed's git version which has compatible dependencies
+# This ensures gpui-component also uses the git version of gpui
+# Note: features and default-features are configured in workspace.dependencies
+[patch.crates-io]
+gpui = { git = "https://github.com/zed-industries/zed" }

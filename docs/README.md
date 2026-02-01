@@ -6,53 +6,36 @@
 
 ## 📚 文档索引
 
-### 总览
+### 核心文档
 
 | 文档 | 说明 |
 |------|------|
-| [design.md](./design.md) | 总体设计概述 |
-| [roadmap.md](./roadmap.md) | 实现路径与里程碑 |
-| [api.md](./api.md) | API 文档 |
-| [quick-reference.md](./quick-reference.md) | 快速参考卡 |
-| [implementation-guide.md](./implementation-guide.md) | 产品开发实现步骤 ⭐ NEW |
-| [task-checklist.md](./task-checklist.md) | 详细任务实现清单 ⭐ NEW |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | 架构总览（分层设计 + 组件分工 + 数据流） |
+| [API.md](./API.md) | 完整 API 定义（Trait + 实体 + 错误类型） |
+| [IMPLEMENTATION.md](./IMPLEMENTATION.md) | 实现指南（开发阶段 + 技术要点） |
+| [USER_GUIDE.md](./USER_GUIDE.md) | 用户指南（安装 + 使用 + 快捷键） |
+| [PERSISTENCE.md](./PERSISTENCE.md) | 配置与持久化（目录结构 + 配置项 + 数据库） |
 
-### 架构设计 (`architecture/`)
-
-| 文档 | 说明 |
-|------|------|
-| [layers.md](./architecture/layers.md) | 五层架构详解 |
-| [data-flow.md](./architecture/data-flow.md) | 数据流与线程模型 |
-
-### 核心抽象 (`core/`)
+### 模块文档
 
 | 文档 | 说明 |
 |------|------|
-| [connection-trait.md](./core/connection-trait.md) | TerminalConnection Trait 设计 |
-| [state-machine.md](./core/state-machine.md) | 连接状态机设计 |
-| [error-handling.md](./core/error-handling.md) | 错误处理策略 |
-| [testing.md](./core/testing.md) | 测试策略与Mock 指南 |
-| [security.md](./core/security.md) | 安全设计与凭证保护 |
+| [SSH 后端实现](./modules/ssh-backend.md) | 基于 russh 的 SSH 连接实现 |
+| [SFTP 文件管理](./modules/sftp.md) | 远程文件系统访问与管理 |
 
-### 功能模块 (`modules/`)
+### 核心抽象
 
 | 文档 | 说明 |
 |------|------|
-| [session-model.md](./modules/session-model.md) | SessionCoordinator 会话模型 |
-| [terminal-view.md](./modules/terminal-view.md) | TerminalView 渲染视图 (参考 Zed) |
-| [terminal-rendering.md](./modules/terminal-rendering.md) | 终端渲染实现细节 ⭐ NEW |
-| [key-mappings.md](./modules/key-mappings.md) | 按键映射表 ⭐ NEW |
-| [zed-terminal-analysis.md](./modules/zed-terminal-analysis.md) | Zed 终端渲染技术分析 |
-| [ssh-backend.md](./modules/ssh-backend.md) | SSH 后端实现 (russh) |
-| [sftp.md](./modules/sftp.md) | SFTP 文件管理模块 |
+| [连接状态机](./core/state-machine.md) | 连接生命周期状态与转换规则 |
+| [错误处理策略](./core/error-handling.md) | 错误类型定义与处理策略 |
 
-### 基础设施 (`infrastructure/`)
+### 参考文档
 
-| 文档 | 说明 |
+| 目录 | 说明 |
 |------|------|
-| [config.md](./infrastructure/config.md) | 配置管理系统 |
-| [persistence.md](./infrastructure/persistence.md) | 数据持久化设计 |
-| [platform.md](./infrastructure/platform.md) | 跨平台差异处理 ⭐ NEW |
+| `research/` | 研究资料（Zed 终端分析等） |
+| `reference/` | 速查资料（按键映射、术语表等） |
 
 ---
 
@@ -62,13 +45,13 @@ Zeterm 采用**五层架构**设计，实现 UI 层与网络层的彻底解耦�
 
 | 层级 | 职责 | 核心组件 |
 |------|------|----------|
-| 表现层 | UI渲染、事件捕获 | TerminalView, SftpView |
-| 应用层 | 用例协调、状态管理 | SessionCoordinator |
+| 表现层 | UI渲染、事件捕获 | TerminalView, TabView, SplitView |
+| 应用层 | 用例协调、状态管理 | SessionCoordinator, TabManager |
 | 领域层 | 业务实体、Trait 抽象 | TerminalConnection |
 | 适配器层 | 协议转换 | SshAdapter |
 | 基础设施层 | IO、外部服务 | SshConnection, SQLite |
 
-> 📖 详细架构设计见 [五层架构详解](./architecture/layers.md)
+> 📖 详细架构设计见 [ARCHITECTURE.md](./ARCHITECTURE.md)
 
 ---
 
@@ -86,16 +69,17 @@ Zeterm 采用**五层架构**设计，实现 UI 层与网络层的彻底解耦�
 
 ---
 
-##🧩 组件分工
+## 🧩 组件分工
 
 | 组件类型 | 来源 | 用途 |
 |----------|------|------|
-| **终端渲染器** | 参考 Zed `terminal_view` | 字符网格、光标、选择 |
-| **窗口 UI 组件** | gpui-component | Tab、Dock、Modal、按钮等 |
+| **终端渲染器** | 自实现（参考 Zed） | 字符网格、光标、选择 |
+| **Tab/分屏** | 自实现 | 多标签页、分屏布局 |
+| **其他 UI 组件** | gpui-component | Modal、Input、Button、Theme 等 |
 
-> ⚠️ 终端渲染器需参考 Zed 实现，gpui-component 不提供终端渲染能力。
+> ⚠️ 终端渲染器、Tab、分屏均为自实现，gpui-component 不提供这些能力。
 >
-> 📖 详细实现见 [TerminalView](./modules/terminal-view.md)
+> 📖 详细实现见 [ARCHITECTURE.md](./ARCHITECTURE.md)
 
 ---
 

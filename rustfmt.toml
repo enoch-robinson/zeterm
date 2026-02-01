@@ -1,0 +1,64 @@
+# Zeterm Rust代码格式化配置
+# https://rust-lang.github.io/rustfmt/
+
+# 使用 Rust 2024 edition风格
+edition = "2024"
+
+# 最大行宽
+max_width = 100
+
+# 缩进使用空格
+hard_tabs = false
+tab_spaces = 4
+
+# 函数参数换行策略
+fn_params_layout = "Tall"
+
+# use语句分组和排序
+imports_granularity = "Module"
+group_imports = "StdExternalCrate"
+reorder_imports = true
+reorder_modules = true
+
+# 注释格式化
+wrap_comments = true
+comment_width = 100
+normalize_comments = true
+
+# 结构体和枚举
+struct_lit_single_line = true
+enum_discrim_align_threshold = 20
+
+# match 表达式
+match_block_trailing_comma = true
+match_arm_blocks = true
+
+# 链式调用
+chain_width = 60
+
+# 字符串字面量
+format_strings = false
+
+# 宏格式化
+format_macro_matchers = true
+format_macro_bodies = true
+
+# 控制流
+control_brace_style = "AlwaysSameLine"
+brace_style = "SameLineWhere"
+
+# 空行
+blank_lines_upper_bound = 2
+blank_lines_lower_bound = 0
+
+# 尾随逗号
+trailing_comma = "Vertical"
+trailing_semicolon = true
+
+# 类型注解
+space_after_colon = true
+space_before_colon = false
+spaces_around_ranges = false
+
+# 文档注释
+doc_comment_code_block_width = 100

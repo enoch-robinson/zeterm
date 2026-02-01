@@ -1,0 +1,65 @@
+# Zeterm Custom Theme Template
+# ============================
+#
+# 使用说明:
+# 1. 复制此文件到 ~/.config/zeterm/themes/my-theme.toml
+# 2. 修改下面的颜色值（使用 #RRGGBB 格式）
+# 3. 在 config.toml 中添加:
+#    custom_theme_path = "~/.config/zeterm/themes/my-theme.toml"
+# 4. 重启 Zeterm 或使用热重载功能
+#
+# 提示:
+# - 所有字段都有默认值，可以只设置需要修改的部分
+# - 颜色值支持 #RRGGBB 和 RRGGBB 两种格式
+# - is_dark 会影响某些 UI 元素的显示
+
+# ============== 主题信息 ==============
+[theme]
+name = "My Custom Theme"  # 主题名称，显示在主题列表中
+is_dark = true            # 是否为暗色主题
+
+# ============== 基础颜色 ==============
+[colors]
+foreground = "#c0c0c0"    # 默认前景色（文字颜色）
+background = "#1e1e1e"    # 默认背景色
+
+# ============== 16 色调色板 ==============
+# 标准 ANSI 颜色，用于终端输出着色
+[colors.palette]
+# 基础 8 色 (ANSI 0-7)
+black = "#000000"         # 黑色 (ANSI 0)
+red = "#cc0000"           # 红色 (ANSI 1)
+green = "#00cc00"         # 绿色 (ANSI 2)
+yellow = "#cccc00"        # 黄色 (ANSI 3)
+blue = "#0000cc"          # 蓝色 (ANSI 4)
+magenta = "#cc00cc"       # 品红 (ANSI 5)
+cyan = "#00cccc"          # 青色 (ANSI 6)
+white = "#cccccc"         # 白色 (ANSI 7)
+
+# 高亮 8 色 (ANSI 8-15)
+bright_black = "#666666"  # 亮黑/灰色 (ANSI 8)
+bright_red = "#ff0000"    # 亮红 (ANSI 9)
+bright_green = "#00ff00"  # 亮绿 (ANSI 10)
+bright_yellow = "#ffff00" # 亮黄 (ANSI 11)
+bright_blue = "#0000ff"   # 亮蓝 (ANSI 12)
+bright_magenta = "#ff00ff"# 亮品红 (ANSI 13)
+bright_cyan = "#00ffff"   # 亮青 (ANSI 14)
+bright_white = "#ffffff"  # 亮白 (ANSI 15)
+
+# ============== 光标配置 ==============
+[cursor]
+color = "#cccccc"         # 光标颜色
+text_color = "#1e1e1e"    # 光标下文字的颜色
+
+# ============== 选择配置 ==============
+[selection]
+background = "#264f78"    # 选中文本的背景色
+# foreground = "#ffffff"  # 选中文本的前景色（可选，不设置则保持原色）
+
+# ============== UI 元素颜色 ==============
+[ui]
+border = "#3c3c3c"        # 边框颜色
+scrollbar = "#4a4a4a"     # 滚动条颜色
+scrollbar_hover = "#5a5a5a" # 滚动条悬停颜色
+search_match = "#515000"  # 搜索匹配高亮颜色
+search_match_active = "#615a00" # 当前搜索匹配颜色
