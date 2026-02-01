@@ -6,7 +6,9 @@
 #![allow(dead_code)]
 
 use std::sync::{Arc, OnceLock};
-use zeterm_storage::Database;
+use zeterm_storage::{Database, KeyringSecretStore, SecretHelper};
+#[cfg(target_os = "windows")]
+use zeterm_storage::{SqliteSecretStore, default_secret_helper_windows};
 
 pub mod runtime;
 pub mod session;
@@ -52,4 +54,19 @@ pub fn init_global_database(db: Arc<Database>) {
 /// ```
 pub fn global_database() -> Option<Arc<Database>> {
     GLOBAL_DATABASE.get().cloned()
+}
+
+/// 获取平台特定的 SecretHelper
+///
+/// - Windows: 使用 SQLite 存储（避免 Credential Manager 线程隔离问题）
+/// - 其他平台: 使用系统密钥链（Keyring）
+#[cfg(target_os = "windows")]
+pub fn global_secret_helper() -> Option<SecretHelper<SqliteSecretStore>> {
+    global_database().map(|db| default_secret_helper_windows(db))
+}
+
+/// 获取平台特定的 SecretHelper（非 Windows）
+#[cfg(not(target_os = "windows"))]
+pub fn global_secret_helper() -> Option<SecretHelper<KeyringSecretStore>> {
+    Some(SecretHelper::with_keyring())
 }

@@ -5,7 +5,7 @@
 //! # 支持的平台
 //!
 //! - **macOS**: Keychain Access
-//! - **Windows**: Credential Manager
+//! - **Windows**: SQLite (替代 Credential Manager，避免线程隔离问题)
 //! - **Linux**: Secret Service (GNOME Keyring / KWallet)
 //!
 //! # 示例
@@ -31,9 +31,13 @@
 
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::RwLock;
 use tracing::{debug, info, warn};
 use zeterm_core::config::PasswordRef;
+
+use crate::Database;
+use sqlx::SqlitePool;
 
 /// 服务名称（用于在系统密钥链中标识应用）
 const SERVICE_NAME: &str = "zeterm";
@@ -254,6 +258,185 @@ impl SecretStore for KeyringSecretStore {
                 Err(e).with_context(|| format!("删除密码失败: {}", key))
             },
         }
+    }
+}
+
+/// SQLite SecretStore 实现
+///
+/// 用于 Windows 平台替代 Credential Manager，避免线程隔离问题。
+/// 密码存储在 SQLite 数据库中，依赖文件系统权限保护。
+#[derive(Debug, Clone)]
+pub struct SqliteSecretStore {
+    /// 数据库连接
+    db: Arc<Database>,
+}
+
+impl SqliteSecretStore {
+    /// 创建新的 SQLite SecretStore
+    pub fn new(db: Arc<Database>) -> Self {
+        Self { db }
+    }
+}
+
+impl SqliteSecretStore {
+    /// 获取数据库连接池的引用
+    fn pool(&self) -> &SqlitePool {
+        self.db.pool()
+    }
+}
+
+impl SecretStore for SqliteSecretStore {
+    fn set_password(&self, key: &str, password: &str) -> Result<()> {
+        debug!(key = %key, "Storing password in SQLite");
+
+        let now = chrono::Utc::now().timestamp();
+        let pool = self.pool().clone();
+
+        // 使用阻塞线程执行数据库操作
+        std::thread::scope(|s| {
+            s.spawn(move || {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(async {
+                    sqlx::query(
+                        r#"
+                        INSERT INTO secrets (key, password, created_at, updated_at)
+                        VALUES (?1, ?2, ?3, ?3)
+                        ON CONFLICT(key) DO UPDATE SET
+                            password = excluded.password,
+                            updated_at = excluded.updated_at
+                        "#,
+                    )
+                    .bind(key)
+                    .bind(password)
+                    .bind(now)
+                    .execute(&pool)
+                    .await
+                    .context("存储密码到 SQLite 失败")
+                })
+            })
+            .join()
+            .expect("SQLite password storage thread panicked")
+        })?;
+
+        info!(key = %key, "Password stored successfully in SQLite");
+        Ok(())
+    }
+
+    fn get_password(&self, key: &str) -> Result<Option<String>> {
+        debug!(key = %key, "Retrieving password from SQLite");
+
+        let pool = self.pool().clone();
+        let password: Option<String> = std::thread::scope(|s| {
+            s.spawn(move || {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(async {
+                    sqlx::query_scalar::<_, String>("SELECT password FROM secrets WHERE key = ?1")
+                        .bind(key)
+                        .fetch_optional(&pool)
+                        .await
+                        .context("从 SQLite 读取密码失败")
+                })
+            })
+            .join()
+            .expect("SQLite password retrieval thread panicked")
+        })?;
+
+        if password.is_some() {
+            debug!(key = %key, "Password retrieved successfully from SQLite");
+        } else {
+            debug!(key = %key, "Password not found in SQLite");
+        }
+
+        Ok(password)
+    }
+
+    fn delete_password(&self, key: &str) -> Result<bool> {
+        debug!(key = %key, "Deleting password from SQLite");
+
+        let pool = self.pool().clone();
+        let result = std::thread::scope(|s| {
+            s.spawn(move || {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(async {
+                    let result = sqlx::query("DELETE FROM secrets WHERE key = ?1")
+                        .bind(key)
+                        .execute(&pool)
+                        .await
+                        .context("从 SQLite 删除密码失败")?;
+
+                    Ok::<_, anyhow::Error>(result.rows_affected() > 0)
+                })
+            })
+            .join()
+            .expect("SQLite password deletion thread panicked")
+        })?;
+
+        if result {
+            info!(key = %key, "Password deleted successfully from SQLite");
+        } else {
+            debug!(key = %key, "Password not found in SQLite, nothing to delete");
+        }
+
+        Ok(result)
+    }
+
+    fn has_password(&self, key: &str) -> Result<bool> {
+        let pool = self.pool().clone();
+        let count: i64 = std::thread::scope(|s| {
+            s.spawn(move || {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(async {
+                    sqlx::query_scalar("SELECT COUNT(*) FROM secrets WHERE key = ?1")
+                        .bind(key)
+                        .fetch_one(&pool)
+                        .await
+                        .context("查询 SQLite 密码存在性失败")
+                })
+            })
+            .join()
+            .expect("SQLite password check thread panicked")
+        })?;
+
+        Ok(count > 0)
+    }
+
+    fn list_keys(&self) -> Result<Vec<String>> {
+        let pool = self.pool().clone();
+        let keys: Vec<String> = std::thread::scope(|s| {
+            s.spawn(move || {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(async {
+                    sqlx::query_scalar("SELECT key FROM secrets ORDER BY key")
+                        .fetch_all(&pool)
+                        .await
+                        .context("列出 SQLite 密码键失败")
+                })
+            })
+            .join()
+            .expect("SQLite password list thread panicked")
+        })?;
+
+        Ok(keys)
+    }
+
+    fn clear_all(&self) -> Result<()> {
+        let pool = self.pool().clone();
+        std::thread::scope(|s| {
+            s.spawn(move || {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(async {
+                    sqlx::query("DELETE FROM secrets")
+                        .execute(&pool)
+                        .await
+                        .context("清空 SQLite 密码表失败")
+                })
+            })
+            .join()
+            .expect("SQLite password clear thread panicked")
+        })?;
+
+        info!("All passwords cleared from SQLite");
+        Ok(())
     }
 }
 
@@ -574,6 +757,12 @@ impl Default for SecretHelper<KeyringSecretStore> {
 /// 创建默认的 SecretHelper（使用系统密钥链）
 pub fn default_secret_helper() -> SecretHelper<KeyringSecretStore> {
     SecretHelper::with_keyring()
+}
+
+/// 创建用于 Windows 的 SecretHelper（使用 SQLite 存储）
+#[cfg(target_os = "windows")]
+pub fn default_secret_helper_windows(db: Arc<Database>) -> SecretHelper<SqliteSecretStore> {
+    SecretHelper::new(SqliteSecretStore::new(db))
 }
 
 #[cfg(test)]

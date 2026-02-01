@@ -13,10 +13,9 @@ use zeterm_core::config::PasswordRef;
 use zeterm_core::entities::{AuthConfig, HostConfig, TerminalSize};
 use zeterm_core::errors::ConnectionError;
 use zeterm_ssh::{AuthMethod, HostKeyConfirmCallback, SshConfig, SshConnection};
-use zeterm_storage::{KeyringSecretStore, SecretHelper};
 
-use crate::app::runtime;
 use crate::app::session::SessionCoordinator;
+use crate::app::{global_secret_helper, runtime};
 use crate::ui::status_bar::{ConnectionStatus, StatusBar};
 use crate::ui::tab_manager::{TabId, TabManager};
 
@@ -217,8 +216,12 @@ impl ConnectionManager {
         host: &HostConfig,
         terminal_size: TerminalSize,
     ) -> Result<SshConfig, ConnectionError> {
-        // 创建密钥助手用于解析密码引用
-        let secret_helper = SecretHelper::<KeyringSecretStore>::default();
+        // 创建密钥助手用于解析密码引用（Windows 使用 SQLite，其他平台使用系统密钥链）
+        let Some(secret_helper) = global_secret_helper() else {
+            return Err(ConnectionError::Configuration(
+                "Secret helper not initialized".to_string(),
+            ));
+        };
 
         // 转换认证方式
         let auth_method = match &host.auth_config {

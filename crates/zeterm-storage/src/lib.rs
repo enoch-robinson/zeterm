@@ -39,9 +39,12 @@ pub use repository::{
 };
 pub use secret::{
     KeyringSecretStore, MemorySecretStore, PasswordResolver, SecretHelper, SecretKeyGenerator,
-    SecretKeyType, SecretStore, default_password_resolver, default_secret_helper,
-    default_secret_store,
+    SecretKeyType, SecretStore, SqliteSecretStore, default_password_resolver,
+    default_secret_helper, default_secret_store,
 };
+
+#[cfg(target_os = "windows")]
+pub use secret::default_secret_helper_windows;
 
 #[cfg(test)]
 mod tests {

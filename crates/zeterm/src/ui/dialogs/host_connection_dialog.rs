@@ -13,7 +13,9 @@ use gpui_component::{ActiveTheme, Sizable, Size, button::Button};
 
 use tracing::{info, warn};
 use zeterm_core::entities::{AuthConfig, HostConfig, HostId};
-use zeterm_storage::{KeyringSecretStore, SecretHelper, SecretKeyGenerator, SecretStore};
+use zeterm_storage::{SecretKeyGenerator, SecretStore};
+
+use crate::app::global_secret_helper;
 
 /// 对话框模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,12 +110,16 @@ impl FormData {
                 // 尝试从密钥环解析现有密码（用于编辑模式）
                 let password_input = if password_ref.starts_with("keychain:") {
                     let key = &password_ref[9..]; // 移除 "keychain:" 前缀
-                    let secret_helper = SecretHelper::<KeyringSecretStore>::default();
-                    secret_helper
-                        .store()
-                        .get_password(key)
-                        .unwrap_or_default()
-                        .unwrap_or_default()
+                    // 使用全局 SecretHelper（Windows 使用 SQLite，其他平台使用系统密钥链）
+                    if let Some(secret_helper) = global_secret_helper() {
+                        secret_helper
+                            .store()
+                            .get_password(key)
+                            .unwrap_or_default()
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    }
                 } else {
                     String::new() // 对于其他类型的引用，不预填充密码
                 };
@@ -170,13 +176,15 @@ impl FormData {
                 // 自动生成密钥环 key 并存储密码
                 let key = SecretKeyGenerator::host_password(&self.username, &self.host, port);
 
-                // 存储密码到密钥环
-                let secret_helper = SecretHelper::<KeyringSecretStore>::default();
+                // 存储密码到密钥环 (Windows 使用 SQLite，其他平台使用系统密钥链)
+                let Some(secret_helper) = global_secret_helper() else {
+                    return Err("Secret helper not initialized".to_string());
+                };
                 if let Err(e) = secret_helper
                     .store()
                     .set_password(&key, &self.password_input)
                 {
-                    return Err(format!("Failed to store password in keyring: {}", e));
+                    return Err(format!("Failed to store password: {}", e));
                 }
 
                 // 生成 keychain 引用
@@ -998,7 +1006,7 @@ impl HostConnectionDialog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use zeterm_storage::MemorySecretStore;
+    use zeterm_storage::{MemorySecretStore, SecretHelper};
 
     #[test]
     fn test_form_data_password_storage() {
@@ -1110,7 +1118,11 @@ mod tests {
 
         match &config.auth_config {
             AuthConfig::Password { password_ref } => {
-                // 验证密钥格式
+                // 验证密钥格式（Windows 和非 Windows 格式不同）
+                assert!(password_ref.starts_with("keychain:"));
+                #[cfg(target_os = "windows")]
+                assert_eq!(password_ref, "keychain:host_admin_example.com_2222");
+                #[cfg(not(target_os = "windows"))]
                 assert_eq!(password_ref, "keychain:host:admin@example.com:2222");
             },
             _ => panic!("Expected password auth config"),
