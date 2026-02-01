@@ -3,7 +3,7 @@
 //! 管理应用程序的主窗口，包括 Tab 管理、分屏布局、状态栏和主题。
 //! 采用 "每个 Tab 独立分屏" 模式，参考 iTerm2 和 Windows Terminal 设计。
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -20,7 +20,9 @@ use crate::app::session::SessionCoordinator;
 use crate::app::terminal::TerminalConfig;
 use crate::ui::app_theme::{AppThemeManager, BuiltinTheme, ThemeMode};
 use crate::ui::connection_manager::{ConnectionEvent, ConnectionManager};
-use crate::ui::dialogs::{ErrorNotification, HostConnectionDialog};
+use crate::ui::dialogs::{
+    ErrorNotification, HostConnectionDialog, HostKeyDialog, HostKeyInfo, HostKeyResponse,
+};
 use crate::ui::host_list::{HostListEvent, HostListView};
 use crate::ui::split_pane::{Pane, PaneId, SplitDirection, SplitManager, SplitView};
 use crate::ui::status_bar::{ConnectionStatus, StatusBar, StatusInfo};
@@ -65,7 +67,11 @@ pub struct MainWindow {
     theme_manager: AppThemeManager,
 
     /// 连接对话框（新建或编辑主机）- 使用共享引用以便在回调中关闭
+    /// 连接对话框（暂存编辑中的对话框）
     connection_dialog: Arc<parking_lot::Mutex<Option<Entity<HostConnectionDialog>>>>,
+
+    /// 主机密钥确认对话框
+    host_key_dialog: Option<Entity<HostKeyDialog>>,
 
     /// 错误通知
     error_notification: Option<Entity<ErrorNotification>>,
@@ -140,6 +146,7 @@ impl MainWindow {
             status_bar,
             theme_manager,
             connection_dialog: Arc::new(parking_lot::Mutex::new(None)),
+            host_key_dialog: None,
             error_notification: None,
             pending_errors: Arc::new(parking_lot::Mutex::new(Vec::new())),
             show_sidebar: true,
@@ -210,7 +217,7 @@ impl MainWindow {
         let (event_tx, mut event_rx) = mpsc::channel::<ConnectionEvent>(100);
 
         // 创建主机密钥确认通道
-        let (host_key_tx, _host_key_rx) = mpsc::channel::<(
+        let (host_key_tx, mut host_key_rx) = mpsc::channel::<(
             String,
             u16,
             String,
@@ -248,11 +255,77 @@ impl MainWindow {
         })
         .detach();
 
+        // 启动主机密钥确认处理任务
+        cx.spawn(async move |this, cx| {
+            while let Some((hostname, port, key_type, fingerprint, response_tx)) =
+                host_key_rx.recv().await
+            {
+                info!("收到主机密钥确认请求: {}:{}", hostname, port);
+
+                // 在UI线程中显示对话框并等待用户响应
+                let result = this.update(cx, |this, cx| {
+                    // 创建主机密钥信息
+                    let host_key_info = HostKeyInfo::new(hostname, port, key_type, fingerprint);
+
+                    // 创建响应通道
+                    let (ui_tx, ui_rx) = tokio::sync::mpsc::channel::<(HostKeyResponse, bool)>(1);
+
+                    // 创建对话框
+                    let dialog = cx.new(|cx| {
+                        HostKeyDialog::new(host_key_info, cx).with_on_response(
+                            move |response, remember| {
+                                let _ = ui_tx.blocking_send((response, remember));
+                            },
+                        )
+                    });
+
+                    this.host_key_dialog = Some(dialog);
+                    cx.notify();
+
+                    ui_rx
+                });
+
+                if let Ok(mut ui_rx) = result {
+                    // 等待用户响应
+                    if let Some((response, remember)) = ui_rx.recv().await {
+                        info!("用户响应: {:?}, 记住选择: {}", response, remember);
+
+                        let accepted = match response {
+                            HostKeyResponse::Accept => Some(remember),
+                            HostKeyResponse::Reject => None,
+                            HostKeyResponse::Pending => None,
+                        };
+
+                        // 发送响应回SSH连接
+                        let _ = response_tx.send(accepted);
+
+                        // 关闭对话框
+                        let _ = this.update(cx, |this, cx| {
+                            this.host_key_dialog = None;
+                            cx.notify();
+                        });
+                    } else {
+                        // 超时或通道关闭，拒绝连接
+                        warn!("主机密钥确认超时或通道关闭");
+                        let _ = response_tx.send(None);
+                    }
+                } else {
+                    warn!("无法显示主机密钥确认对话框，窗口可能已关闭");
+                    let _ = response_tx.send(None);
+                    break;
+                }
+            }
+        })
+        .detach();
+
         // 5. 委托给连接管理器处理连接逻辑
+        // 获取实际终端尺寸（从 SessionCoordinator 获取，它使用创建时的 TerminalConfig）
+        let terminal_size = coordinator.terminal_size();
         ConnectionManager::connect_to_host(
             host,
             tab_id,
             coordinator,
+            terminal_size,
             cx,
             &self.tab_manager,
             &self.status_bar,
@@ -1366,6 +1439,11 @@ impl Render for MainWindow {
         // 如果有连接对话框，添加到根元素（作为覆盖层）
         if let Some(ref dialog) = *self.connection_dialog.lock() {
             root = root.child(dialog.clone());
+        }
+
+        // 如果有主机密钥确认对话框，显示为模态对话框
+        if let Some(ref dialog) = self.host_key_dialog {
+            root = root.child(div().absolute().inset_0().child(dialog.clone()));
         }
 
         // 如果有错误通知，显示在右上角

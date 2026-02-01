@@ -6,11 +6,11 @@
 use std::sync::Arc;
 
 use gpui::{Context, Entity};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 use zeterm_core::ConnectionState;
 use zeterm_core::config::PasswordRef;
-use zeterm_core::entities::{AuthConfig, HostConfig};
+use zeterm_core::entities::{AuthConfig, HostConfig, TerminalSize};
 use zeterm_core::errors::ConnectionError;
 use zeterm_ssh::{AuthMethod, HostKeyConfirmCallback, SshConfig, SshConnection};
 use zeterm_storage::{KeyringSecretStore, SecretHelper};
@@ -64,6 +64,7 @@ impl ConnectionManager {
         host: HostConfig,
         tab_id: TabId,
         coordinator: Arc<SessionCoordinator>,
+        terminal_size: TerminalSize,
         cx: &mut Context<T>,
         tab_manager: &Entity<TabManager>,
         status_bar: &Entity<StatusBar>,
@@ -100,8 +101,13 @@ impl ConnectionManager {
                 host_clone.username, host_clone.host
             );
 
-            match Self::do_ssh_connect(&host_clone, coordinator_clone.clone(), host_key_callback)
-                .await
+            match Self::do_ssh_connect(
+                &host_clone,
+                coordinator_clone.clone(),
+                terminal_size,
+                host_key_callback,
+            )
+            .await
             {
                 Ok(stream) => {
                     info!("SSH 连接成功: {}@{}", host_clone.username, host_clone.host);
@@ -176,13 +182,14 @@ impl ConnectionManager {
     async fn do_ssh_connect(
         host: &HostConfig,
         coordinator: Arc<SessionCoordinator>,
+        terminal_size: TerminalSize,
         host_key_confirm_callback: Option<HostKeyConfirmCallback>,
     ) -> Result<
         futures::stream::BoxStream<'static, Result<Vec<u8>, ConnectionError>>,
         ConnectionError,
     > {
         // 1. 转换配置
-        let ssh_config = Self::convert_to_ssh_config(host).await?;
+        let ssh_config = Self::convert_to_ssh_config(host, terminal_size).await?;
 
         // 2. 创建 SSH 连接
         let mut ssh_conn = SshConnection::new(ssh_config);
@@ -206,7 +213,10 @@ impl ConnectionManager {
     /// 将 HostConfig 转换为 SshConfig
     ///
     /// 处理认证配置的转换，包括从密钥链解析密码
-    async fn convert_to_ssh_config(host: &HostConfig) -> Result<SshConfig, ConnectionError> {
+    async fn convert_to_ssh_config(
+        host: &HostConfig,
+        terminal_size: TerminalSize,
+    ) -> Result<SshConfig, ConnectionError> {
         // 创建密钥助手用于解析密码引用
         let secret_helper = SecretHelper::<KeyringSecretStore>::default();
 
@@ -249,10 +259,10 @@ impl ConnectionManager {
             },
         };
 
-        // 构建 SshConfig
+        // 构建 SshConfig，使用传入的实际终端尺寸
         let ssh_config = SshConfig::new(&host.host, &host.username)
             .with_port(host.port)
-            .with_terminal_size(80, 24); // 默认终端大小，后续会通过 resize 调整
+            .with_terminal_size(terminal_size.cols, terminal_size.rows);
 
         // 设置认证方式（需要使用内部字段，因为 SshConfig 没有 with_auth_method）
         let mut ssh_config = ssh_config;

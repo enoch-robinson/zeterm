@@ -135,7 +135,14 @@ pub enum PasswordRef {
     /// 格式：env:VAR_NAME
     Env(String),
 
-    /// 明文密码（不推荐，仅用于测试）
+    /// ⚠️ 明文密码（强烈不推荐，仅用于本地测试）
+    ///
+    /// **安全警告**: 明文密码会被存储在配置文件中，存在严重安全风险！
+    ///
+    /// 生产环境请使用：
+    /// - `keychain:` - 系统密钥链（推荐）
+    /// - `env:` - 环境变量
+    ///
     /// 格式：plain:password
     Plain(String),
 
@@ -171,7 +178,7 @@ impl PasswordRef {
     /// 支持的格式：
     /// - `keychain:service_name` - 从系统密钥链读取
     /// - `env:VAR_NAME` - 从环境变量读取
-    /// - `plain:password` - 明文密码（不推荐）
+    /// - `plain:password` - ⚠️ 明文密码（强烈不推荐，存在安全风险）
     ///
     /// 注意：此方法向后兼容，会将无效格式静默转为 Keychain 类型。
     /// 建议使用 `parse_validated` 获取详细的错误信息。
@@ -184,7 +191,7 @@ impl PasswordRef {
     /// 支持的格式：
     /// - `keychain:service_name` - 从系统密钥链读取（只验证非空）
     /// - `env:VAR_NAME` - 从环境变量读取（验证变量名符合 POSIX 标准）
-    /// - `plain:password` - 明文密码（不推荐）
+    /// - `plain:password` - ⚠️ 明文密码（强烈不推荐，存在安全风险）
     /// - 空字符串返回 `PasswordRef::None`
     ///
     /// # 错误
@@ -233,7 +240,11 @@ impl PasswordRef {
             if plain.is_empty() {
                 return Err(PasswordRefParseError::EmptyValue);
             }
-            warn!("使用明文密码（不推荐）");
+            warn!(
+                "⚠️  检测到明文密码配置！这存在严重安全风险！\n\
+                 明文密码会被存储在配置文件中，可能被其他程序读取。\n\
+                 生产环境强烈建议使用 'keychain:' 或 'env:' 格式"
+            );
             Ok(Self::Plain(plain.to_string()))
         } else {
             // 无效的前缀

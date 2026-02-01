@@ -397,16 +397,27 @@ impl SshConnection {
     /// - 一次性密码 (OTP)
     /// - 挑战-响应认证
     ///
-    /// 注意：当前实现使用密码作为响应，适用于简单的密码提示场景。
-    /// 对于复杂的多轮交互，可能需要用户界面支持。
+    /// # 当前限制
+    ///
+    /// **警告**: 当前实现仅支持简单的单次密码提示场景。
+    ///
+    /// 不支持的功能：
+    /// - 多轮交互式认证
+    /// - 动态 2FA/TOTP 令牌输入
+    /// - 自定义提示响应
+    /// - 交互式问答
+    ///
+    /// 对于需要动态用户输入的场景（如 Google Authenticator），
+    /// 请考虑使用其他认证方法（如公钥或 SSH Agent）。
     async fn authenticate_keyboard_interactive(
         &self,
         session: &mut Handle<SshHandler>,
     ) -> Result<(), ConnectionError> {
-        debug!(
-            "Attempting keyboard-interactive authentication for user: {}",
+        info!(
+            "尝试 keyboard-interactive 认证 (用户: {})",
             self.config.username
         );
+        warn!("Keyboard-interactive 认证当前仅支持简单密码提示，不支持 2FA/TOTP 动态令牌");
 
         // 获取密码用于响应（如果配置了密码）
         let password = match &self.config.auth_method {
@@ -427,6 +438,7 @@ impl SshConnection {
         // 对于简单的密码提示场景，我们提供密码作为响应
         match password {
             Some(pwd) => {
+                debug!("使用预配置密码进行 keyboard-interactive 认证");
                 // 使用密码进行 keyboard-interactive 认证
                 // russh 0.56 的 API：authenticate_keyboard_interactive_start 开始认证
                 // 然后通过 authenticate_keyboard_interactive_respond 响应提示
@@ -461,9 +473,13 @@ impl SshConnection {
             },
             None => {
                 // 没有可用的密码，无法进行 keyboard-interactive 认证
-                warn!("No password available for keyboard-interactive authentication");
+                error!(
+                    "Keyboard-interactive 认证失败: 未配置密码。\
+                     提示: 对于 2FA/TOTP，请使用公钥认证或 SSH Agent"
+                );
                 Err(ConnectionError::Authentication(
-                    "Keyboard-interactive authentication requires a password but none was provided"
+                    "Keyboard-interactive 认证需要密码，但未提供。\
+                     对于 2FA 场景，建议使用公钥认证"
                         .into(),
                 ))
             },

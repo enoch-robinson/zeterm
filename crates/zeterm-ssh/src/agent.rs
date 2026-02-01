@@ -171,13 +171,27 @@ pub fn is_agent_available() -> bool {
 /// 检查 SSH Agent 是否可用 - Windows 实现
 #[cfg(windows)]
 pub fn is_agent_available() -> bool {
+    use tracing::debug;
+
     // Windows OpenSSH Agent使用命名管道
     // 检查环境变量或默认管道路径
-    if env::var("SSH_AUTH_SOCK").is_ok() {
+    if let Ok(sock) = env::var("SSH_AUTH_SOCK") {
+        debug!("SSH_AUTH_SOCK 环境变量已设置: {}", sock);
         return true;
     }
+
     // 检查默认的 OpenSSH Agent 命名管道是否存在
-    std::fs::metadata(r"\\.\pipe\openssh-ssh-agent").is_ok()
+    const DEFAULT_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
+    if std::fs::metadata(DEFAULT_PIPE).is_ok() {
+        debug!("检测到 OpenSSH Agent 默认命名管道: {}", DEFAULT_PIPE);
+        true
+    } else {
+        debug!(
+            "SSH Agent 不可用: SSH_AUTH_SOCK 未设置且默认管道 {} 不存在",
+            DEFAULT_PIPE
+        );
+        false
+    }
 }
 
 /// 获取 Agent socket 路径 - Unix 实现
@@ -191,15 +205,34 @@ pub fn get_agent_socket_path() -> Result<String, AgentError> {
 pub fn get_agent_socket_path() -> Result<String, AgentError> {
     // 优先使用环境变量
     if let Ok(path) = env::var("SSH_AUTH_SOCK") {
+        info!("使用 SSH_AUTH_SOCK 环境变量: {}", path);
         return Ok(path);
     }
+
     // 使用默认的 OpenSSH Agent 命名管道路径
     const DEFAULT_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
-    if std::fs::metadata(DEFAULT_PIPE).is_ok() {
-        Ok(DEFAULT_PIPE.to_string())
-    } else {
-        Err(AgentError::NotAvailable)
+
+    // 尝试多个可能的命名管道路径
+    let alternative_pipes = [
+        DEFAULT_PIPE,
+        r"\\.\pipe\ssh-agent", // 某些第三方 SSH Agent
+    ];
+
+    for pipe in &alternative_pipes {
+        if std::fs::metadata(pipe).is_ok() {
+            info!("检测到 SSH Agent 命名管道: {}", pipe);
+            return Ok(pipe.to_string());
+        }
     }
+
+    warn!(
+        "未找到可用的 SSH Agent 命名管道。\n\
+         提示: 请确保 OpenSSH Authentication Agent 服务正在运行。\n\
+         可通过以下命令启动:\n\
+         - PowerShell: Start-Service ssh-agent\n\
+         - 或在服务管理器中启动 'OpenSSH Authentication Agent'"
+    );
+    Err(AgentError::NotAvailable)
 }
 
 /// 检查 SSH Agent 状态

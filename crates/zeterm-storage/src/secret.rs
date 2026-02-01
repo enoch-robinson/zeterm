@@ -446,7 +446,11 @@ impl<S: SecretStore> SecretHelper<S> {
                 }
             },
             PasswordRef::Plain(plain) => {
-                warn!("Using plain text password (not recommended)");
+                warn!(
+                    "⚠️  使用明文密码存在严重安全风险！\n\
+                     明文密码会暴露在配置文件中，可能被其他程序读取。\n\
+                     生产环境强烈建议使用 keychain 或环境变量"
+                );
                 Ok(Some(plain.clone()))
             },
             PasswordRef::None => Ok(None),
