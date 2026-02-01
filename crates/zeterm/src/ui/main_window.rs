@@ -3,9 +3,9 @@
 //! 管理应用程序的主窗口，包括 Tab 管理、分屏布局、状态栏和主题。
 //! 采用 "每个 Tab 独立分屏" 模式，参考 iTerm2 和 Windows Terminal 设计。
 
+use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::{Mutex, RwLock};
 
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
@@ -65,13 +65,13 @@ pub struct MainWindow {
     theme_manager: AppThemeManager,
 
     /// 连接对话框（新建或编辑主机）- 使用共享引用以便在回调中关闭
-    connection_dialog: Arc<Mutex<Option<Entity<HostConnectionDialog>>>>,
+    connection_dialog: Arc<parking_lot::Mutex<Option<Entity<HostConnectionDialog>>>>,
 
     /// 错误通知
     error_notification: Option<Entity<ErrorNotification>>,
 
     /// 待处理的连接错误队列
-    pending_errors: Arc<Mutex<Vec<String>>>,
+    pending_errors: Arc<parking_lot::Mutex<Vec<String>>>,
 
     /// 是否显示侧边栏
     show_sidebar: bool,
@@ -139,9 +139,9 @@ impl MainWindow {
             _connection_manager: ConnectionManager,
             status_bar,
             theme_manager,
-            connection_dialog: Arc::new(Mutex::new(None)),
+            connection_dialog: Arc::new(parking_lot::Mutex::new(None)),
             error_notification: None,
-            pending_errors: Arc::new(Mutex::new(Vec::new())),
+            pending_errors: Arc::new(parking_lot::Mutex::new(Vec::new())),
             show_sidebar: true,
             show_tab_bar: true,
         };
@@ -1164,17 +1164,17 @@ impl MainWindow {
                 .with_on_save(move |config| {
                     Self::save_host_async(repository.clone(), hosts.clone(), config, true);
                     // 关闭对话框
-                    *dialog_ref.lock().unwrap() = None;
+                    *dialog_ref.lock() = None;
                 })
                 .with_on_cancel(move || {
                     tracing::info!("取消新建主机");
                     // 关闭对话框
-                    *dialog_ref_for_cancel.lock().unwrap() = None;
+                    *dialog_ref_for_cancel.lock() = None;
                 })
         });
 
         // 存储对话框引用
-        *self.connection_dialog.lock().unwrap() = Some(dialog);
+        *self.connection_dialog.lock() = Some(dialog);
 
         cx.notify();
     }
@@ -1204,17 +1204,17 @@ impl MainWindow {
                 .with_on_save(move |config| {
                     Self::save_host_async(repository.clone(), hosts.clone(), config, false);
                     // 关闭对话框
-                    *dialog_ref.lock().unwrap() = None;
+                    *dialog_ref.lock() = None;
                 })
                 .with_on_cancel(move || {
                     tracing::info!("取消编辑主机");
                     // 关闭对话框
-                    *dialog_ref_for_cancel.lock().unwrap() = None;
+                    *dialog_ref_for_cancel.lock() = None;
                 })
         });
 
         // 存储对话框引用
-        *self.connection_dialog.lock().unwrap() = Some(dialog);
+        *self.connection_dialog.lock() = Some(dialog);
 
         cx.notify();
     }
@@ -1247,9 +1247,8 @@ impl MainWindow {
                         saved_config.id = Some(new_id);
 
                         // 添加到内存列表
-                        if let Ok(mut hosts_guard) = hosts.write() {
-                            hosts_guard.push(saved_config);
-                        }
+                        let mut hosts_guard = hosts.write();
+                        hosts_guard.push(saved_config);
                     },
                     Err(e) => {
                         tracing::error!("创建主机失败: {:?}", e);
@@ -1262,10 +1261,9 @@ impl MainWindow {
                         tracing::info!("成功更新主机: {}", host_name);
 
                         // 更新内存中的配置
-                        if let Ok(mut hosts_guard) = hosts.write() {
-                            if let Some(pos) = hosts_guard.iter().position(|h| h.id == config.id) {
-                                hosts_guard[pos] = config.clone();
-                            }
+                        let mut hosts_guard = hosts.write();
+                        if let Some(pos) = hosts_guard.iter().position(|h| h.id == config.id) {
+                            hosts_guard[pos] = config.clone();
                         }
                     },
                     Err(e) => {
@@ -1366,7 +1364,7 @@ impl Render for MainWindow {
             );
 
         // 如果有连接对话框，添加到根元素（作为覆盖层）
-        if let Some(ref dialog) = *self.connection_dialog.lock().unwrap() {
+        if let Some(ref dialog) = *self.connection_dialog.lock() {
             root = root.child(dialog.clone());
         }
 

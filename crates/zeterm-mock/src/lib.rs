@@ -3,13 +3,13 @@
 //! 提供用于测试和开发的 Mock 终端连接后端。
 
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use async_trait::async_trait;
 use futures::StreamExt;
 use futures::stream::BoxStream;
-use std::sync::Mutex;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::mpsc;
 use tracing::{debug, info};
@@ -190,7 +190,7 @@ impl TerminalConnection for MockConnection {
     fn receive_stream(&self) -> BoxStream<'static, Result<Vec<u8>, ConnectionError>> {
         // 尝试获取接收端（只能获取一次）
         let rx = {
-            let mut guard = self.data_rx.lock().unwrap();
+            let mut guard = self.data_rx.lock().expect("Failed to acquire data_rx lock: this should never happen as receiver is only taken once");
             guard.take()
         };
 

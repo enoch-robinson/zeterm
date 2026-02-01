@@ -9,8 +9,9 @@ use gpui::{
     ParentElement, Render, Styled, Window, div, prelude::*,
 };
 
+use parking_lot::RwLock;
 use std::collections::{BTreeMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Instant;
 use zeterm_core::entities::{HostConfig, HostId};
 use zeterm_storage::{Database, HostRepository, SqliteHostRepository};
@@ -95,11 +96,8 @@ impl HostListView {
                     tracing::info!("成功加载 {} 个主机", loaded_hosts.len());
 
                     // 更新共享状态
-                    if let Ok(mut hosts_guard) = hosts.write() {
-                        *hosts_guard = loaded_hosts;
-                    } else {
-                        tracing::error!("无法获取主机列表写锁");
-                    }
+                    let mut hosts_guard = hosts.write();
+                    *hosts_guard = loaded_hosts;
                 },
                 Err(e) => {
                     tracing::error!("加载主机列表失败: {:?}", e);
@@ -123,7 +121,7 @@ impl HostListView {
 
     /// 获取选中的主机
     pub fn selected_host(&self) -> Option<HostConfig> {
-        let hosts = self.hosts.read().ok()?;
+        let hosts = self.hosts.read();
         self.selected_host_id
             .and_then(|id| hosts.iter().find(|h| h.id == Some(id)).cloned())
     }
@@ -161,22 +159,18 @@ impl HostListView {
 
     /// 切换分组展开/折叠状态
     fn toggle_group(&mut self, group_name: &str, cx: &mut Context<Self>) {
-        if let Ok(mut groups) = self.expanded_groups.write() {
-            if groups.contains(group_name) {
-                groups.remove(group_name);
-            } else {
-                groups.insert(group_name.to_string());
-            }
+        let mut groups = self.expanded_groups.write();
+        if groups.contains(group_name) {
+            groups.remove(group_name);
+        } else {
+            groups.insert(group_name.to_string());
         }
         cx.notify();
     }
 
     /// 检查分组是否展开
     fn is_group_expanded(&self, group_name: &str) -> bool {
-        self.expanded_groups
-            .read()
-            .map(|groups| groups.contains(group_name))
-            .unwrap_or(true) // 默认展开
+        self.expanded_groups.read().contains(group_name) // 默认展开
     }
 
     /// 显示右键菜单
@@ -268,9 +262,8 @@ impl HostListView {
                     tracing::info!("成功删除主机: {}", host_name);
 
                     // 从内存中移除
-                    if let Ok(mut hosts_guard) = hosts.write() {
-                        hosts_guard.retain(|h| h.id != Some(host_id));
-                    }
+                    let mut hosts_guard = hosts.write();
+                    hosts_guard.retain(|h| h.id != Some(host_id));
                 },
                 Err(e) => {
                     tracing::error!("删除主机失败: {:?}", e);
@@ -311,9 +304,8 @@ impl HostListView {
                         saved_config.id = Some(new_id);
 
                         // 添加到内存列表
-                        if let Ok(mut hosts_guard) = hosts.write() {
-                            hosts_guard.push(saved_config);
-                        }
+                        let mut hosts_guard = hosts.write();
+                        hosts_guard.push(saved_config);
                     },
                     Err(e) => {
                         tracing::error!("创建主机失败: {:?}", e);
@@ -326,10 +318,9 @@ impl HostListView {
                         tracing::info!("成功更新主机: {}", host_name);
 
                         // 更新内存中的配置
-                        if let Ok(mut hosts_guard) = hosts.write() {
-                            if let Some(pos) = hosts_guard.iter().position(|h| h.id == config.id) {
-                                hosts_guard[pos] = config.clone();
-                            }
+                        let mut hosts_guard = hosts.write();
+                        if let Some(pos) = hosts_guard.iter().position(|h| h.id == config.id) {
+                            hosts_guard[pos] = config.clone();
                         }
                     },
                     Err(e) => {
@@ -585,36 +576,32 @@ impl Render for HostListView {
                 let mut list_div = div().flex().flex_col().flex_1().px_2().py_2().gap_1();
 
                 // 从共享状态读取主机列表
-                if let Ok(hosts) = self.hosts.read() {
-                    // 按分组组织主机
-                    let mut groups: BTreeMap<String, Vec<&HostConfig>> = BTreeMap::new();
+                let hosts = self.hosts.read();
+                // 按分组组织主机
+                let mut groups: BTreeMap<String, Vec<&HostConfig>> = BTreeMap::new();
 
-                    for host in hosts.iter() {
-                        let group_name = host.group.as_deref().unwrap_or("默认分组");
-                        groups
-                            .entry(group_name.to_string())
-                            .or_insert_with(Vec::new)
-                            .push(host);
-                    }
+                for host in hosts.iter() {
+                    let group_name = host.group.as_deref().unwrap_or("默认分组");
+                    groups
+                        .entry(group_name.to_string())
+                        .or_insert_with(Vec::new)
+                        .push(host);
+                }
 
-                    // 渲染每个分组
-                    for (group_name, group_hosts) in groups.iter() {
-                        // 渲染分组标题
-                        list_div = list_div.child(self.render_group_header(
-                            group_name,
-                            group_hosts.len(),
-                            cx,
-                        ));
+                // 渲染每个分组
+                for (group_name, group_hosts) in groups.iter() {
+                    // 渲染分组标题
+                    list_div =
+                        list_div.child(self.render_group_header(group_name, group_hosts.len(), cx));
 
-                        // 如果分组展开，渲染主机列表
-                        if self.is_group_expanded(group_name) {
-                            for host in group_hosts {
-                                list_div = list_div.child(
-                                    div()
-                                        .pl_4() // 缩进以显示层级关系
-                                        .child(self.render_host_item(host, cx)),
-                                );
-                            }
+                    // 如果分组展开，渲染主机列表
+                    if self.is_group_expanded(group_name) {
+                        for host in group_hosts {
+                            list_div = list_div.child(
+                                div()
+                                    .pl_4() // 缩进以显示层级关系
+                                    .child(self.render_host_item(host, cx)),
+                            );
                         }
                     }
                 }
@@ -631,7 +618,7 @@ impl Render for HostListView {
                     .border_t_1()
                     .border_color(gpui::rgb(0x374151))
                     .child(div().text_xs().text_color(gpui::rgb(0x9ca3af)).child({
-                        let count = self.hosts.read().map(|h| h.len()).unwrap_or(0);
+                        let count = self.hosts.read().len();
                         format!("共{} 个主机", count)
                     })),
             );
