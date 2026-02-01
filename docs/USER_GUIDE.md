@@ -31,6 +31,13 @@ cargo build --release
 - **macOS**: `~/Library/Application Support/zeterm/`
 - **Windows**: `%APPDATA%\zeterm\`
 
+**数据目录位置**:
+- **Linux**: `~/.local/share/zeterm/`
+- **macOS**: `~/Library/Application Support/zeterm/data/`
+- **Windows**: `%LOCALAPPDATA%\zeterm\`
+
+> **说明**: 配置文件（config.toml, hosts.toml）位于配置目录，数据库和日志位于数据目录。
+
 ---
 
 ## 二、主机管理
@@ -290,7 +297,7 @@ type = "agent"  # 使用系统 SSH Agent
 
 - **主配置**: `~/.config/zeterm/config.toml`
 - **主机配置**: `~/.config/zeterm/hosts.toml`
-- **数据库**: `~/.config/zeterm/zeterm.db`
+- **数据库**: `~/.local/share/zeterm/zeterm.db`
 
 ### 7.2 主配置示例
 
@@ -312,8 +319,8 @@ new_tab = "Ctrl+Shift+T"
 close_tab = "Ctrl+Shift+W"
 
 [network]
-connect_timeout_ms = 10000
-keepalive_interval_sec = 60
+connect_timeout_ms = 30000
+keepalive_interval_ms = 60000
 ```
 
 ### 7.3 热更新
@@ -362,7 +369,7 @@ connect_timeout_ms = 30000  # 增加到 30 秒
 **A**: 复制配置文件：
 ```bash
 cp ~/.config/zeterm/hosts.toml ~/zeterm-hosts-backup.toml
-cp ~/.config/zeterm/zeterm.db ~/zeterm-db-backup.db
+cp ~/.local/share/zeterm/zeterm.db ~/zeterm-db-backup.db
 ```
 
 ### Q6: 支持跳板机吗？

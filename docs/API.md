@@ -571,6 +571,6 @@ pub enum StorageError {
 
 ## 六、相关文档
 
-- [TerminalConnection Trait](./core/connection-trait.md) - 详细设计
-- [连接状态机](./core/state-machine.md) - 状态转换规则
-- [错误处理](./core/error-handling.md) - 错误处理策略
+- [ARCHITECTURE.md](./ARCHITECTURE.md) - 架构总览
+- [IMPLEMENTATION.md](./IMPLEMENTATION.md) - 实现指南
+- [PERSISTENCE.md](./PERSISTENCE.md) - 配置与持久化

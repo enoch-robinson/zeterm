@@ -1,4 +1,4 @@
-# SSH 后端实现 (russh)
+# SSH 后端实现
 
 > 基于 russh 实现 `TerminalConnection` Trait
 
@@ -9,9 +9,9 @@
 | 目标 | 说明 |
 |------|------|
 | 完整实现 Trait | 提供 SSH 连接能力 |
-| 事件驱动转流式| 将 russh 回调模式转换为 `BoxStream` |
+| 事件驱动转流式 | 将 russh 回调模式转换为 `BoxStream` |
 | 多种认证 | 密码、公钥、Agent、键盘交互 |
-| 会话复用 | 单TCP 连接支持多Channel |
+| 会话复用 | 单 TCP 连接支持多 Channel |
 
 ---
 
@@ -19,14 +19,14 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      SshConnection│
-│(实现 TerminalConnection Trait)                │
+│                      SshConnection                          │
+│              (实现 TerminalConnection Trait)                  │
 ├─────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────────┐  │
-│  │ SshSession  │    │ SshChannel  │    │ EventConverter│  │
-│  │ (russh)     │───►│ (PTY)       │───►│ (回调→Stream)│  │
+│  │ SshSession  │    │ SshChannel  │    │ EventConverter  │  │
+│  │ (russh)     │───►│ (PTY)       │───►│ (回调→Stream)   │  │
 │  └─────────────┘    └─────────────┘    └────────┬────────┘  │
-│                │           │
+│                                                   │
 │                                        BoxStream<Vec<u8>>   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -37,11 +37,11 @@
 
 ```rust
 pub struct SshConnection {
-    session: client::Handle<SshHandler>,  // russh 会话句柄
-    channel: Option<ChannelId>,           // PTY 通道
-    data_rx: mpsc::Receiver<Vec<u8>>,     // 数据接收通道
-    config: SshConfig,                    // 连接配置
-    terminal_size: (u16, u16),            // 终端尺寸
+    session: client::Handle<SshHandler>,
+    channel: Option<ChannelId>,
+    data_rx: mpsc::Receiver<Vec<u8>>,
+    config: SshConfig,
+    terminal_size: (u16, u16),
 }
 
 pub struct SshConfig {
@@ -73,7 +73,7 @@ russh 使用**回调模式**，但 `TerminalConnection` 需要**流式接口**�
 使用 `mpsc::channel` 作为桥梁：
 
 ```
-russh Handler (回调)│
+russh Handler (回调)
         │ data_tx.send(data)
         ▼
    mpsc::channel
@@ -99,31 +99,21 @@ BoxStream<Vec<u8>> (流式)
 |------|----------|
 | `write(bytes)` | 调用 `session.data(channel_id, bytes)` |
 | `resize(rows, cols)` | 调用 `session.window_change(...)` |
-| `receive_stream()` | 将`mpsc::Receiver` 转换为 `BoxStream` |
+| `receive_stream()` | 将 `mpsc::Receiver` 转换为 `BoxStream` |
 | `close()` | 发送 EOF，关闭 channel，断开连接 |
 
 ---
 
 ## 六、连接建立流程
 
-```mermaid
-sequenceDiagram
-    participant C as SshConnection
-    participant R as russh
-    participant S as Server
-
-    C->>C: 1. 创建 mpsc channel
-    C->>C: 2. 创建 SshHandler
-    C->>R: 3. client::connect()
-    R->>S: TCP 连接
-    C->>R: 4. authenticate()
-    R->>S: SSH 认证
-    C->>R: 5. channel_open_session()
-    R->>S: 打开会话
-    C->>R: 6. request_pty()
-    R->>S: 请求 PTY
-    C->>R: 7. request_shell()
-    R->>S: 请求 Shell
+```
+1. 创建 mpsc channel
+2. 创建 SshHandler
+3. client::connect() - TCP 连接
+4. authenticate() - SSH 认证
+5. channel_open_session() - 打开会话
+6. request_pty() - 请求 PTY
+7. request_shell() - 请求 Shell
 ```
 
 ---
@@ -136,56 +126,10 @@ sequenceDiagram
 | 公钥 | `authenticate_publickey()` | 推荐，需加载私钥 |
 | Agent | `authenticate_publickey_with()` | 使用系统 SSH Agent |
 
-### 认证流程
-
-1. 尝试配置的认证方式
-2. 成功则继续，失败则返回 `AuthError`
-3. Agent 模式会遍历所有可用密钥
-
 ---
 
-## 八、连接池设计 (可选优化)
+## 八、相关文档
 
-### 8.1 问题
-
-同一主机多个终端会话，每次都建立新 TCP 连接效率低。
-
-### 8.2 方案
-
-```
-┌─────────────────────────────────────────┐
-│            ConnectionPool               │
-├─────────────────────────────────────────┤
-│  HashMap<HostKey, PooledConnection>     │
-│                │
-│  PooledConnection:                      │
-│    - session: Handle<SshHandler>        │
-│    - channels: Vec<ChannelId>           │
-│    - ref_count: usize                   │
-└─────────────────────────────────────────┘
-```
-
-### 8.3 优势
-
-- 减少 TCP 握手开销
-- 减少 SSH 认证开销
-- 共享心跳保活
-
----
-
-## 九、错误处理
-
-| russh 错误 | 转换为 |
-|------------|--------|
-| `Disconnect` | `ConnectionError::Disconnected` |
-| `Timeout` | `ConnectionError::Timeout` |
-| `Auth` 相关 | `AuthError::*` |
-| 其他 | `ConnectionError::Io` |
-
----
-
-## 十、相关文档
-
-- [TerminalConnection Trait](../core/connection-trait.md) - 接口定义
-- [连接状态机](../core/state-machine.md) - 状态管理
-- [错误处理](../core/error-handling.md) - 错误类型
+- [API.md](../API.md) - 接口定义
+- [ARCHITECTURE.md](../ARCHITECTURE.md) - 架构总览
+- [PERSISTENCE.md](../PERSISTENCE.md) - 主机密钥存储

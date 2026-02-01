@@ -45,7 +45,7 @@ pub trait FileSystemBackend: Send + Sync {
 
 ---
 
-## 三、SftpClient实现
+## 三、SftpClient 实现
 
 ### 3.1 结构
 
@@ -111,16 +111,16 @@ pub struct TransferProgress {
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  /home/user/projects                [↑]  │
+│  /home/user/projects                [↑] [↓] [×] │
 ├─────────────────────────────────────────────────┤
-│  📁 ..│
-│  📁 src4.0 KB   Jan 1 │
-│  📁 docs                         2.1 KB   Jan 2 │
-│  📄Cargo.toml                   1.2 KB   Jan 3 │
-│  📄 README.md                    3.4 KB   Jan 4 │
+│  📁 ..                                          │
+│  📁 src                    4.0 KB   Jan 1       │
+│  📁 docs                   2.1 KB   Jan 2       │
+│  📄 Cargo.toml             1.2 KB   Jan 3       │
+│  📄 README.md              3.4 KB   Jan 4       │
 ├─────────────────────────────────────────────────┤
 │  传输队列 (2)                                   │
-│  ↑ file.zip45%████░░░░░░  2.3 MB/s     │
+│  ↑ file.zip      45%  ████░░░░░░  2.3 MB/s      │
 │  ↓ data.csv      完成  ██████████               │
 └─────────────────────────────────────────────────┘
 ```
@@ -141,12 +141,12 @@ pub struct TransferProgress {
 
 | 操作 | 快捷键 | 说明 |
 |------|--------|------|
-| 上传 | 拖放| 拖放本地文件到列表 |
+| 上传 | 拖放 | 拖放本地文件到列表 |
 | 下载 | Enter | 下载选中文件 |
 | 删除 | Delete | 删除选中项 |
 | 重命名 | F2 | 重命名文件 |
 | 新建目录 | Ctrl+N | 创建新目录 |
-|刷新 | F5 | 刷新文件列表 |
+| 刷新 | F5 | 刷新文件列表 |
 
 ---
 
@@ -165,6 +165,6 @@ pub struct TransferProgress {
 
 ## 八、相关文档
 
-- [SSH 后端实现](./ssh-backend.md) - SFTP 依赖的SSH 连接
-- [TerminalConnection Trait](../core/connection-trait.md) - 连接抽象
-- [实现路径](../roadmap.md) - Phase 5SFTP 实现计划
+- [SSH 后端实现](./ssh-backend.md) - SFTP 依赖的 SSH 连接
+- [API.md](../API.md) - 接口定义
+- [ARCHITECTURE.md](../ARCHITECTURE.md) - 架构总览
