@@ -8,12 +8,12 @@ use std::sync::Arc;
 use std::sync::{Mutex, RwLock};
 
 use gpui::{
-    App, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    Render, Styled, Window, div, prelude::*, px,
+    App, Context, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    ParentElement, Render, Styled, Window, div, prelude::*, px,
 };
 use gpui_component::ActiveTheme;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::app::runtime;
 use crate::app::session::SessionCoordinator;
@@ -92,12 +92,8 @@ impl std::fmt::Debug for MainWindow {
     }
 }
 
-/// 状态栏同步触发标志
-/// 用于在事件处理器中触发状态栏同步，避免在 render 中修改状态
-#[derive(Clone, Debug)]
-enum StatusBarSyncEvent {
-    SyncRequested,
-}
+/// 主窗口连接事件发射器
+impl EventEmitter<ConnectionEvent> for MainWindow {}
 
 impl MainWindow {
     /// 构建主窗口（工厂方法，供 open_window 使用）
@@ -125,6 +121,11 @@ impl MainWindow {
             .detach();
         cx.subscribe(&tab_view, Self::on_tab_view_event).detach();
         cx.subscribe(&host_list_view, Self::on_host_list_event)
+            .detach();
+
+        // 订阅自身的连接事件（用于异步任务通知UI状态变更）
+        let main_window_entity = cx.entity();
+        cx.subscribe(&main_window_entity, Self::on_connection_event)
             .detach();
 
         let main_window = Self {
@@ -207,7 +208,6 @@ impl MainWindow {
 
         // 4. 创建事件通道用于接收连接状态变化
         let (event_tx, mut event_rx) = mpsc::channel::<ConnectionEvent>(100);
-        let pending_errors = self.pending_errors.clone();
 
         // 创建主机密钥确认通道
         let (host_key_tx, _host_key_rx) = mpsc::channel::<(
@@ -233,29 +233,17 @@ impl MainWindow {
             },
         );
 
-        // 启动事件处理任务 - 使用 runtime::spawn 避免 GPUI 生命周期问题
-        runtime::spawn(async move {
+        // 启动事件处理任务 - 通过 GPUI EventEmitter 机制转发到UI线程
+        // 使用 cx.spawn 在 GPUI 上下文中处理事件
+        cx.spawn(async move |this, cx| {
             while let Some(event) = event_rx.recv().await {
-                match event {
-                    ConnectionEvent::Connected { .. } => {
-                        // 状态栏更新将在 render 中通过 sync_status_bar_from_coordinator 处理
-                    },
-                    ConnectionEvent::Failed { host, error } => {
-                        // 将错误加入队列，在 render 中显示
-                        pending_errors
-                            .lock()
-                            .unwrap()
-                            .push(format!("{}: {}", host, error));
-                    },
-                    ConnectionEvent::Disconnected { .. } => {
-                        // 状态栏更新将在 render 中处理
-                    },
-                    ConnectionEvent::StateChanged { .. } => {
-                        // 状态栏更新将在 render 中处理
-                    },
-                }
+                // 将事件转发到主窗口
+                let _ = this.update(cx, |_, cx| {
+                    cx.emit(event);
+                });
             }
-        });
+        })
+        .detach();
 
         // 5. 委托给连接管理器处理连接逻辑
         ConnectionManager::connect_to_host(
@@ -319,8 +307,6 @@ impl MainWindow {
             TabManagerEvent::TabSwitched(tab_id) => {
                 info!("Tab switched to: {}", tab_id);
                 self.on_tab_switched(*tab_id, cx);
-                // Tab 切换时同步状态栏
-                self.sync_status_bar_from_coordinator(cx);
             },
             TabManagerEvent::TabUpdated(tab_id) => {
                 info!("Tab updated: {}", tab_id);
@@ -347,6 +333,46 @@ impl MainWindow {
                         manager.switch_to_tab(tab_id, cx);
                     });
                 }
+            },
+        }
+    }
+
+    /// 处理连接事件
+    ///
+    /// 统一处理来自异步连接任务的事件，更新UI状态
+    fn on_connection_event(
+        &mut self,
+        _main_window: Entity<Self>,
+        event: &ConnectionEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ConnectionEvent::Connected { host, username } => {
+                info!("连接事件：已连接到 {}@{}", username, host);
+                self.update_connection_status(ConnectionStatus::Connected, cx);
+                self.update_user_host(Some(username.clone()), Some(host.clone()), cx);
+            },
+            ConnectionEvent::Failed { host, error } => {
+                error!("连接事件：连接到 {} 失败 - {}", host, error);
+                self.update_connection_status(ConnectionStatus::Error, cx);
+                self.show_connection_error("连接失败", format!("{}: {}", host, error), cx);
+            },
+            ConnectionEvent::Disconnected { host, reason } => {
+                info!("连接事件：与 {} 断开 - {}", host, reason);
+                self.update_connection_status(ConnectionStatus::Disconnected, cx);
+                self.update_user_host(None, None, cx);
+            },
+            ConnectionEvent::StateChanged { state } => {
+                debug!("连接事件：状态变更为 {:?}", state);
+                let status = match state {
+                    zeterm_core::ConnectionState::Connected { .. } => ConnectionStatus::Connected,
+                    zeterm_core::ConnectionState::Disconnected { .. } => {
+                        ConnectionStatus::Disconnected
+                    },
+                    zeterm_core::ConnectionState::Idle => ConnectionStatus::Disconnected,
+                    _ => ConnectionStatus::Connecting,
+                };
+                self.update_connection_status(status, cx);
             },
         }
     }
@@ -1224,13 +1250,7 @@ impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // 注意：不在 render 中修改状态
         // 新建 Tab 请求通过 TabViewEvent 事件处理
-        // 状态栏同步在 TabSwitched 事件中处理
-
-        // 处理待显示的错误
-        let errors: Vec<String> = self.pending_errors.lock().unwrap().drain(..).collect();
-        for error in errors {
-            self.show_connection_error("连接失败", error, cx);
-        }
+        // 连接状态更新通过 ConnectionEvent 事件处理
 
         let has_tabs = self.has_tabs(cx);
 
@@ -1328,22 +1348,4 @@ impl Render for MainWindow {
     }
 }
 
-impl MainWindow {
-    /// 根据当前活动 pane 的 SessionCoordinator 状态同步状态栏
-    ///
-    /// 这是方案 3 的核心实现：利用现有的 SessionCoordinator 状态
-    /// 作为单一数据源，确保 UI 状态与实际连接状态一致。
-    fn sync_status_bar_from_coordinator(&mut self, cx: &mut Context<Self>) {
-        // 获取当前活动 pane 的协调器
-        if let Some(pane_id) = self.active_pane_id(cx) {
-            if let Some(coordinator) = self.terminal_pane_manager.get_coordinator(pane_id) {
-                // 使用 ConnectionManager 来同步状态栏
-                ConnectionManager::sync_status_bar_from_coordinator(
-                    coordinator,
-                    &self.status_bar,
-                    cx,
-                );
-            }
-        }
-    }
-}
+impl MainWindow {}
