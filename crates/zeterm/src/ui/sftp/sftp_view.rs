@@ -6,7 +6,7 @@
 //! - 传输队列
 //! - 工具栏操作
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::app::runtime;
@@ -103,8 +103,9 @@ impl SftpViewMode {
 // SFTP 视图
 // ============================================================================
 
-/// 目录加载结果
+/// 目录加载结果（已废弃，使用 cx.spawn 直接处理）
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum LoadResult {
     /// 加载成功
     Success {
@@ -128,8 +129,9 @@ struct ContextMenuState {
     position: (f32, f32),
 }
 
-/// 待处理的操作结果
+/// 待处理的操作结果（已废弃，使用 cx.spawn 直接处理）
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum PendingOperationResult {
     /// 删除成功
     DeleteSuccess { path: String },
@@ -204,14 +206,12 @@ pub struct SftpView {
     error_message: Option<String>,
     /// 连接状态
     connected: bool,
-    /// 待处理的加载结果（用于异步加载后更新 UI）
-    pending_load_result: Arc<RwLock<Option<LoadResult>>>,
+    /// 正在加载的目录路径集合（防止重复加载）
+    loading_paths: HashSet<String>,
     /// 传输任务映射（用于控制暂停/恢复/取消）
     transfer_tasks: Arc<RwLock<HashMap<TransferTaskId, TransferTask>>>,
     /// 右键菜单状态
     context_menu: Option<ContextMenuState>,
-    /// 待处理的操作结果
-    pending_operation: Arc<RwLock<Option<PendingOperationResult>>>,
     /// 重命名对话框状态
     rename_dialog: Option<RenameDialogState>,
     /// 属性对话框状态
@@ -242,10 +242,9 @@ impl SftpView {
             loading: false,
             error_message: None,
             connected: false,
-            pending_load_result: Arc::new(RwLock::new(None)),
+            loading_paths: HashSet::new(),
             transfer_tasks: Arc::new(RwLock::new(HashMap::new())),
             context_menu: None,
-            pending_operation: Arc::new(RwLock::new(None)),
             rename_dialog: None,
             properties_dialog: None,
             delete_confirm: None,
@@ -359,8 +358,16 @@ impl SftpView {
         };
 
         let path = self.current_path.clone();
+
+        // 防止重复加载同一目录
+        if self.loading_paths.contains(&path) {
+            tracing::debug!("Directory {} is already loading, skipping", path);
+            return;
+        }
+
         self.loading = true;
         self.error_message = None;
+        self.loading_paths.insert(path.clone());
 
         // 更新文件列表状态
         self.file_list.update(cx, |file_list, cx| {
@@ -369,36 +376,62 @@ impl SftpView {
 
         cx.notify();
 
-        // 异步加载目录内容
-        // 使用共享状态传递结果，在 render 时检查并更新 UI
-        let pending_result = self.pending_load_result.clone();
-        let path_clone = path.clone();
+        // 使用 cx.spawn 在 GPUI 上下文中执行异步任务
+        // 完成后直接更新状态，无需在 render 中轮询
+        cx.spawn(async move |this, cx| {
+            let result = client.list_dir(&path).await;
 
-        // 使用共享 Runtime 执行异步加载
-        runtime::spawn_blocking(async move {
-            let result = client.list_dir(&path_clone).await;
+            // 直接在 GPUI 上下文中更新状态
+            let _ = this.update(cx, |this, cx| {
+                // 移除加载标记
+                this.loading_paths.remove(&path);
 
-            // 将结果写入共享状态
-            let load_result = match result {
-                Ok(entries) => {
-                    tracing::info!("SFTP: Loaded {} entries from {}", entries.len(), path_clone);
-                    LoadResult::Success {
-                        path: path_clone,
-                        entries,
-                    }
-                },
-                Err(e) => {
-                    tracing::error!("SFTP: Failed to load directory {}: {}", path_clone, e);
-                    LoadResult::Error {
-                        path: path_clone,
-                        message: e.to_string(),
-                    }
-                },
-            };
+                match result {
+                    Ok(entries) => {
+                        tracing::info!("SFTP: Loaded {} entries from {}", entries.len(), path);
 
-            // 写入共享状态，等待 UI 线程处理
-            *pending_result.write() = Some(load_result);
-        });
+                        // 验证路径是否仍然是当前路径（可能用户已导航到其他目录）
+                        if path == this.current_path {
+                            // 更新文件列表
+                            this.file_list.update(cx, |file_list, cx| {
+                                file_list.set_entries(entries, cx);
+                            });
+
+                            // 更新状态
+                            this.loading = false;
+                            this.error_message = None;
+                        } else {
+                            tracing::debug!(
+                                "Ignoring stale load result for {} (current path is {})",
+                                path,
+                                this.current_path
+                            );
+                            this.loading = false;
+                        }
+                    },
+                    Err(e) => {
+                        tracing::error!("SFTP: Failed to load directory {}: {}", path, e);
+
+                        // 验证路径
+                        if path == this.current_path {
+                            // 更新错误状态
+                            this.loading = false;
+                            this.error_message = Some(e.to_string());
+
+                            // 更新文件列表显示错误
+                            this.file_list.update(cx, |file_list, cx| {
+                                file_list.set_error(Some(e.to_string()), cx);
+                            });
+                        } else {
+                            this.loading = false;
+                        }
+                    },
+                }
+
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// 处理路径栏事件
@@ -778,33 +811,37 @@ impl SftpView {
 
         let path = confirm.path.clone();
         let is_directory = confirm.is_directory;
-        let pending = self.pending_operation.clone();
+        let current_path = self.current_path.clone();
 
         tracing::info!("Executing delete: {} (is_dir: {})", path, is_directory);
 
-        runtime::spawn_blocking(async move {
+        // 使用 cx.spawn 在 GPUI 上下文中执行异步任务
+        cx.spawn(async move |this, cx| {
             let result = if is_directory {
                 client.rmdir_all(&path).await
             } else {
                 client.remove(&path).await
             };
 
-            let op_result = match result {
-                Ok(_) => {
-                    tracing::info!("Successfully deleted: {}", path);
-                    PendingOperationResult::DeleteSuccess { path }
-                },
-                Err(e) => {
-                    tracing::error!("Failed to delete {}: {}", path, e);
-                    PendingOperationResult::DeleteError {
-                        path,
-                        message: e.to_string(),
-                    }
-                },
-            };
-
-            *pending.write() = Some(op_result);
-        });
+            // 直接在 GPUI 上下文中更新状态
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(_) => {
+                        tracing::info!("Successfully deleted: {}", path);
+                        // 如果被删除的文件在当前目录，刷新目录
+                        if path.starts_with(&current_path) {
+                            this.refresh(cx);
+                        }
+                    },
+                    Err(e) => {
+                        tracing::error!("Failed to delete {}: {}", path, e);
+                        this.error_message = Some(format!("删除失败: {}", e));
+                        cx.notify();
+                    },
+                }
+            });
+        })
+        .detach();
 
         cx.notify();
     }
@@ -863,29 +900,29 @@ impl SftpView {
             dialog.new_name.clone()
         };
 
-        let pending = self.pending_operation.clone();
-
         tracing::info!("Executing rename: {} -> {}", old_path, new_path);
 
-        runtime::spawn_blocking(async move {
+        // 使用 cx.spawn 在 GPUI 上下文中执行异步任务
+        cx.spawn(async move |this, cx| {
             let result = client.rename(&old_path, &new_path).await;
 
-            let op_result = match result {
-                Ok(_) => {
-                    tracing::info!("Successfully renamed: {} -> {}", old_path, new_path);
-                    PendingOperationResult::RenameSuccess { old_path, new_path }
-                },
-                Err(e) => {
-                    tracing::error!("Failed to rename {}: {}", old_path, e);
-                    PendingOperationResult::RenameError {
-                        path: old_path,
-                        message: e.to_string(),
-                    }
-                },
-            };
-
-            *pending.write() = Some(op_result);
-        });
+            // 直接在 GPUI 上下文中更新状态
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(_) => {
+                        tracing::info!("Successfully renamed: {} -> {}", old_path, new_path);
+                        // 刷新当前目录
+                        this.refresh(cx);
+                    },
+                    Err(e) => {
+                        tracing::error!("Failed to rename {}: {}", old_path, e);
+                        this.error_message = Some(format!("重命名失败: {}", e));
+                        cx.notify();
+                    },
+                }
+            });
+        })
+        .detach();
 
         cx.notify();
     }
@@ -913,41 +950,38 @@ impl SftpView {
 
     /// 处理右键菜单操作：查看属性
     fn context_menu_properties(&mut self, cx: &mut Context<Self>) {
-        if let Some(ref menu) = self.context_menu {
-            let path = menu.path.clone();
-            tracing::info!("Context menu: Properties {}", path);
+        let Some(menu) = self.context_menu.take() else {
+            return;
+        };
 
-            let Some(client) = self.sftp_client.clone() else {
-                self.error_message = Some("未连接到 SFTP 服务器".to_string());
-                self.hide_context_menu(cx);
-                cx.notify();
-                return;
-            };
+        let path = menu.path.clone();
+        tracing::info!("Context menu: Properties {}", path);
 
-            let pending = self.pending_operation.clone();
+        let Some(client) = self.sftp_client.clone() else {
+            self.error_message = Some("未连接到 SFTP 服务器".to_string());
+            cx.notify();
+            return;
+        };
 
-            // 异步获取文件属性
-            runtime::spawn_blocking(async move {
-                let result = client.stat(&path).await;
+        // 使用 cx.spawn 在 GPUI 上下文中执行异步任务
+        cx.spawn(async move |this, cx| {
+            let result = client.stat(&path).await;
 
-                let op_result = match result {
-                    Ok(entry) => {
-                        tracing::info!("Loaded properties for: {}", path);
-                        PendingOperationResult::PropertiesLoaded { entry }
-                    },
-                    Err(e) => {
-                        tracing::error!("Failed to get properties for {}: {}", path, e);
-                        PendingOperationResult::PropertiesError {
-                            path,
-                            message: e.to_string(),
-                        }
-                    },
-                };
-
-                *pending.write() = Some(op_result);
+            // 直接在 GPUI 上下文中更新状态
+            let _ = this.update(cx, |this, cx| match result {
+                Ok(entry) => {
+                    tracing::info!("Loaded properties for: {}", path);
+                    this.properties_dialog = Some(PropertiesDialogState { entry });
+                    cx.notify();
+                },
+                Err(e) => {
+                    tracing::error!("Failed to get properties for {}: {}", path, e);
+                    this.error_message = Some(format!("获取属性失败: {}", e));
+                    cx.notify();
+                },
             });
-        }
-        self.hide_context_menu(cx);
+        })
+        .detach();
     }
 
     /// 关闭属性对话框
@@ -1697,112 +1731,9 @@ impl SftpView {
             .child(self.transfer_queue.clone())
     }
 
-    /// 处理待处理的加载结果
-    ///
-    /// 在 render 时调用，检查是否有后台线程完成的加载结果，
-    /// 如果有则更新 UI 状态。
-    fn process_pending_load_result(&mut self, cx: &mut Context<Self>) {
-        // 尝试获取待处理的结果
-        let result = {
-            let mut pending = self.pending_load_result.write();
-            pending.take()
-        };
-
-        // 如果有结果，处理它
-        if let Some(load_result) = result {
-            match load_result {
-                LoadResult::Success { path, entries } => {
-                    tracing::debug!(
-                        "Processing load result: {} entries for path {}",
-                        entries.len(),
-                        path
-                    );
-
-                    // 验证路径是否仍然是当前路径（可能用户已经导航到其他目录）
-                    if path == self.current_path {
-                        // 更新文件列表
-                        self.file_list.update(cx, |file_list, cx| {
-                            file_list.set_entries(entries, cx);
-                        });
-
-                        // 更新状态
-                        self.loading = false;
-                        self.error_message = None;
-                    } else {
-                        tracing::debug!(
-                            "Ignoring stale load result for {} (current path is {})",
-                            path,
-                            self.current_path
-                        );
-                    }
-                },
-                LoadResult::Error { path, message } => {
-                    tracing::debug!("Processing load error for path {}: {}", path, message);
-
-                    // 验证路径
-                    if path == self.current_path {
-                        // 更新错误状态
-                        self.loading = false;
-                        self.error_message = Some(message.clone());
-
-                        // 更新文件列表显示错误
-                        self.file_list.update(cx, |file_list, cx| {
-                            file_list.set_error(Some(message), cx);
-                        });
-                    }
-                },
-            }
-
-            // 通知 UI 更新
-            cx.notify();
-        }
-
-        // 处理待处理的操作结果
-        self.process_pending_operation(cx);
-    }
-
-    /// 处理待处理的操作结果
-    ///
-    /// 在 render 时调用，检查是否有后台线程完成的操作结果，
-    /// 如果有则更新 UI 状态。
-    fn process_pending_operation(&mut self, cx: &mut Context<Self>) {
-        let result = {
-            let mut pending = self.pending_operation.write();
-            pending.take()
-        };
-
-        if let Some(op_result) = result {
-            match op_result {
-                PendingOperationResult::DeleteSuccess { path } => {
-                    tracing::info!("Delete operation completed: {}", path);
-                    // 刷新当前目录
-                    self.refresh(cx);
-                },
-                PendingOperationResult::DeleteError { path, message } => {
-                    tracing::error!("Delete operation failed: {} - {}", path, message);
-                    self.error_message = Some(format!("删除失败: {}", message));
-                },
-                PendingOperationResult::RenameSuccess { old_path, new_path } => {
-                    tracing::info!("Rename operation completed: {} -> {}", old_path, new_path);
-                    // 刷新当前目录
-                    self.refresh(cx);
-                },
-                PendingOperationResult::RenameError { path, message } => {
-                    tracing::error!("Rename operation failed: {} - {}", path, message);
-                    self.error_message = Some(format!("重命名失败: {}", message));
-                },
-                PendingOperationResult::PropertiesLoaded { entry } => {
-                    tracing::info!("Properties loaded for: {}", entry.name);
-                    self.properties_dialog = Some(PropertiesDialogState { entry });
-                },
-                PendingOperationResult::PropertiesError { path, message } => {
-                    tracing::error!("Failed to load properties for {}: {}", path, message);
-                    self.error_message = Some(format!("获取属性失败: {}", message));
-                },
-            }
-            cx.notify();
-        }
-    }
+    // 注意：process_pending_load_result 和 process_pending_operation 已移除
+    // 现在使用 cx.spawn 在 GPUI 上下文中直接处理异步任务结果
+    // 这消除了 render() 方法中的状态修改问题
 }
 
 impl EventEmitter<SftpViewEvent> for SftpView {}
@@ -1815,8 +1746,9 @@ impl Focusable for SftpView {
 
 impl Render for SftpView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // 检查是否有待处理的加载结果
-        self.process_pending_load_result(cx);
+        // 注意：不在 render 中处理异步结果
+        // 所有异步操作现在使用 cx.spawn 在 GPUI 上下文中直接更新状态
+        // 参见 load_directory, do_delete, do_rename, context_menu_properties 方法
 
         let theme = cx.theme();
         let connected = self.connected;
