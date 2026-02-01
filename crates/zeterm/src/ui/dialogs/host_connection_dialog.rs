@@ -1025,6 +1025,10 @@ mod tests {
             AuthConfig::Password { password_ref } => {
                 // 应该生成 keychain 引用
                 assert!(password_ref.starts_with("keychain:"));
+                // Windows 使用 host_ 格式，非 Windows 使用 host: 格式
+                #[cfg(target_os = "windows")]
+                assert!(password_ref.contains("host_root_192.168.1.100_22"));
+                #[cfg(not(target_os = "windows"))]
                 assert!(password_ref.contains("host:root@192.168.1.100:22"));
             },
             _ => panic!("Expected password auth config"),
@@ -1036,7 +1040,10 @@ mod tests {
         // 创建内存存储用于测试
         let secret_helper = SecretHelper::<MemorySecretStore>::with_memory();
 
-        // 预先存储一个密码
+        // 预先存储一个密码（使用当前平台格式）
+        #[cfg(target_os = "windows")]
+        let existing_key = "host_root_192.168.1.100_22";
+        #[cfg(not(target_os = "windows"))]
         let existing_key = "host:root@192.168.1.100:22";
         secret_helper
             .store()

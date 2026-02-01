@@ -101,23 +101,46 @@ pub struct SecretKeyGenerator;
 impl SecretKeyGenerator {
     /// 生成主机密码密钥
     ///
-    /// 格式: `host:username@host:port`
+    /// 格式:
+    /// - 非 Windows: `host:username@host:port`
+    /// - Windows: `host_username_host_port` (避免特殊字符导致 Credential Manager 问题)
     pub fn host_password(username: &str, host: &str, port: u16) -> String {
-        format!("host:{}@{}:{}", username, host, port)
+        #[cfg(target_os = "windows")]
+        {
+            // Windows Credential Manager 对包含 : 和 @ 的 key 支持不佳
+            // 使用 _ 替换特殊字符，确保进程内所有线程都能访问
+            format!("host_{}_{}_{}", username, host, port)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            format!("host:{}@{}:{}", username, host, port)
+        }
     }
 
     /// 生成私钥密码密钥
     ///
-    /// 格式: `keyfile:path`
+    /// 格式:
+    /// - 非 Windows: `keyfile:path`
+    /// - Windows: `keyfile_path` (避免路径中的冒号导致问题)
     pub fn key_passphrase(key_path: &str) -> String {
-        format!("keyfile:{}", key_path)
+        #[cfg(target_os = "windows")]
+        {
+            // Windows 路径包含冒号(如 C:\Users\...)，使用下划线替换
+            let safe_path = key_path.replace(':', "_");
+            format!("keyfile_{}", safe_path)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            format!("keyfile:{}", key_path)
+        }
     }
 
     /// 解析密钥类型
     pub fn parse_key_type(key: &str) -> SecretKeyType {
-        if key.starts_with("host:") {
+        // 支持 Windows 和非 Windows 格式
+        if key.starts_with("host:") || key.starts_with("host_") {
             SecretKeyType::HostPassword
-        } else if key.starts_with("keyfile:") {
+        } else if key.starts_with("keyfile:") || key.starts_with("keyfile_") {
             SecretKeyType::KeyPassphrase
         } else {
             SecretKeyType::Custom
@@ -629,19 +652,37 @@ mod tests {
     #[test]
     fn test_secret_key_generator_host_password() {
         let key = SecretKeyGenerator::host_password("root", "192.168.1.100", 22);
+        // Windows 使用 host_ 格式，非 Windows 使用 host: 格式
+        #[cfg(target_os = "windows")]
+        assert_eq!(key, "host_root_192.168.1.100_22");
+        #[cfg(not(target_os = "windows"))]
         assert_eq!(key, "host:root@192.168.1.100:22");
 
         let key_type = SecretKeyGenerator::parse_key_type(&key);
         assert_eq!(key_type, SecretKeyType::HostPassword);
+
+        // 验证 parse_key_type 也能识别旧的 host: 格式（向后兼容）
+        let old_key = "host:root@192.168.1.100:22";
+        let old_key_type = SecretKeyGenerator::parse_key_type(old_key);
+        assert_eq!(old_key_type, SecretKeyType::HostPassword);
     }
 
     #[test]
     fn test_secret_key_generator_key_passphrase() {
         let key = SecretKeyGenerator::key_passphrase("/home/user/.ssh/id_rsa");
+        // Windows 使用 keyfile_ 格式，非 Windows 使用 keyfile: 格式
+        #[cfg(target_os = "windows")]
+        assert_eq!(key, "keyfile_/home/user/.ssh/id_rsa");
+        #[cfg(not(target_os = "windows"))]
         assert_eq!(key, "keyfile:/home/user/.ssh/id_rsa");
 
         let key_type = SecretKeyGenerator::parse_key_type(&key);
         assert_eq!(key_type, SecretKeyType::KeyPassphrase);
+
+        // 验证 parse_key_type 也能识别旧的 keyfile: 格式（向后兼容）
+        let old_key = "keyfile:/home/user/.ssh/id_rsa";
+        let old_key_type = SecretKeyGenerator::parse_key_type(old_key);
+        assert_eq!(old_key_type, SecretKeyType::KeyPassphrase);
     }
 
     #[test]
