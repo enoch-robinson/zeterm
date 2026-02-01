@@ -13,7 +13,7 @@ use gpui::{
 };
 use gpui_component::ActiveTheme;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::app::runtime;
 use crate::app::session::SessionCoordinator;
@@ -238,9 +238,12 @@ impl MainWindow {
         cx.spawn(async move |this, cx| {
             while let Some(event) = event_rx.recv().await {
                 // 将事件转发到主窗口
-                let _ = this.update(cx, |_, cx| {
+                if let Err(e) = this.update(cx, |_, cx| {
                     cx.emit(event);
-                });
+                }) {
+                    warn!("无法转发连接事件，窗口可能已关闭: {:?}", e);
+                    break; // 退出循环，避免无限接收无法处理的事件
+                }
             }
         })
         .detach();
@@ -339,40 +342,74 @@ impl MainWindow {
 
     /// 处理连接事件
     ///
-    /// 统一处理来自异步连接任务的事件，更新UI状态
+    /// 统一处理来自异步连接任务的事件，更新UI状态。
+    /// 只更新当前活动Tab对应的状态，避免多Tab状态竞争。
     fn on_connection_event(
         &mut self,
         _main_window: Entity<Self>,
         event: &ConnectionEvent,
         cx: &mut Context<Self>,
     ) {
+        // 获取事件对应的Tab ID
+        let event_tab_id = match event {
+            ConnectionEvent::Connected { tab_id, .. } => *tab_id,
+            ConnectionEvent::Failed { tab_id, .. } => *tab_id,
+            ConnectionEvent::Disconnected { tab_id, .. } => *tab_id,
+            ConnectionEvent::StateChanged { tab_id, .. } => *tab_id,
+        };
+
+        // 获取当前活动Tab ID
+        let active_tab_id = self.active_tab_id(cx);
+
+        // 只处理当前活动Tab的事件，避免状态混乱
+        let is_active_tab = active_tab_id.map_or(false, |id| id == event_tab_id);
+
         match event {
-            ConnectionEvent::Connected { host, username } => {
-                info!("连接事件：已连接到 {}@{}", username, host);
-                self.update_connection_status(ConnectionStatus::Connected, cx);
-                self.update_user_host(Some(username.clone()), Some(host.clone()), cx);
+            ConnectionEvent::Connected { host, username, .. } => {
+                info!(
+                    "连接事件：已连接到 {}@{} (Tab: {})",
+                    username, host, event_tab_id
+                );
+                if is_active_tab {
+                    self.update_connection_status(ConnectionStatus::Connected, cx);
+                    self.update_user_host(Some(username.clone()), Some(host.clone()), cx);
+                }
             },
-            ConnectionEvent::Failed { host, error } => {
-                error!("连接事件：连接到 {} 失败 - {}", host, error);
-                self.update_connection_status(ConnectionStatus::Error, cx);
-                self.show_connection_error("连接失败", format!("{}: {}", host, error), cx);
+            ConnectionEvent::Failed { host, error, .. } => {
+                error!(
+                    "连接事件：连接到 {} 失败 - {} (Tab: {})",
+                    host, error, event_tab_id
+                );
+                if is_active_tab {
+                    self.update_connection_status(ConnectionStatus::Error, cx);
+                    self.show_connection_error("连接失败", format!("{}: {}", host, error), cx);
+                }
             },
-            ConnectionEvent::Disconnected { host, reason } => {
-                info!("连接事件：与 {} 断开 - {}", host, reason);
-                self.update_connection_status(ConnectionStatus::Disconnected, cx);
-                self.update_user_host(None, None, cx);
+            ConnectionEvent::Disconnected { host, reason, .. } => {
+                info!(
+                    "连接事件：与 {} 断开 - {} (Tab: {})",
+                    host, reason, event_tab_id
+                );
+                if is_active_tab {
+                    self.update_connection_status(ConnectionStatus::Disconnected, cx);
+                    self.update_user_host(None, None, cx);
+                }
             },
-            ConnectionEvent::StateChanged { state } => {
-                debug!("连接事件：状态变更为 {:?}", state);
-                let status = match state {
-                    zeterm_core::ConnectionState::Connected { .. } => ConnectionStatus::Connected,
-                    zeterm_core::ConnectionState::Disconnected { .. } => {
-                        ConnectionStatus::Disconnected
-                    },
-                    zeterm_core::ConnectionState::Idle => ConnectionStatus::Disconnected,
-                    _ => ConnectionStatus::Connecting,
-                };
-                self.update_connection_status(status, cx);
+            ConnectionEvent::StateChanged { state, .. } => {
+                debug!("连接事件：状态变更为 {:?} (Tab: {})", state, event_tab_id);
+                if is_active_tab {
+                    let status = match state {
+                        zeterm_core::ConnectionState::Connected { .. } => {
+                            ConnectionStatus::Connected
+                        },
+                        zeterm_core::ConnectionState::Disconnected { .. } => {
+                            ConnectionStatus::Disconnected
+                        },
+                        zeterm_core::ConnectionState::Idle => ConnectionStatus::Disconnected,
+                        _ => ConnectionStatus::Connecting,
+                    };
+                    self.update_connection_status(status, cx);
+                }
             },
         }
     }

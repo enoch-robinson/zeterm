@@ -25,13 +25,28 @@ use crate::ui::tab_manager::{TabId, TabManager};
 #[derive(Clone, Debug)]
 pub enum ConnectionEvent {
     /// 连接成功
-    Connected { host: String, username: String },
+    Connected {
+        tab_id: TabId,
+        host: String,
+        username: String,
+    },
     /// 连接失败
-    Failed { host: String, error: String },
+    Failed {
+        tab_id: TabId,
+        host: String,
+        error: String,
+    },
     /// 连接断开
-    Disconnected { host: String, reason: String },
+    Disconnected {
+        tab_id: TabId,
+        host: String,
+        reason: String,
+    },
     /// 状态变化
-    StateChanged { state: ConnectionState },
+    StateChanged {
+        tab_id: TabId,
+        state: ConnectionState,
+    },
 }
 
 pub struct ConnectionManager;
@@ -94,6 +109,7 @@ impl ConnectionManager {
                     // 发送连接成功事件
                     let _ = event_tx_clone
                         .send(ConnectionEvent::Connected {
+                            tab_id,
                             host: host_clone.host.clone(),
                             username: host_clone.username.clone(),
                         })
@@ -102,6 +118,7 @@ impl ConnectionManager {
                     // 发送状态变化事件
                     let _ = event_tx_clone
                         .send(ConnectionEvent::StateChanged {
+                            tab_id,
                             state: ConnectionState::Connected {
                                 connected_at: std::time::Instant::now(),
                             },
@@ -120,6 +137,7 @@ impl ConnectionManager {
                     // 发送断开连接事件
                     let _ = event_tx_clone
                         .send(ConnectionEvent::Disconnected {
+                            tab_id,
                             host: host_clone.host.clone(),
                             reason: "连接已关闭".to_string(),
                         })
@@ -132,6 +150,7 @@ impl ConnectionManager {
                     // 发送连接失败事件
                     let _ = event_tx_clone
                         .send(ConnectionEvent::Failed {
+                            tab_id,
                             host: host_clone.name.clone(),
                             error: error_msg.clone(),
                         })
